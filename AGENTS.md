@@ -1,0 +1,33 @@
+# Family Medical Vault — Codex Operating Contract
+
+> **Canonical project instructions.** Read only the relevant domain documents before modifying a module. Do not load the entire docs tree for every task.
+
+## Non-negotiable
+- `docs/product/scope.md` defines scope; requirements are indexed in `docs/product/requirements-index.md` and specified by their domain owners.
+- `docs/architecture/decisions.md` is the authority for approved stack choices and explicitly unverified deployment assumptions.
+- `docs/design/design-system.md` is the visual authority: adaptive monochrome, light default, graphite dark, minimal/classy UI inspired by the user-supplied desktop and mobile references. Do **not** revert to the earlier teal palette.
+- No invented functionality, medical facts, APIs, payment services, login routes or vendor guarantees. Record missing decisions in `docs/architecture/open-decisions.md` and ask before irreversible actions.
+- Enforce patient authorization on every protected backend operation. Never treat a JWT's patient ID or client-supplied Person ID as permission.
+- Never send records to external AI without explicit documented consent. No medical content in logs, analytics or unencrypted backups.
+- Keep original uploads independent of OCR/AI success; verified clinical facts only for trusted automation.
+- No scope expansion: no billing, insurance, consultation transcription, dose-adherence dashboards or native apps.
+
+## Repo targets
+`apps/web` React/Vite; `apps/server` NestJS modular monolith; `packages/contracts` shared validated API schemas; `infra/` deployment/backup; `docs/` canonical specifications.
+
+## Read on demand
+- Identity, invitation, login: `docs/domains/identity.md`, `docs/domains/access.md`, `docs/security/access-control.md`
+- Files/upload/search: `docs/domains/documents.md`, `docs/domains/extraction.md`
+- Lab/medications: `docs/domains/medical-data.md`, `docs/domains/medications.md`
+- Summaries/shares: `docs/domains/sharing.md`
+- Security/deletion/backups: `docs/security/access-control.md`, `docs/operations/backup-recovery.md`
+- Frontend UI: `docs/design/design-system.md`, `docs/design/ux-flows.md`
+- Deployment/hosting: `docs/architecture/decisions.md`, `docs/architecture/open-decisions.md`
+
+## Implementation discipline
+1. State which requirement IDs the change implements.
+2. Read only the relevant canonical files; do not guess missing requirements.
+3. Change the smallest relevant package/module; keep the app/server boundary and one authoritative authorization store.
+4. Add tests for successful, denied and failure/retry paths; for UI include responsive and accessibility checks.
+5. When requirements conflict, stop and report the conflict; never quietly alter a confirmed policy.
+6. Update docs only when an approved decision changes, and avoid copying canonical content between files.

@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+.vite/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+# Local records, secrets, and recovery artifacts
+/secrets/
+/uploads/
+/backups/
