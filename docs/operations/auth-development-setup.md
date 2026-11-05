@@ -43,6 +43,10 @@ node --input-type=module -e 'import {readFileSync,writeFileSync} from "node:fs";
 
 Keep `AUTH_ENABLED=false` until the database role and migration are ready. No frontend `VITE_` auth secrets are required; Vite proxies `/api/auth` to the API on port 3000. The server's development command loads the root `.env`.
 
+Application tables and the Prisma migration ledger belong to `fmv`. Supabase already owns a different schema named `vault`; never baseline, drop or modify its secrets objects. Set `schema=fmv` on database URLs and replace every connection/certificate placeholder with actual local values. Keep Supabase's existing database and public-schema privileges intact when creating the runtime role: local Docker provisioning revocations are not hosted Supabase provisioning instructions.
+
+The initial migrations were corrected before their first successful hosted application. Existing Docker development volumes with the earlier `vault` migration history need a separately reviewed transition; do not reset them or rewrite their migration ledger. Fresh databases use the corrected `fmv` migrations.
+
 The application needs a **restricted runtime database URL**, separate from the migration/owner URL. A newly created Supabase project does not automatically provide the `fmv_app` role required by the reviewed migration. Before enabling auth, we must separately verify the development database connection, TLS, direct/session-pooler compatibility, create that restricted role with private credentials, and apply the reviewed Prisma migration using the owner role. Do not point the running API at the owner URL or manually invent broad grants. This database provisioning is a separate reviewable step once your project exists.
 
 After that verification, set `AUTH_ENABLED=true` and run `pnpm dev`. The default Docker-free checks use synthetic mocks and require no Supabase project. Real-provider tests require the configured database and provider; public signup remains blocked until sender/HTTPS/production configuration is verified.

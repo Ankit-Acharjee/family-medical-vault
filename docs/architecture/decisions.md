@@ -29,7 +29,7 @@
 
 The approved P0.4 task selects stable Prisma 7 for migration management and the future ORM. Migration credentials use `DATABASE_MIGRATION_URL`; future runtime queries use a separate restricted `DATABASE_URL`. No Prisma Client or patient models are generated until P1 defines the identity and authorization slice.
 
-Local development uses PostgreSQL 17 with an isolated `vault` application schema. The baseline creates only that schema and its migration ledger, revokes public access, and grants no blanket application access. Local `fmv_app` is neither owner nor superuser and cannot bypass RLS. P1 must introduce explicit table privileges, RLS and current server-side authorization before protected data operations exist.
+Local development uses PostgreSQL 17 with an isolated `fmv` application schema. The baseline creates only that schema and its migration ledger, revokes public access, and grants no blanket application access. The name deliberately avoids Supabase's reserved `vault` schema. Local `fmv_app` is neither owner nor superuser and cannot bypass RLS. P1 must introduce explicit table privileges, RLS and current server-side authorization before protected data operations exist.
 
 The Docker Compose stack is local only: API binds to loopback, PostgreSQL has no host port, and randomly generated local passwords remain in ignored `.local/compose.env`. Local migration tooling is kept separate from the non-root portable API runtime. Production continues to use managed Supabase and private R2; production database versions, roles, direct/pooler URLs, grants and TLS remain validation work.
 

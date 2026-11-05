@@ -30,7 +30,7 @@ State-changing requests require an exact configured Origin, JSON, and a random C
 
 Database-backed atomic limits are shared across processes: 30 writes and 120 reads per IP per minute, plus 8 email-address attempts per 15-minute window. Bucket identifiers are hashed. Forwarded client addresses are not trusted; reverse proxy configuration must be reviewed before production. Provider-side limits remain additional defenses. Bootstrap does not access the database or issue provider calls.
 
-Only `vault.auth_sessions` and `vault.auth_rate_limits` receive explicit backend runtime privileges and forced RLS policies for the dedicated `fmv_app` role. These are server-internal session stores, not patient grants. Never grant access to Supabase `anon`/`authenticated`, expose `vault` through the Data API, or run the API with an owner/bypass-RLS credential. Production role/TLS provisioning is a separate verification gate.
+Only `fmv.auth_sessions` and `fmv.auth_rate_limits` receive explicit backend runtime privileges and forced RLS policies for the dedicated `fmv_app` role. These are server-internal session stores, not patient grants. Never grant access to Supabase `anon`/`authenticated`, expose `fmv` through the Data API, or run the API with an owner/bypass-RLS credential. Production role/TLS provisioning is a separate verification gate.
 
 ## Validation status and limits
 

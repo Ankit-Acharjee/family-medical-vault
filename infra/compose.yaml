@@ -35,7 +35,7 @@ services:
       dockerfile: apps/server/Dockerfile
       target: tooling
     environment:
-      DATABASE_MIGRATION_URL: postgresql://fmv_owner:${LOCAL_DB_OWNER_PASSWORD}@postgres:5432/fmv_dev?schema=vault
+      DATABASE_MIGRATION_URL: postgresql://fmv_owner:${LOCAL_DB_OWNER_PASSWORD}@postgres:5432/fmv_dev?schema=fmv
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,7 +53,7 @@ services:
       NODE_ENV: development
       HOST: 0.0.0.0
       PORT: 3000
-      DATABASE_URL: postgresql://fmv_app:${LOCAL_DB_APP_PASSWORD}@postgres:5432/fmv_dev?schema=vault
+      DATABASE_URL: postgresql://fmv_app:${LOCAL_DB_APP_PASSWORD}@postgres:5432/fmv_dev?schema=fmv
     ports:
       - '127.0.0.1:${LOCAL_API_PORT:-3000}:3000'
     depends_on:
@@ -69,7 +69,7 @@ services:
     image: family-medical-vault-tooling:local
     profiles: [tools]
     environment:
-      DATABASE_MIGRATION_URL: postgresql://fmv_owner:${LOCAL_DB_OWNER_PASSWORD}@postgres:5432/fmv_dev?schema=vault
+      DATABASE_MIGRATION_URL: postgresql://fmv_owner:${LOCAL_DB_OWNER_PASSWORD}@postgres:5432/fmv_dev?schema=fmv
     depends_on:
       postgres:
         condition: service_healthy
@@ -82,8 +82,8 @@ services:
     image: family-medical-vault-tooling:local
     profiles: [test]
     environment:
-      TEST_DATABASE_URL: postgresql://fmv_owner:${LOCAL_DB_OWNER_PASSWORD}@postgres:5432/fmv_dev?schema=vault
-      TEST_RUNTIME_URL: postgresql://fmv_app:${LOCAL_DB_APP_PASSWORD}@postgres:5432/fmv_dev?schema=vault
+      TEST_DATABASE_URL: postgresql://fmv_owner:${LOCAL_DB_OWNER_PASSWORD}@postgres:5432/fmv_dev?schema=fmv
+      TEST_RUNTIME_URL: postgresql://fmv_app:${LOCAL_DB_APP_PASSWORD}@postgres:5432/fmv_dev?schema=fmv
     depends_on:
       postgres:
         condition: service_healthy

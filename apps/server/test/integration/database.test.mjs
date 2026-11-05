@@ -36,9 +36,9 @@ function localUrl(name, user) {
       url.password.length > 0 &&
       !url.hash &&
       [...url.searchParams].every(
-        ([key, value]) => key === 'schema' && value === 'vault',
+        ([key, value]) => key === 'schema' && value === 'fmv',
       ) &&
-      (user !== 'fmv_owner' || url.searchParams.get('schema') === 'vault'),
+      (user !== 'fmv_owner' || url.searchParams.get('schema') === 'fmv'),
     `${name} must target the expected disposable local database and role`,
   );
   return url;
@@ -114,7 +114,7 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
     await stage('fresh baseline deploys once and is repeatable', async () => {
       const before = await query(
         owner,
-        "SELECT to_regclass('vault._prisma_migrations') IS NULL AS fresh",
+        "SELECT to_regclass('fmv._prisma_migrations') IS NULL AS fresh",
       );
       assert.equal(
         before.rows[0].fresh,
@@ -129,7 +129,7 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
       async function baseline() {
         const result = await query(
           owner,
-          'SELECT migration_name, finished_at IS NOT NULL AS finished, rolled_back_at IS NULL AS active FROM vault._prisma_migrations',
+          'SELECT migration_name, finished_at IS NOT NULL AS finished, rolled_back_at IS NULL AS active FROM fmv._prisma_migrations',
         );
         assert.equal(
           result.rowCount,
@@ -155,7 +155,7 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
       await baseline();
       const tables = await query(
         owner,
-        "SELECT tablename FROM pg_tables WHERE schemaname = 'vault' AND tablename <> '_prisma_migrations'",
+        "SELECT tablename FROM pg_tables WHERE schemaname = 'fmv' AND tablename <> '_prisma_migrations'",
       );
       assert.equal(
         tables.rows
@@ -167,12 +167,12 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
       );
       const permissions = await query(
         owner,
-        "SELECT EXISTS (SELECT 1 FROM pg_namespace n, LATERAL aclexplode(COALESCE(n.nspacl, acldefault('n', n.nspowner))) a WHERE n.nspname = 'vault' AND a.grantee = 0 AND a.privilege_type IN ('USAGE', 'CREATE')) AS public_access",
+        "SELECT EXISTS (SELECT 1 FROM pg_namespace n, LATERAL aclexplode(COALESCE(n.nspacl, acldefault('n', n.nspowner))) a WHERE n.nspname = 'fmv' AND a.grantee = 0 AND a.privilege_type IN ('USAGE', 'CREATE')) AS public_access",
       );
       assert.equal(
         permissions.rows[0].public_access,
         false,
-        'PUBLIC must have no vault schema access',
+        'PUBLIC must have no fmv schema access',
       );
     });
 
@@ -191,8 +191,8 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           rolcreaterole: false,
         },
       ]);
-      await denied(runtime, 'CREATE TABLE vault.probe (id integer)');
-      await denied(runtime, 'SELECT * FROM vault._prisma_migrations');
+      await denied(runtime, 'CREATE TABLE fmv.probe (id integer)');
+      await denied(runtime, 'SELECT * FROM fmv._prisma_migrations');
     });
 
     await stage(
@@ -216,7 +216,7 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           );
           const encrypted = await query(
             runtime,
-            'SELECT payload FROM vault.auth_sessions WHERE id_hash = $1',
+            'SELECT payload FROM fmv.auth_sessions WHERE id_hash = $1',
             [digest(id)],
           );
           assert.equal(encrypted.rowCount, 1);
@@ -228,7 +228,7 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           await assert.rejects(primary.logout(id));
           const consumed = await query(
             runtime,
-            'SELECT count(*)::integer AS count FROM vault.auth_sessions WHERE id_hash = $1',
+            'SELECT count(*)::integer AS count FROM fmv.auth_sessions WHERE id_hash = $1',
             [digest(id)],
           );
           assert.equal(
@@ -283,7 +283,7 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           );
           const policies = await query(
             runtime,
-            "SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'vault' AND c.relname IN ('auth_sessions','auth_rate_limits')",
+            "SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'fmv' AND c.relname IN ('auth_sessions','auth_rate_limits')",
           );
           assert.equal(policies.rowCount, 2);
           assert.ok(
@@ -293,7 +293,7 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           );
           await denied(
             runtime,
-            'ALTER TABLE vault.auth_sessions DISABLE ROW LEVEL SECURITY',
+            'ALTER TABLE fmv.auth_sessions DISABLE ROW LEVEL SECURITY',
           );
         } catch {
           assert.fail('Restricted auth session database verification failed');
@@ -335,7 +335,7 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
         const migration = path.join(probe, 'migration.sql');
         await writeFile(
           migration,
-          'BEGIN;\nCREATE TABLE vault.integration_probe(id integer);\nSELECT nonexistent_probe_function();\nCOMMIT;\n',
+          'BEGIN;\nCREATE TABLE fmv.integration_probe(id integer);\nSELECT nonexistent_probe_function();\nCOMMIT;\n',
         );
         const config = path.join(temporary, 'prisma.config.mjs');
         const configModule = pathToFileURL(
@@ -352,7 +352,7 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
         );
         const rolledBack = await query(
           owner,
-          "SELECT to_regclass('vault.integration_probe') IS NULL AS absent",
+          "SELECT to_regclass('fmv.integration_probe') IS NULL AS absent",
         );
         assert.equal(
           rolledBack.rows[0].absent,
@@ -373,7 +373,7 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
         );
         await writeFile(
           migration,
-          'BEGIN;\nCREATE TABLE vault.integration_probe(id integer);\nCOMMIT;\n',
+          'BEGIN;\nCREATE TABLE fmv.integration_probe(id integer);\nCOMMIT;\n',
         );
         assert.equal(
           prisma(ownerUrl, ['migrate', 'deploy', '--config', config]),
@@ -382,7 +382,7 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
         );
         const retried = await query(
           owner,
-          "SELECT to_regclass('vault.integration_probe') IS NOT NULL AS present",
+          "SELECT to_regclass('fmv.integration_probe') IS NOT NULL AS present",
         );
         assert.equal(
           retried.rows[0].present,
@@ -391,7 +391,7 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
         );
         const completed = await query(
           owner,
-          'SELECT count(*)::integer AS count FROM vault._prisma_migrations WHERE migration_name = $1 AND finished_at IS NOT NULL AND rolled_back_at IS NULL',
+          'SELECT count(*)::integer AS count FROM fmv._prisma_migrations WHERE migration_name = $1 AND finished_at IS NOT NULL AND rolled_back_at IS NULL',
           [failureMigration],
         );
         assert.equal(

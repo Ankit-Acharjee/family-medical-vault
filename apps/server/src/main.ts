@@ -1,4 +1,5 @@
 import { createApplication } from './application.js';
+import { AuthService } from './auth/auth.service.js';
 
 async function bootstrap(): Promise<void> {
   const value = process.env['PORT'] ?? '3000';
@@ -7,7 +8,12 @@ async function bootstrap(): Promise<void> {
   }
   const { app } = await createApplication();
   await app.listen(Number(value), process.env['HOST'] ?? '127.0.0.1');
-  process.stdout.write(`${JSON.stringify({ event: 'server_started' })}\n`);
+  process.stdout.write(
+    `${JSON.stringify({
+      event: 'server_started',
+      authEnabled: Boolean(app.get(AuthService).config),
+    })}\n`,
+  );
 }
 
 bootstrap().catch(() => {

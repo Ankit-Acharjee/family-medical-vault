@@ -6,7 +6,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  schemas  = ["vault"]
+  schemas  = ["fmv"]
 }
 
 // These are internal backend sessions, never patient identities or grants.
@@ -19,7 +19,7 @@ model AuthSession {
   @@index([userId])
   @@index([expiresAt])
   @@map("auth_sessions")
-  @@schema("vault")
+  @@schema("fmv")
 }
 
 model AuthRateLimit {
@@ -29,5 +29,5 @@ model AuthRateLimit {
 
   @@index([expiresAt])
   @@map("auth_rate_limits")
-  @@schema("vault")
+  @@schema("fmv")
 }

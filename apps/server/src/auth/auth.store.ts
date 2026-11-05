@@ -51,7 +51,7 @@ export class PrismaAuthStore extends AuthStore {
         await db.$executeRaw`SET LOCAL lock_timeout = '5s'`;
         const rows = await db.$queryRaw<
           StoredSession[]
-        >`SELECT id_hash AS "idHash", user_id AS "userId", payload, expires_at AS "expiresAt" FROM vault.auth_sessions WHERE id_hash = ${idHash} FOR UPDATE`;
+        >`SELECT id_hash AS "idHash", user_id AS "userId", payload, expires_at AS "expiresAt" FROM fmv.auth_sessions WHERE id_hash = ${idHash} FOR UPDATE`;
         return work(rows[0] ?? null, {
           put: async (record) => {
             await db.authSession.upsert({
@@ -87,14 +87,14 @@ export class PrismaAuthStore extends AuthStore {
   async limit(id: string, until: Date, maximum: number) {
     const rows = await this.db.$queryRaw<
       { count: number }[]
-    >`INSERT INTO vault.auth_rate_limits (id, count, expires_at) VALUES (${id}, 1, ${until}) ON CONFLICT (id) DO UPDATE SET count = LEAST(vault.auth_rate_limits.count + 1, ${maximum + 1}) RETURNING count`;
+    >`INSERT INTO fmv.auth_rate_limits (id, count, expires_at) VALUES (${id}, 1, ${until}) ON CONFLICT (id) DO UPDATE SET count = LEAST(fmv.auth_rate_limits.count + 1, ${maximum + 1}) RETURNING count`;
     return (rows[0]?.count ?? maximum + 1) <= maximum;
   }
   async cleanup() {
     await this.db
-      .$executeRaw`DELETE FROM vault.auth_sessions WHERE id_hash IN (SELECT id_hash FROM vault.auth_sessions WHERE expires_at < now() LIMIT 1000)`;
+      .$executeRaw`DELETE FROM fmv.auth_sessions WHERE id_hash IN (SELECT id_hash FROM fmv.auth_sessions WHERE expires_at < now() LIMIT 1000)`;
     await this.db
-      .$executeRaw`DELETE FROM vault.auth_rate_limits WHERE id IN (SELECT id FROM vault.auth_rate_limits WHERE expires_at < now() LIMIT 1000)`;
+      .$executeRaw`DELETE FROM fmv.auth_rate_limits WHERE id IN (SELECT id FROM fmv.auth_rate_limits WHERE expires_at < now() LIMIT 1000)`;
   }
   async close() {
     await this.db.$disconnect();
