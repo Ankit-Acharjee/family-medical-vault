@@ -35,3 +35,12 @@
 ## Branch workflow
 - `develop` is the primary development and integration branch. Start routine work from `develop`.
 - `main` is reserved for approved production releases; do not merge routine development directly into it.
+
+## Local resource limits
+- This device has limited resources. Keep routine implementation and checks Docker-free.
+- Start Docker only when necessary for final container/database verification; keep sessions short and stop project containers after verification. Preserve development volumes and credentials.
+- Do not start or keep Docker Desktop running proactively during development. Respect the user's decision to close it.
+
+## Commit messages
+- Use a clear subject and a brief, precise body for implementation commits: what changed, how it works, resulting behavior changes, and relevant validation or limitations.
+- Direct pushes have no PR description, so include the review context in the commit body. Setup-only commits may be shorter.

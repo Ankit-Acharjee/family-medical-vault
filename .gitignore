@@ -16,3 +16,6 @@ coverage/
 # Browser QA artifacts (may include screen content)
 playwright-report/
 test-results/
+
+# Generated local credentials and container-only development state
+.local/

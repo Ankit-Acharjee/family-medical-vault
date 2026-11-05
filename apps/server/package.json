@@ -5,11 +5,16 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tools.json",
     "start": "node dist/main.js",
     "dev": "tsc-watch -p tsconfig.json --onSuccess \"node dist/main.js\"",
     "test": "pnpm build && node --test test/*.test.mjs",
-    "openapi": "pnpm build && node dist/generate-openapi.js"
+    "openapi": "pnpm build && node dist/generate-openapi.js",
+    "db:validate": "prisma validate",
+    "db:migrate": "prisma migrate deploy",
+    "db:status": "prisma migrate status",
+    "db:migration": "prisma migrate dev --create-only",
+    "test:db": "node --test test/integration/*.test.mjs"
   },
   "dependencies": {
     "@nestjs/common": "12.3.3",
@@ -24,6 +29,8 @@
   "devDependencies": {
     "@types/express": "5.0.6",
     "@types/node": "24.19.2",
-    "tsc-watch": "7.2.1"
+    "tsc-watch": "7.2.1",
+    "prisma": "7.10.1",
+    "pg": "8.23.1"
   }
 }

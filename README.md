@@ -17,7 +17,7 @@ pnpm format:check
 pnpm format
 ```
 
-`packages/contracts` remains a shared package foundation without domain schemas. P0.4 adds Docker, the database, and migrations; P0.5 adds CI.
+`packages/contracts` remains a shared package foundation without domain schemas. P0.4 provides local Docker/PostgreSQL and migrations; P0.5 adds CI.
 
 ## Branch workflow
 
@@ -50,19 +50,34 @@ Run `pnpm dev:server` for compilation and automatic server restarts. The server 
 - `GET /health` reports process liveness only; it does not check database or storage readiness.
 - `/api/docs` serves Swagger UI and `/api/openapi.json` serves OpenAPI in development. Both are disabled when `NODE_ENV=production`.
 - `pnpm openapi` generates `apps/server/dist/openapi.json` without opening a network listener.
-- `pnpm test` runs the API foundation tests.
+- `pnpm test` runs local-runner, API and browser tests; install the Playwright browser first. `pnpm test:db` separately runs disposable database integration tests.
 - `pnpm --filter @fmv/server build` and `pnpm --filter @fmv/server start` compile and run the API independently.
 
 Responses include a server-generated `X-Request-ID`. Errors return `{ error: { code, message }, requestId }` without raw exception details. HTTP logs contain only event type, request ID, method, status and duration; request URLs, headers, bodies and exception messages are excluded. Startup failures emit only a fixed event.
 
 There are no patient, authentication, database, storage or external-provider endpoints yet. The global validation pipe rejects unknown DTO fields; later feature slices must add validated DTOs and current patient authorization to every protected operation.
 
+## Local API and database
+
+For local API development, start Docker Desktop, then run:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm local:up
+```
+
+`local:up` prepares ignored local credentials if needed, builds the API and migration tooling, starts PostgreSQL, applies migrations, and serves the API at `http://127.0.0.1:3000`. Run the frontend separately with `pnpm dev:web` at `http://127.0.0.1:5173`. `pnpm local:setup` prepares credentials without starting services; `pnpm local:down` stops services but retains the database volume and matching credentials; `pnpm local:status` shows service status.
+
+Use `pnpm db:migrate` to apply migrations, `pnpm db:status` to inspect migration status, and `pnpm db:migration -- add_example` to create a migration (use one `snake_case_name`). `pnpm test:db` runs against a fresh isolated disposable project and removes only that test project's volumes afterward.
+
+Local credentials are generated in `.local/compose.env` with directory mode `700` and file mode `600`; the file is ignored by Git. Do not print or share it or `docker compose config` output. Keep the generated passwords with their existing development volume: do not reset or delete that volume or regenerate its passwords. Use no real patient data in local development. PostgreSQL has no host port, and the runtime role has no access to the baseline schema. Prisma 7 reviewed SQL migrations establish only the `vault` schema and migration ledger; Prisma Client and domain models are deferred to P1. The API container runs as non-root and does not receive cloud credentials. Production continues to use managed Supabase PostgreSQL and private R2.
+
 ## Project layout
 
 - `apps/web/` — responsive React, Vite, TypeScript frontend shell.
-- `apps/server/` — intended NestJS TypeScript modular monolith.
+- `apps/server/` — NestJS TypeScript modular monolith foundation.
 - `packages/contracts/` — shared validated API schemas (foundation only at this stage).
-- `infra/` — infrastructure and backup contract; deployment implementation pending.
+- `infra/` — local Docker setup and infrastructure/backup contract; production deployment pending.
 - `docs/` — canonical specifications and implementation decision records.
 
 ## Source of truth
@@ -73,6 +88,6 @@ Use the [design system](docs/design/design-system.md): adaptive monochrome, ligh
 
 ## Implementation status
 
-P0.1 workspace tooling, P0.2 API foundations, and P0.3 frontend shell are implemented. P0.3 covers UX-01, UX-02, UX-04, and the shell-level portion of UX-05; UX-03 has a prominent entry only, with real uploads deferred to P2. The API provides foundational support for SEC-05 (privacy hygiene) and REL-01 (health independent of external providers); these requirements are not fully complete until the relevant product flows exist.
+P0.1 workspace tooling, P0.2 API foundations, P0.3 frontend shell, and P0.4 local infrastructure and migration foundations are implemented. P0.3 covers UX-01, UX-02, UX-04, and the shell-level portion of UX-05; UX-03 has a prominent entry only, with real uploads deferred to P2. The API and local infrastructure provide foundational support for SEC-05 (privacy hygiene) and REL-01 (health independent of external providers); these requirements are not fully complete until the relevant product flows exist.
 
 Never commit credentials, patient records, uploads, or backup archives.

@@ -15,9 +15,18 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "dev:server": "pnpm --filter @fmv/server dev",
-    "test": "pnpm -r --if-present test",
+    "test": "pnpm test:infra && pnpm -r --if-present test",
     "openapi": "pnpm --filter @fmv/server openapi",
-    "dev:web": "pnpm --filter @fmv/web dev"
+    "dev:web": "pnpm --filter @fmv/web dev",
+    "local:setup": "node infra/scripts/local.mjs setup",
+    "local:up": "node infra/scripts/local.mjs up",
+    "local:down": "node infra/scripts/local.mjs down",
+    "local:status": "node infra/scripts/local.mjs status",
+    "db:migrate": "node infra/scripts/local.mjs migrate",
+    "db:status": "node infra/scripts/local.mjs db-status",
+    "db:migration": "node infra/scripts/local.mjs migration",
+    "test:db": "node infra/scripts/local.mjs test",
+    "test:infra": "node --test infra/test/*.test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

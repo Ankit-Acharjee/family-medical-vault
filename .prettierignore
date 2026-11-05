@@ -7,3 +7,5 @@ AGENTS.md
 docs/
 infra/README.md
 .tasks/
+
+.local/

@@ -1,0 +1,6 @@
+// Domain models and Prisma Client generation are introduced with P1.
+// Keep application data separate from provider-managed Supabase Auth schemas.
+datasource db {
+  provider = "postgresql"
+  schemas  = ["vault"]
+}

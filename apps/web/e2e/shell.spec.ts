@@ -147,6 +147,7 @@ test('narrow layouts, 200% equivalent zoom, and touch targets remain usable', as
   for (const width of [320, 390, 720, 768, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.goto('/');
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth > innerWidth,
     );
