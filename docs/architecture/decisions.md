@@ -34,3 +34,7 @@ Local development uses PostgreSQL 17 with an isolated `vault` application schema
 The Docker Compose stack is local only: API binds to loopback, PostgreSQL has no host port, and randomly generated local passwords remain in ignored `.local/compose.env`. Local migration tooling is kept separate from the non-root portable API runtime. Production continues to use managed Supabase and private R2; production database versions, roles, direct/pooler URLs, grants and TLS remain validation work.
 
 Migrations are forward-reviewed changes. Disposable integration databases test initial application, repeat runs, denied runtime operations and transactional failure/retry; destructive reset is not part of the normal workflow. Development volumes are retained on shutdown. No S3-compatible object service is introduced before P2 requires it.
+
+## P1.1 authentication boundary
+
+The approved P1.1 plan uses a same-origin Nest authentication boundary, opaque HttpOnly browser sessions and encrypted server-side Supabase credentials. See [session design](auth-sessions.md) for session lifetime, PKCE, current revocation checks, durable consumption and database privilege boundaries. React does not hold provider tokens. Person identity and patient permissions remain separate upcoming slices; live provider and production configuration remain unverified.

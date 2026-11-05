@@ -1,6 +1,16 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test } from '@playwright/test';
 
+// Presentation checks use a synthetic authenticated account; auth flows have separate tests.
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/auth/bootstrap', (route) =>
+    route.fulfill({ json: { enabled: true, csrf: 'synthetic-csrf' } }),
+  );
+  await page.route('**/api/auth/account', (route) =>
+    route.fulfill({ json: { email: 'fixture@example.test' } }),
+  );
+});
+
 const navigationItems = [
   'Overview',
   'Documents',
@@ -99,6 +109,9 @@ test('skip link focuses main and desktop navigation expands without hover', asyn
   isMobile,
 }) => {
   await page.goto('/');
+  await expect(
+    page.getByRole('heading', { name: 'Overview', exact: true }),
+  ).toBeVisible();
   if (!isMobile) {
     await page.keyboard.press('Tab');
     await expect(

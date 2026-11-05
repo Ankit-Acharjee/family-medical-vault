@@ -45,7 +45,13 @@ test('OpenAPI documents health without inventing patient routes', async () => {
   const response = await globalThis.fetch(`${base}/api/openapi.json`);
   assert.equal(response.status, 200);
   const document = await response.json();
-  assert.deepEqual(Object.keys(document.paths), ['/health']);
+  assert.ok(document.paths['/health']);
+  assert.ok(document.paths['/api/auth/account']);
+  assert.ok(
+    Object.keys(document.paths).every(
+      (path) => path === '/health' || path.startsWith('/api/auth/'),
+    ),
+  );
   assert.ok(document.paths['/health'].get.responses['200']);
   const ui = await globalThis.fetch(`${base}/api/docs`);
   assert.equal(ui.status, 200);

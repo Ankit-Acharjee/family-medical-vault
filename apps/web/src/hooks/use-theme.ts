@@ -22,6 +22,23 @@ export function useTheme() {
       // Theme switching still works without persistent storage.
     }
   }, [theme]);
+  useEffect(() => {
+    const sync = () => setTheme(initialTheme());
+    const observer = new MutationObserver(() => {
+      setTheme(
+        document.documentElement.dataset['theme'] === 'dark' ? 'dark' : 'light',
+      );
+    });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
+    window.addEventListener('storage', sync);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('storage', sync);
+    };
+  }, []);
   return {
     theme,
     toggleTheme: () =>

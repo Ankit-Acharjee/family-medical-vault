@@ -13,6 +13,7 @@ COPY apps/web/package.json apps/web/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 RUN pnpm install --frozen-lockfile --filter @fmv/server...
 COPY tsconfig.base.json ./
+COPY packages/contracts packages/contracts
 COPY apps/server apps/server
 RUN pnpm --filter @fmv/server build
 

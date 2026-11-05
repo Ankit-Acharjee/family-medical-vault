@@ -19,3 +19,6 @@ test-results/
 
 # Generated local credentials and container-only development state
 .local/
+
+# Generated Prisma runtime; regenerated before build and typecheck.
+apps/server/src/generated/

@@ -16,6 +16,7 @@ import {
   TrendingUp,
   Upload,
   Users,
+  UserRound,
 } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Input } from './components/ui/input';
@@ -165,6 +166,11 @@ export default function App() {
             <ChevronDown size={16} aria-hidden="true" />
           </Button>
           <div className="header-actions">
+            <Button asChild variant="ghost" size="icon" aria-label="Account">
+              <a href="#account">
+                <UserRound aria-hidden="true" size={20} />
+              </a>
+            </Button>
             <Button
               variant="ghost"
               className="icon-button"

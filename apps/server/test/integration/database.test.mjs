@@ -8,6 +8,14 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL, URL } from 'node:url';
 import test from 'node:test';
 import pg from 'pg';
+import { PrismaAuthStore } from '../../dist/auth/auth.store.js';
+import { AuthService } from '../../dist/auth/auth.service.js';
+import { digest } from '../../dist/auth/auth.crypto.js';
+import {
+  config as authConfig,
+  FakeProvider,
+} from '../support/auth-fixture.mjs';
+import { ServiceUnavailableException } from '@nestjs/common';
 
 const server = fileURLToPath(new URL('../../', import.meta.url));
 const failureMigration = '20261105000200_failure_probe';
@@ -125,12 +133,15 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
         );
         assert.equal(
           result.rowCount,
-          1,
-          'Exactly one baseline migration must exist',
+          2,
+          'Foundation and auth migrations must exist',
         );
         assert.equal(
-          result.rows[0].migration_name,
-          '20261105000100_foundation',
+          result.rows
+            .map((row) => row.migration_name)
+            .sort()
+            .join(','),
+          '20261105000100_foundation,20261105000300_auth_sessions',
         );
         assert.equal(result.rows[0].finished, true);
         assert.equal(result.rows[0].active, true);
@@ -147,9 +158,12 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
         "SELECT tablename FROM pg_tables WHERE schemaname = 'vault' AND tablename <> '_prisma_migrations'",
       );
       assert.equal(
-        tables.rowCount,
-        0,
-        'Baseline must contain no business tables',
+        tables.rows
+          .map((row) => row.tablename)
+          .sort()
+          .join(','),
+        'auth_rate_limits,auth_sessions',
+        'Only internal authentication tables may exist',
       );
       const permissions = await query(
         owner,
@@ -180,6 +194,115 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
       await denied(runtime, 'CREATE TABLE vault.probe (id integer)');
       await denied(runtime, 'SELECT * FROM vault._prisma_migrations');
     });
+
+    await stage(
+      'Prisma sessions enforce real row locks and durable consumption with restricted runtime role',
+      async () => {
+        const first = new PrismaAuthStore(runtimeUrl.href);
+        const second = new PrismaAuthStore(runtimeUrl.href);
+        const provider = new FakeProvider();
+        const primary = new AuthService(authConfig, first, provider);
+        const other = new AuthService(authConfig, second, provider);
+        const runtime = await connect(runtimeUrl);
+        try {
+          const id = await primary.login(
+            'fixture@example.test',
+            'synthetic-password',
+          );
+          await Promise.all(
+            Array.from({ length: 6 }, (_, i) =>
+              (i % 2 ? other : primary).account(id),
+            ),
+          );
+          const encrypted = await query(
+            runtime,
+            'SELECT payload FROM vault.auth_sessions WHERE id_hash = $1',
+            [digest(id)],
+          );
+          assert.equal(encrypted.rowCount, 1);
+          assert.equal(
+            encrypted.rows[0].payload.includes('synthetic-access'),
+            false,
+          );
+          provider.failure = new ServiceUnavailableException();
+          await assert.rejects(primary.logout(id));
+          const consumed = await query(
+            runtime,
+            'SELECT count(*)::integer AS count FROM vault.auth_sessions WHERE id_hash = $1',
+            [digest(id)],
+          );
+          assert.equal(
+            consumed.rows[0].count,
+            0,
+            'Logout deletion must survive provider failure',
+          );
+          await assert.rejects(other.account(id));
+          provider.failure = null;
+          const existing = await primary.login(
+            'fixture@example.test',
+            'synthetic-password',
+          );
+          const flow = await primary.begin('recover', 'fixture@example.test');
+          const sent = provider.sent.at(-1);
+          provider.codes.set('synthetic-db-recovery-code', {
+            challenge: sent.challenge,
+            email: 'fixture@example.test',
+          });
+          const state = new URL(sent.redirect).searchParams.get('state');
+          const recovery = await primary.callback(
+            flow.id,
+            'synthetic-db-recovery-code',
+            state,
+          );
+          provider.passwordFailure = new ServiceUnavailableException();
+          await assert.rejects(
+            primary.reset(recovery.id, 'synthetic-new-password'),
+          );
+          await assert.rejects(other.account(existing));
+          await assert.rejects(
+            other.reset(recovery.id, 'synthetic-new-password'),
+          );
+          assert.equal(
+            provider.passwordCalls,
+            1,
+            'Consumed recovery cannot be reused',
+          );
+          const limits = await Promise.all(
+            Array.from({ length: 10 }, () =>
+              first.limit(
+                'synthetic-shared-bucket',
+                new Date(Date.now() + 60_000),
+                3,
+              ),
+            ),
+          );
+          assert.equal(
+            limits.filter(Boolean).length,
+            3,
+            'Concurrent rate limits must be atomic',
+          );
+          const policies = await query(
+            runtime,
+            "SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'vault' AND c.relname IN ('auth_sessions','auth_rate_limits')",
+          );
+          assert.equal(policies.rowCount, 2);
+          assert.ok(
+            policies.rows.every(
+              (row) => row.relrowsecurity && row.relforcerowsecurity,
+            ),
+          );
+          await denied(
+            runtime,
+            'ALTER TABLE vault.auth_sessions DISABLE ROW LEVEL SECURITY',
+          );
+        } catch {
+          assert.fail('Restricted auth session database verification failed');
+        } finally {
+          await primary.onModuleDestroy();
+          await other.onModuleDestroy();
+        }
+      },
+    );
 
     await stage('wrong password is rejected', async () => {
       const wrong = new URL(runtimeUrl);

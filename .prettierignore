@@ -9,3 +9,5 @@ infra/README.md
 .tasks/
 
 .local/
+
+apps/server/src/generated/

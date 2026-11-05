@@ -1,6 +1,33 @@
-// Domain models and Prisma Client generation are introduced with P1.
 // Keep application data separate from provider-managed Supabase Auth schemas.
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
 datasource db {
   provider = "postgresql"
   schemas  = ["vault"]
+}
+
+// These are internal backend sessions, never patient identities or grants.
+model AuthSession {
+  idHash    String   @id @map("id_hash")
+  userId    String?  @map("user_id")
+  payload   String
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("auth_sessions")
+  @@schema("vault")
+}
+
+model AuthRateLimit {
+  id        String   @id
+  count     Int
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+
+  @@index([expiresAt])
+  @@map("auth_rate_limits")
+  @@schema("vault")
 }

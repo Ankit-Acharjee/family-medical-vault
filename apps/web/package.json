@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "pnpm typecheck && vite build",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tools.json",
+    "typecheck": "pnpm --filter @fmv/contracts build && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tools.json",
     "dev": "vite --host 127.0.0.1",
     "preview": "vite preview --host 127.0.0.1",
     "test": "playwright test"
@@ -19,7 +19,8 @@
     "lucide-react": "1.68.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "tailwind-merge": "3.7.0"
+    "tailwind-merge": "3.7.0",
+    "@fmv/contracts": "workspace:*"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.14.0",

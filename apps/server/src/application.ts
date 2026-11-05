@@ -7,15 +7,19 @@ import { AppModule } from './app.module.js';
 import { HttpErrorFilter } from './common/http-error.filter.js';
 import { requestContext } from './common/request-context.js';
 import type { RequestLog } from './common/request-context.js';
+import type { AuthService } from './auth/auth.service.js';
 
 export async function createApplication(
-  options: { log?: RequestLog; docs?: boolean } = {},
+  options: { log?: RequestLog; docs?: boolean; auth?: AuthService } = {},
 ) {
   // Nest's default logger can include exception details. All HTTP logging is allowlisted.
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    logger: false,
-    abortOnError: false,
-  });
+  const app = await NestFactory.create<NestExpressApplication>(
+    AppModule.register(options.auth),
+    {
+      logger: false,
+      abortOnError: false,
+    },
+  );
   app.disable('x-powered-by');
   app.use(
     requestContext(

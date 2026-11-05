@@ -108,3 +108,7 @@ Use the [design system](docs/design/design-system.md): adaptive monochrome, ligh
 P0.1 workspace tooling, P0.2 API foundations, P0.3 frontend shell, P0.4 local infrastructure and migration foundations, and the P0.5 CI workflow are implemented. The first hosted CI validation (G0) is pending. P0.3 covers UX-01, UX-02, UX-04, and the shell-level portion of UX-05; UX-03 has a prominent entry only, with real uploads deferred to P2. The API and local infrastructure provide foundational support for SEC-05 (privacy hygiene) and REL-01 (health independent of external providers); these requirements are not fully complete until the relevant product flows exist.
 
 Never commit credentials, patient records, uploads, or backup archives.
+
+## Authentication development (P1.1)
+
+The frontend now requires a verified application session before showing the vault shell. Without provider configuration it shows an unavailable sign-in state; there are no demo credentials or patient permissions. Follow [development auth setup](docs/operations/auth-development-setup.md) for a dedicated Supabase project, Google/email configuration and local secrets. See [session design](docs/architecture/auth-sessions.md) for security boundaries. Provider-backed flows remain unverified until setup is complete; automated auth tests use synthetic provider mocks.
