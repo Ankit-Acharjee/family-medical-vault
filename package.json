@@ -26,7 +26,13 @@
     "db:status": "node infra/scripts/local.mjs db-status",
     "db:migration": "node infra/scripts/local.mjs migration",
     "test:db": "node infra/scripts/local.mjs test",
-    "test:infra": "node --test infra/test/*.test.mjs"
+    "test:infra": "node --test infra/test/*.test.mjs",
+    "dev": "pnpm --parallel --filter @fmv/server --filter @fmv/web run dev",
+    "ci:lint": "node infra/ci/tools.mjs lint",
+    "security:secrets": "node infra/ci/tools.mjs secrets",
+    "security:dependencies": "pnpm audit --audit-level=high",
+    "test:security": "node --test infra/ci/test/*.test.mjs",
+    "ci:runtime": "node infra/ci/runtime-smoke.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

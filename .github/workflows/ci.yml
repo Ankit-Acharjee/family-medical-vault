@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CI: 'true'
+  CHECKPOINT_DISABLE: '1'
+  PRISMA_HIDE_UPDATE_MESSAGE: 'true'
+
+jobs:
+  quality:
+    name: Quality and browser tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Install pinned pnpm and dependencies
+        run: |
+          npm install --global pnpm@10.33.0
+          pnpm install --frozen-lockfile
+      - name: Typecheck, lint and format
+        run: |
+          pnpm typecheck
+          pnpm lint
+          pnpm format:check
+      - name: Build packages and generate OpenAPI
+        run: |
+          pnpm build
+          pnpm openapi
+      - name: Install browser and run tests
+        run: |
+          pnpm --filter @fmv/web exec playwright install --with-deps chromium
+          pnpm test
+      # Do not upload screenshots, traces, reports or application data.
+
+  security:
+    name: Dependency, secret and workflow checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Scan history and source for secrets
+        run: node infra/ci/tools.mjs secrets
+      - name: Validate workflows and security-tool failure paths
+        run: |
+          node infra/ci/tools.mjs lint
+          node --test infra/ci/test/*.test.mjs
+      - name: Audit all dependencies at high severity
+        run: |
+          npm install --global pnpm@10.33.0
+          pnpm install --frozen-lockfile
+          pnpm security:dependencies
+
+  infrastructure:
+    name: Disposable database and API container
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Install pinned pnpm and dependencies
+        run: |
+          npm install --global pnpm@10.33.0
+          pnpm install --frozen-lockfile
+      - name: Generate ephemeral local credentials
+        run: pnpm local:setup
+      - name: Test migration integrity and restricted database roles
+        run: pnpm test:db
+      - name: Build and verify local API container
+        run: |
+          pnpm local:up
+          pnpm ci:runtime
+          pnpm db:status
+      - name: Stop local project containers
+        if: always()
+        run: |
+          if [ -f .local/compose.env ]; then
+            pnpm local:down
+          fi
+      # Ephemeral runner owns all local test state; no cloud credentials or deployments.

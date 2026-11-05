@@ -44,3 +44,9 @@
 ## Commit messages
 - Use a clear subject and a brief, precise body for implementation commits: what changed, how it works, resulting behavior changes, and relevant validation or limitations.
 - Direct pushes have no PR description, so include the review context in the commit body. Setup-only commits may be shorter.
+
+## Cost-aware delegation
+- Use the `delegate-free` skill with mixed OpenCode and native Codex routing; the user authorizes both engines for this project.
+- Prefer verified free GLM/DeepSeek workers for bounded implementation; use cheaper Codex workers when their reliability reduces total review and rework cost.
+- Do not select Beam or Nemotron by default. Model availability alone does not establish task competence.
+- Keep architecture, authentication/authorization, migrations and security decisions with the supervisor. Give workers minimal context and narrow acceptance criteria, review their changes, and stop repeated ineffective retries.

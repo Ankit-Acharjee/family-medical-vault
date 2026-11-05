@@ -29,6 +29,8 @@ Run `pnpm dev:web` and open `http://127.0.0.1:5173`. The shell provides Overview
 
 Patient selection, search, and upload remain unavailable until identity and vault slices are implemented. Empty views contain no example medical records. Theme preference is the only value saved in browser storage; there is no service worker or offline medical cache.
 
+For native development without Docker, `pnpm dev` starts the API and web app together; start the local database separately only when needed.
+
 Shared UI primitives follow shadcn conventions with Radix dialogs and Tailwind semantic tokens. `ResourceState` provides loading, empty, error/retry, denied, offline, pending and success presentations for subsequent feature slices.
 
 Browser QA covers both themes, mobile/desktop navigation, dialog focus, theme persistence, narrow layouts (including the layout width equivalent of a 1440px window at 200% zoom), reduced motion, blocked storage, and automated axe WCAG checks. Automated checks do not replace a full screen-reader or manual accessibility review.
@@ -72,6 +74,21 @@ Use `pnpm db:migrate` to apply migrations, `pnpm db:status` to inspect migration
 
 Local credentials are generated in `.local/compose.env` with directory mode `700` and file mode `600`; the file is ignored by Git. Do not print or share it or `docker compose config` output. Keep the generated passwords with their existing development volume: do not reset or delete that volume or regenerate its passwords. Use no real patient data in local development. PostgreSQL has no host port, and the runtime role has no access to the baseline schema. Prisma 7 reviewed SQL migrations establish only the `vault` schema and migration ledger; Prisma Client and domain models are deferred to P1. The API container runs as non-root and does not receive cloud credentials. Production continues to use managed Supabase PostgreSQL and private R2.
 
+## CI and local security checks
+
+GitHub Actions runs on pushes and pull requests targeting `develop` or `main`, and by manual dispatch. Its `quality`, `security`, and `infrastructure` jobs use read-only repository permissions and pinned actions. CI does not deploy, use cloud credentials, publish images, or upload artifacts. Docker runs only on the GitHub-hosted runner for disposable database and API-container checks, with cleanup configured to run even after failures. Push checks report failures; configure required checks in repository branch protection separately to block merges.
+
+Local security checks do not require Docker:
+
+```sh
+pnpm ci:lint
+pnpm security:secrets
+pnpm security:dependencies
+pnpm test:security
+```
+
+The first scanner run downloads pinned Gitleaks/actionlint binaries from their official GitHub releases and verifies SHA-256 checksums; cached tools live under ignored `.local/ci-tools`. Secret scans cover Git history and working source and suppress raw findings. Dependency audit fails on high or critical advisories and registry errors. The current audit reports one moderate, development-only `minimatch` advisory through ESLint (GHSA-g3hv-75wg-m249); it remains visible, with no exception or breaking override applied.
+
 ## Project layout
 
 - `apps/web/` — responsive React, Vite, TypeScript frontend shell.
@@ -88,6 +105,6 @@ Use the [design system](docs/design/design-system.md): adaptive monochrome, ligh
 
 ## Implementation status
 
-P0.1 workspace tooling, P0.2 API foundations, P0.3 frontend shell, and P0.4 local infrastructure and migration foundations are implemented. P0.3 covers UX-01, UX-02, UX-04, and the shell-level portion of UX-05; UX-03 has a prominent entry only, with real uploads deferred to P2. The API and local infrastructure provide foundational support for SEC-05 (privacy hygiene) and REL-01 (health independent of external providers); these requirements are not fully complete until the relevant product flows exist.
+P0.1 workspace tooling, P0.2 API foundations, P0.3 frontend shell, P0.4 local infrastructure and migration foundations, and the P0.5 CI workflow are implemented. The first hosted CI validation (G0) is pending. P0.3 covers UX-01, UX-02, UX-04, and the shell-level portion of UX-05; UX-03 has a prominent entry only, with real uploads deferred to P2. The API and local infrastructure provide foundational support for SEC-05 (privacy hygiene) and REL-01 (health independent of external providers); these requirements are not fully complete until the relevant product flows exist.
 
 Never commit credentials, patient records, uploads, or backup archives.
