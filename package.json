@@ -2,5 +2,28 @@
   "name": "family-medical-vault",
   "version": "0.0.0",
   "private": true,
-  "description": "Private medical records vault for individuals and authorized family caregivers"
+  "description": "Private medical records vault for individuals and authorized family caregivers",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": "24.x",
+    "pnpm": "10.33.x"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint . --max-warnings=0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "dev:server": "pnpm --filter @fmv/server dev",
+    "test": "pnpm -r --if-present test",
+    "openapi": "pnpm --filter @fmv/server openapi",
+    "dev:web": "pnpm --filter @fmv/web dev"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "eslint": "10.14.0",
+    "prettier": "3.9.10",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.1"
+  }
 }

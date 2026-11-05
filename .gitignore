@@ -12,3 +12,7 @@ coverage/
 /secrets/
 /uploads/
 /backups/
+
+# Browser QA artifacts (may include screen content)
+playwright-report/
+test-results/

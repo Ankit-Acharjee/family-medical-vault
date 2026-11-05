@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+pnpm-lock.yaml
+# Preserve canonical specifications as supplied.
+AGENTS.md
+docs/
+infra/README.md
+.tasks/

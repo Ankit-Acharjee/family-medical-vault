@@ -1,0 +1,29 @@
+{
+  "name": "@fmv/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/main.js",
+    "dev": "tsc-watch -p tsconfig.json --onSuccess \"node dist/main.js\"",
+    "test": "pnpm build && node --test test/*.test.mjs",
+    "openapi": "pnpm build && node dist/generate-openapi.js"
+  },
+  "dependencies": {
+    "@nestjs/common": "12.3.3",
+    "@nestjs/core": "12.3.3",
+    "@nestjs/platform-express": "12.3.3",
+    "@nestjs/swagger": "12.1.0",
+    "class-transformer": "0.5.1",
+    "class-validator": "0.15.1",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2"
+  },
+  "devDependencies": {
+    "@types/express": "5.0.6",
+    "@types/node": "24.19.2",
+    "tsc-watch": "7.2.1"
+  }
+}

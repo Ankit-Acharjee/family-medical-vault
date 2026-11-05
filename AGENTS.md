@@ -31,3 +31,7 @@
 4. Add tests for successful, denied and failure/retry paths; for UI include responsive and accessibility checks.
 5. When requirements conflict, stop and report the conflict; never quietly alter a confirmed policy.
 6. Update docs only when an approved decision changes, and avoid copying canonical content between files.
+
+## Branch workflow
+- `develop` is the primary development and integration branch. Start routine work from `develop`.
+- `main` is reserved for approved production releases; do not merge routine development directly into it.

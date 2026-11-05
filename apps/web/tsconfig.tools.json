@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "noEmit": true,
+    "jsx": "react-jsx"
+  },
+  "include": [
+    "vite.config.ts",
+    "playwright.config.ts",
+    "e2e/**/*.ts",
+    "e2e/**/*.tsx"
+  ]
+}
