@@ -33,16 +33,28 @@ for (const theme of ['light', 'dark'] as const) {
 }
 
 test('overview visual review in both themes', async ({ page }, testInfo) => {
+  if (testInfo.project.name === 'mobile')
+    await page.setViewportSize({ width: 390, height: 844 });
+  await page.route('**/api/auth/bootstrap', (route) =>
+    route.fulfill({ json: { enabled: true, csrf: 'synthetic-csrf' } }),
+  );
+  await page.route('**/api/auth/account', (route) =>
+    route.fulfill({ json: { email: 'fixture@example.test' } }),
+  );
   await page.goto('/');
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Overview');
   await page.screenshot({
     path: testInfo.outputPath('overview-light.png'),
-    fullPage: true,
+    fullPage: testInfo.project.name !== 'mobile',
     scale: 'css',
+    animations: 'disabled',
   });
   await page.getByRole('button', { name: 'Switch to dark theme' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await page.screenshot({
     path: testInfo.outputPath('overview-dark.png'),
-    fullPage: true,
+    fullPage: testInfo.project.name !== 'mobile',
     scale: 'css',
+    animations: 'disabled',
   });
 });

@@ -31,3 +31,24 @@ model AuthRateLimit {
   @@map("auth_rate_limits")
   @@schema("fmv")
 }
+
+model AppAccount {
+  id      String  @id @db.Uuid
+  issuer  String
+  subject String
+  person  Person?
+
+  @@unique([issuer, subject], map: "app_accounts_provider_key")
+  @@map("app_accounts")
+  @@schema("fmv")
+}
+
+model Person {
+  id             String     @id @db.Uuid
+  ownerAccountId String     @unique @map("owner_account_id") @db.Uuid
+  displayName    String     @map("display_name")
+  account        AppAccount @relation(fields: [ownerAccountId], references: [id], onDelete: Restrict)
+
+  @@map("persons")
+  @@schema("fmv")
+}

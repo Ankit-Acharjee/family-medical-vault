@@ -5,7 +5,7 @@
 ## Non-negotiable
 - `docs/product/scope.md` defines scope; requirements are indexed in `docs/product/requirements-index.md` and specified by their domain owners.
 - `docs/architecture/decisions.md` is the authority for approved stack choices and explicitly unverified deployment assumptions.
-- `docs/design/design-system.md` is the visual authority: adaptive monochrome, light default, graphite dark, minimal/classy UI inspired by the user-supplied desktop and mobile references. Do **not** revert to the earlier teal palette.
+- `docs/design/design-system.md` is the visual authority: Arctic Blue light theme (default) and Obsidian & Electric Blue dark theme, with a minimal, classy UI inspired by the user-supplied desktop and mobile references. The previous adaptive monochrome/graphite and earlier teal palettes are deprecated.
 - No invented functionality, medical facts, APIs, payment services, login routes or vendor guarantees. Record missing decisions in `docs/architecture/open-decisions.md` and ask before irreversible actions.
 - Enforce patient authorization on every protected backend operation. Never treat a JWT's patient ID or client-supplied Person ID as permission.
 - Never send records to external AI without explicit documented consent. No medical content in logs, analytics or unencrypted backups.
@@ -21,7 +21,7 @@
 - Lab/medications: `docs/domains/medical-data.md`, `docs/domains/medications.md`
 - Summaries/shares: `docs/domains/sharing.md`
 - Security/deletion/backups: `docs/security/access-control.md`, `docs/operations/backup-recovery.md`
-- Frontend UI: `docs/design/design-system.md`, `docs/design/ux-flows.md`
+- Frontend UI: `docs/design/design-system.md`, `docs/design/screen-spec.md`, `docs/design/ux-flows.md`
 - Deployment/hosting: `docs/architecture/decisions.md`, `docs/architecture/open-decisions.md`
 
 ## Implementation discipline

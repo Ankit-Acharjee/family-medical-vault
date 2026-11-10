@@ -8,6 +8,7 @@ import {
   Req,
   Res,
   UseGuards,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ApiProperty, ApiTags } from '@nestjs/swagger';
 import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
@@ -19,6 +20,8 @@ import type {
   AuthNotice,
 } from '@fmv/contracts';
 import { AuthService } from './auth.service.js';
+import { PersonStore } from '../identity/person.store.js';
+import { Transform } from 'class-transformer';
 import {
   AuthBoundaryGuard,
   clearCookie,
@@ -56,11 +59,24 @@ class ResetDto {
   password!: string;
 }
 class EmptyDto {}
+class CreatePersonDto {
+  @ApiProperty({ minLength: 1, maxLength: 100 })
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsString()
+  @MinLength(1)
+  @MaxLength(100)
+  displayName!: string;
+}
 
 @ApiTags('Authentication')
 @Controller('api/auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly people: PersonStore,
+  ) {}
   private read(request: Request, kind: 'session' | 'flow') {
     return cookie(request, cookieName(this.auth.config?.secure ?? false, kind));
   }
@@ -86,6 +102,27 @@ export class AuthController {
   @UseGuards(AuthBoundaryGuard)
   account(@Req() request: Request): Promise<AuthAccount> {
     return this.auth.account(this.read(request, 'session'));
+  }
+  @Get('person')
+  @UseGuards(AuthBoundaryGuard)
+  async person(@Req() request: Request) {
+    const principal = await this.auth.principal(this.read(request, 'session'));
+    try {
+      return { person: await this.people.find(principal) };
+    } catch {
+      throw new ServiceUnavailableException();
+    }
+  }
+  @Post('person')
+  @HttpCode(200)
+  @UseGuards(AuthBoundaryGuard)
+  async createPerson(@Body() body: CreatePersonDto, @Req() request: Request) {
+    const principal = await this.auth.principal(this.read(request, 'session'));
+    try {
+      return { person: await this.people.create(principal, body.displayName) };
+    } catch {
+      throw new ServiceUnavailableException();
+    }
   }
   @Get('recovery')
   @UseGuards(AuthBoundaryGuard)

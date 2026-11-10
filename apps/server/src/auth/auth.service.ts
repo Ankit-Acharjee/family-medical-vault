@@ -321,6 +321,13 @@ export class AuthService implements OnModuleDestroy {
       email: session.provider.user.email,
     }));
   }
+  // Internal account linkage uses the provider's stable subject, never email.
+  principal(id: string | undefined) {
+    return this.session(id, 'account', async (session) => ({
+      issuer: this.config!.providerUrl,
+      subject: session.provider.user.id,
+    }));
+  }
   recovery(id: string | undefined) {
     return this.session(id, 'recovery', async () => true);
   }

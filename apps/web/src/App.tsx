@@ -29,7 +29,9 @@ import {
   DialogDescription,
 } from './components/ui/dialog';
 import { useTheme } from './hooks/use-theme';
+import { MedicalDocumentArt } from './components/overview/MedicalDocumentArt';
 import './styles.css';
+import './overview.css';
 
 const destinations = [
   { id: 'overview', label: 'Overview', short: 'Home', icon: LayoutDashboard },
@@ -116,7 +118,9 @@ export default function App() {
       </a>
     ));
   return (
-    <div className={`app-shell${expanded ? ' rail-expanded' : ''}`}>
+    <div
+      className={`app-shell${expanded ? ' rail-expanded' : ''}${destination === 'overview' ? ' overview-screen' : ''}`}
+    >
       <a
         className="skip-link"
         href="#main-content"
@@ -225,27 +229,21 @@ export default function App() {
               >
                 <div className="welcome-copy">
                   <span className="section-kicker">Patient records</span>
-                  <h2 id="welcome-title">
-                    Choose a patient
-                    <br />
-                    to get started.
-                  </h2>
+                  <h2 id="welcome-title">Choose a patient to get started.</h2>
                   <p>
                     Select a patient to bring their medical documents, health
                     trends and medication information into view.
                   </p>
-                  <Button onClick={() => openDialog('patient')}>
+                  <Button
+                    className="overview-cta"
+                    onClick={() => openDialog('patient')}
+                  >
                     Select patient
                     <ArrowRight size={18} aria-hidden="true" />
                   </Button>
                 </div>
-                <div className="document-motif" aria-hidden="true">
-                  <div className="motif-sheet">
-                    <FileText size={30} />
-                    <span />
-                    <span />
-                    <span />
-                  </div>
+                <div className="overview-art" aria-hidden="true">
+                  <MedicalDocumentArt />
                 </div>
               </section>
               <section
@@ -262,18 +260,8 @@ export default function App() {
                     <ArrowRight size={16} aria-hidden="true" />
                   </a>
                 </div>
-                <div className="records-empty">
-                  <div className="empty-icon">
-                    <FolderOpen size={26} aria-hidden="true" />
-                  </div>
-                  <h3>No patient selected</h3>
-                  <p>Choose a patient to see their documents here.</p>
-                  <Button
-                    variant="outline"
-                    onClick={() => openDialog('patient')}
-                  >
-                    Select patient
-                  </Button>
+                <div className="overview-record-icon" aria-hidden="true">
+                  <FileText size={28} />
                 </div>
               </section>
               <div className="context-note">

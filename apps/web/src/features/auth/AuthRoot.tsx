@@ -6,6 +6,9 @@ import { AuthPanel } from './AuthPanel';
 import type { AuthMode } from './AuthPanel';
 import { Button } from '../../components/ui/button';
 import { useTheme } from '../../hooks/use-theme';
+import { PersonPanel } from './PersonPanel';
+import type { OwnPersonResult } from '@fmv/contracts';
+import './account.css';
 
 class AuthRequestError extends Error {
   constructor(readonly status: number) {
@@ -44,6 +47,11 @@ export function AuthRoot({ children }: { children: ReactNode }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [personState, setPersonState] = useState<OwnPersonResult | null>(null);
+  const [personError, setPersonError] = useState('');
+  const [personBusy, setPersonBusy] = useState(false);
+  const personSubmitting = useRef(false);
+  const personVersion = useRef(0);
   const [hash, setHash] = useState(window.location.hash);
   const [mode, setMode] = useState<AuthMode>(modeFromHash);
   const { theme, toggleTheme } = useTheme();
@@ -130,6 +138,10 @@ export function AuthRoot({ children }: { children: ReactNode }) {
   };
   async function action(work: () => Promise<void>) {
     if (busy || !bootstrap?.enabled) return;
+    ++personVersion.current;
+    personSubmitting.current = false;
+    setPersonState(null);
+    setPersonBusy(false);
     ++loadVersion.current;
     setBusy(true);
     setError('');
@@ -156,6 +168,33 @@ export function AuthRoot({ children }: { children: ReactNode }) {
 
   const accountPage = hash === '#account';
   useEffect(() => {
+    let active = true;
+    ++personVersion.current;
+    personSubmitting.current = false;
+    setPersonState(null);
+    setPersonError('');
+    if (accountPage && account) {
+      setPersonBusy(true);
+      void request<OwnPersonResult>('person')
+        .then((result) => {
+          if (active) setPersonState(result);
+        })
+        .catch(() => {
+          if (active)
+            setPersonError(
+              'Your profile could not be loaded. Reopen your account to retry.',
+            );
+        })
+        .finally(() => {
+          if (active) setPersonBusy(false);
+        });
+    }
+    return () => {
+      active = false;
+      ++personVersion.current;
+    };
+  }, [accountPage, account?.email]);
+  useEffect(() => {
     if (accountPage && account)
       document.getElementById('account-title')?.focus();
     if (!account || accountPage)
@@ -163,7 +202,9 @@ export function AuthRoot({ children }: { children: ReactNode }) {
   }, [accountPage, account]);
   if (account && !accountPage && mode !== 'reset') return children;
   return (
-    <main className="auth-screen">
+    <main
+      className={`auth-screen${account && accountPage ? ' account-screen' : ''}`}
+    >
       <div className="auth-theme">
         <Button
           variant="ghost"
@@ -184,12 +225,57 @@ export function AuthRoot({ children }: { children: ReactNode }) {
         <p role="status">Checking your session…</p>
       ) : account && accountPage ? (
         <section className="auth-panel" aria-labelledby="account-title">
-          <h1 id="account-title" tabIndex={-1}>
-            Your account
-          </h1>
-          <p>{account.email}</p>
-          <p>No patient profiles are linked yet.</p>
-          {error && <p role="alert">{error}</p>}
+          <header className="auth-panel__header">
+            <h1 id="account-title" tabIndex={-1}>
+              Your account
+            </h1>
+            <p className="auth-panel__intro">{account.email}</p>
+          </header>
+          {personState ? (
+            <PersonPanel
+              person={personState.person}
+              busy={personBusy}
+              {...(personError ? { error: personError } : {})}
+              onCreate={(displayName) => {
+                if (personSubmitting.current) return;
+                const version = personVersion.current;
+                personSubmitting.current = true;
+                setPersonBusy(true);
+                setPersonError('');
+                void request<OwnPersonResult>('person', bootstrap?.csrf, {
+                  displayName,
+                })
+                  .then((result) => {
+                    if (personVersion.current === version)
+                      setPersonState(result);
+                  })
+                  .catch(
+                    () =>
+                      personVersion.current === version &&
+                      setPersonError(
+                        'Your profile could not be created. Please try again.',
+                      ),
+                  )
+                  .finally(() => {
+                    if (personVersion.current === version) {
+                      personSubmitting.current = false;
+                      setPersonBusy(false);
+                    }
+                  });
+              }}
+            />
+          ) : personBusy ? (
+            <p role="status">Loading your profile…</p>
+          ) : personError ? (
+            <p className="auth-panel__error" role="alert">
+              {personError}
+            </p>
+          ) : null}
+          {error && (
+            <p className="auth-panel__error" role="alert">
+              {error}
+            </p>
+          )}
           <div className="account-actions">
             <Button asChild variant="outline">
               <a href="#overview">Back to vault</a>

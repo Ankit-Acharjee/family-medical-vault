@@ -1,0 +1,116 @@
+.account-screen {
+  --account-ambient-blue: color-mix(
+    in srgb,
+    var(--fmv-primary) 5%,
+    transparent
+  );
+  --account-ambient-highlight: color-mix(
+    in srgb,
+    var(--fmv-surface) 75%,
+    transparent
+  );
+  --account-ambient-base: var(--fmv-bg-subtle);
+  --account-cta: var(--fmv-primary);
+  --account-cta-end: var(--fmv-primary-hover);
+  --account-cta-text: var(--fmv-on-primary);
+  background:
+    radial-gradient(
+      ellipse at 80% 35%,
+      var(--account-ambient-blue),
+      transparent 70%
+    ),
+    radial-gradient(
+      ellipse at 15% 10%,
+      var(--account-ambient-highlight),
+      transparent 65%
+    ),
+    linear-gradient(160deg, var(--fmv-bg), var(--account-ambient-base));
+}
+
+[data-theme='dark'] .account-screen {
+  --account-ambient-blue: color-mix(
+    in srgb,
+    var(--fmv-primary) 6%,
+    transparent
+  );
+  --account-ambient-highlight: color-mix(
+    in srgb,
+    var(--fmv-primary-soft) 35%,
+    transparent
+  );
+  --account-ambient-base: var(--fmv-bg);
+  --account-cta: oklch(from var(--fmv-primary) calc(l * 0.84) c h);
+  --account-cta-end: oklch(from var(--fmv-primary) calc(l * 0.76) c h);
+  --account-cta-text: var(--fmv-text);
+}
+
+.account-screen .auth-panel {
+  width: min(100%, 520px);
+  padding: clamp(24px, 6vw, 40px);
+  background: var(--fmv-surface);
+  border-color: var(--fmv-border);
+  border-radius: 20px;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--fmv-primary) 6%, transparent);
+}
+
+.account-screen .auth-panel__header {
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.account-screen .auth-panel__intro,
+.account-screen .person-panel p,
+.account-screen .person-panel dd {
+  overflow-wrap: anywhere;
+}
+
+.account-screen .person-panel {
+  gap: 12px;
+  padding: 20px;
+  background: var(--fmv-surface-muted);
+  border-color: var(--fmv-border);
+  border-radius: 16px;
+}
+
+.account-screen .person-panel form > button {
+  min-height: 44px;
+  border: 1px solid color-mix(in srgb, var(--fmv-focus) 48%, var(--account-cta));
+  border-radius: 12px;
+  background: linear-gradient(
+    180deg,
+    var(--account-cta),
+    var(--account-cta-end)
+  );
+  color: var(--account-cta-text);
+}
+
+.account-screen .person-panel form > button:hover:not(:disabled) {
+  background: var(--account-cta-end);
+}
+
+.account-screen .account-actions {
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.account-screen .account-actions > * {
+  min-height: 44px;
+  color: var(--fmv-text);
+  background: var(--fmv-surface-muted);
+  border: 1px solid var(--fmv-border);
+  border-radius: 12px;
+}
+
+.account-screen .account-actions > *:hover:not(:disabled) {
+  background: var(--fmv-surface-hover);
+}
+
+@media (max-width: 359px) {
+  .account-screen .auth-panel {
+    padding: 20px 16px;
+  }
+
+  .account-screen .person-panel {
+    padding: 16px;
+  }
+}

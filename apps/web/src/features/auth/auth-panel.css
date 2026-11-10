@@ -6,7 +6,9 @@
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 16px;
+  font-size: 15px;
+  line-height: 24px;
 }
 
 .auth-screen {
@@ -41,6 +43,10 @@
   font-weight: 600;
 }
 .auth-panel__header h1 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 36px;
+  font-weight: 650;
   overflow-wrap: anywhere;
 }
 .auth-panel__header h1:focus {
@@ -49,6 +55,8 @@
 .auth-panel__intro {
   color: var(--text-muted);
   font-size: 15px;
+  line-height: 24px;
+  overflow-wrap: anywhere;
 }
 .auth-panel__form {
   display: grid;
@@ -68,15 +76,16 @@
   margin-bottom: 16px;
   padding: 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 12px;
   overflow-wrap: anywhere;
 }
 .auth-panel__error {
   color: var(--danger);
+  background: var(--fmv-danger-soft);
 }
 .auth-panel__notice {
   color: var(--text);
-  background: var(--bg);
+  background: var(--fmv-surface-muted);
 }
 .auth-panel__progress {
   color: var(--text-muted);
@@ -115,12 +124,59 @@
   text-underline-offset: 3px;
   background: none;
   border: 0;
-  border-radius: 6px;
+  border-radius: 10px;
   cursor: pointer;
 }
 .auth-panel__nav button:disabled {
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+.person-panel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 20px;
+  background: var(--fmv-surface-muted);
+  border: 1px solid var(--fmv-border-soft);
+  border-radius: 16px;
+}
+.person-panel h2 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+}
+.person-panel p,
+.person-panel dl {
+  margin: 0;
+}
+.person-panel dl {
+  min-width: 0;
+}
+.person-panel dt {
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 22px;
+}
+.person-panel dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.person-panel form {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.person-panel label {
+  font-size: 14px;
+  font-weight: 500;
+}
+.person-panel input,
+.person-panel button,
+.auth-panel__form input,
+.auth-panel__form > button {
+  min-height: 44px;
 }
 
 @media (max-width: 359px) {

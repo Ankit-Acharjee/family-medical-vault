@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL, URL } from 'node:url';
 import test from 'node:test';
 import pg from 'pg';
 import { PrismaAuthStore } from '../../dist/auth/auth.store.js';
+import { PrismaPersonStore } from '../../dist/identity/person.store.js';
 import { AuthService } from '../../dist/auth/auth.service.js';
 import { digest } from '../../dist/auth/auth.crypto.js';
 import {
@@ -133,15 +134,15 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
         );
         assert.equal(
           result.rowCount,
-          2,
-          'Foundation and auth migrations must exist',
+          3,
+          'Foundation, auth and identity migrations must exist',
         );
         assert.equal(
           result.rows
             .map((row) => row.migration_name)
             .sort()
             .join(','),
-          '20261105000100_foundation,20261105000300_auth_sessions',
+          '20261105000100_foundation,20261105000300_auth_sessions,20261105000400_person_identity',
         );
         assert.equal(result.rows[0].finished, true);
         assert.equal(result.rows[0].active, true);
@@ -162,8 +163,8 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           .map((row) => row.tablename)
           .sort()
           .join(','),
-        'auth_rate_limits,auth_sessions',
-        'Only internal authentication tables may exist',
+        'app_accounts,auth_rate_limits,auth_sessions,persons',
+        'Only reviewed authentication and identity tables may exist',
       );
       const permissions = await query(
         owner,
@@ -300,6 +301,99 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
         } finally {
           await primary.onModuleDestroy();
           await other.onModuleDestroy();
+        }
+      },
+    );
+
+    await stage(
+      'Person onboarding is atomic, isolated, immutable and retry-safe across stores',
+      async () => {
+        const left = new PrismaPersonStore(runtimeUrl.href);
+        const right = new PrismaPersonStore(runtimeUrl.href);
+        const runtime = await connect(runtimeUrl);
+        const principal = {
+          issuer: 'https://fixture.supabase.co',
+          subject: 'person-a',
+        };
+        try {
+          assert.equal(await left.find(principal), null);
+          const results = await Promise.all(
+            Array.from({ length: 8 }, (_, i) =>
+              (i % 2 ? left : right).create(principal, 'Fixture Person'),
+            ),
+          );
+          assert.equal(new Set(results.map((p) => p.id)).size, 1);
+          const person = results[0];
+          assert.deepEqual(
+            await right.create(principal, 'Different name'),
+            person,
+          );
+          const other = { ...principal, subject: 'person-b' };
+          assert.equal(await right.find(other), null);
+          const second = await right.create(other, 'Fixture Person');
+          assert.notEqual(second.id, person.id);
+          const otherIssuer = await right.create(
+            { ...principal, issuer: 'https://other.supabase.co' },
+            'Fixture Person',
+          );
+          assert.notEqual(otherIssuer.id, person.id);
+          const counts = await query(
+            owner,
+            'SELECT count(*)::integer AS n FROM fmv.persons',
+          );
+          assert.equal(counts.rows[0].n, 3);
+          for (const sql of [
+            "UPDATE fmv.persons SET display_name = 'Forbidden'",
+            'DELETE FROM fmv.persons',
+            'DELETE FROM fmv.app_accounts',
+            "UPDATE fmv.app_accounts SET subject = 'Forbidden'",
+            'ALTER TABLE fmv.persons DISABLE ROW LEVEL SECURITY',
+            'ALTER TABLE fmv.app_accounts DISABLE ROW LEVEL SECURITY',
+            'SELECT * FROM fmv._prisma_migrations',
+          ])
+            await denied(runtime, sql);
+          const flags = await query(
+            owner,
+            "SELECT relrowsecurity, relforcerowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'fmv' AND c.relname IN ('persons', 'app_accounts')",
+          );
+          assert.equal(flags.rowCount, 2);
+          assert.ok(
+            flags.rows.every(
+              (row) => row.relrowsecurity && row.relforcerowsecurity,
+            ),
+          );
+          // Force a Person insert failure after account insert, proving rollback
+          // removes the partial account and a clean retry remains possible.
+          await query(
+            owner,
+            `CREATE FUNCTION fmv.fail_person_probe() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.display_name = 'Rollback probe' THEN RAISE EXCEPTION 'synthetic failure'; END IF; RETURN NEW; END $$`,
+          );
+          await query(
+            owner,
+            'CREATE TRIGGER person_failure_probe BEFORE INSERT ON fmv.persons FOR EACH ROW EXECUTE FUNCTION fmv.fail_person_probe()',
+          );
+          const retry = { ...principal, subject: 'person-rollback' };
+          try {
+            await assert.rejects(left.create(retry, 'Rollback probe'));
+            const orphan = await query(
+              owner,
+              'SELECT count(*)::integer AS n FROM fmv.app_accounts WHERE subject = $1',
+              [retry.subject],
+            );
+            assert.equal(orphan.rows[0].n, 0);
+            assert.equal(await right.find(retry), null);
+          } finally {
+            await query(
+              owner,
+              'DROP TRIGGER person_failure_probe ON fmv.persons',
+            );
+            await query(owner, 'DROP FUNCTION fmv.fail_person_probe()');
+          }
+          const retried = await right.create(retry, 'Fixture Person');
+          assert.deepEqual(await left.find(retry), retried);
+        } finally {
+          await left.onModuleDestroy();
+          await right.onModuleDestroy();
         }
       },
     );
