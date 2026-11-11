@@ -30,6 +30,10 @@ import {
 } from './components/ui/dialog';
 import { useTheme } from './hooks/use-theme';
 import { MedicalDocumentArt } from './components/overview/MedicalDocumentArt';
+import { PatientPicker, usePatientContext } from './features/patients';
+import { DocumentUploadForm, DocumentsPanel } from './features/documents';
+import { FamilyAccessPanel } from './features/access';
+import { captureIncomingLink } from './features/access/incoming-link';
 import './styles.css';
 import './overview.css';
 
@@ -41,8 +45,10 @@ const destinations = [
   { id: 'family-access', label: 'Family Access', short: 'Family', icon: Users },
 ];
 const readDestination = () =>
-  destinations.some(({ id }) => id === window.location.hash.slice(1))
-    ? window.location.hash.slice(1)
+  destinations.some(
+    ({ id }) => id === window.location.hash.slice(1).split('?')[0],
+  )
+    ? window.location.hash.slice(1).split('?')[0]!
     : 'overview';
 const states: Record<
   string,
@@ -78,6 +84,8 @@ export default function App() {
   const [destination, setDestination] = useState(readDestination);
   const [expanded, setExpanded] = useState(false);
   const [dialog, setDialog] = useState<'patient' | 'upload' | null>(null);
+  const [listRevision, setListRevision] = useState(0);
+  const { selectedPatient } = usePatientContext();
   const dialogTrigger = useRef<HTMLElement | null>(null);
   const openDialog = (kind: 'patient' | 'upload') => {
     dialogTrigger.current =
@@ -88,7 +96,10 @@ export default function App() {
   };
   const { theme, toggleTheme } = useTheme();
   useEffect(() => {
-    const onHashChange = () => setDestination(readDestination());
+    const onHashChange = () => {
+      captureIncomingLink();
+      setDestination(readDestination());
+    };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
@@ -158,14 +169,16 @@ export default function App() {
             className="patient-switcher"
             variant="ghost"
             onClick={() => openDialog('patient')}
-            aria-label="Select patient: No patient selected"
+            aria-label={`Select patient: ${selectedPatient?.displayName ?? 'No patient selected'}`}
           >
             <span className="patient-avatar">
               <Users size={20} aria-hidden="true" />
             </span>
             <span className="patient-copy">
               <span className="control-label">Select patient</span>
-              <span className="patient-name">No patient selected</span>
+              <span className="patient-name">
+                {selectedPatient?.displayName ?? 'No patient selected'}
+              </span>
             </span>
             <ChevronDown size={16} aria-hidden="true" />
           </Button>
@@ -206,7 +219,11 @@ export default function App() {
               disabled
             />
           </div>
-          <p id="search-help">Select a patient to search their documents.</p>
+          <p id="search-help">
+            {selectedPatient
+              ? 'Document search is not available yet.'
+              : 'Select a patient to search their documents.'}
+          </p>
         </div>
         <main id="main-content" tabIndex={-1}>
           <div className="page-heading">
@@ -218,7 +235,7 @@ export default function App() {
             </div>
             <span className="context-label">
               <span className="context-dot" />
-              No patient selected
+              {selectedPatient?.displayName ?? 'No patient selected'}
             </span>
           </div>
           {destination === 'overview' ? (
@@ -229,18 +246,35 @@ export default function App() {
               >
                 <div className="welcome-copy">
                   <span className="section-kicker">Patient records</span>
-                  <h2 id="welcome-title">Choose a patient to get started.</h2>
-                  <p>
-                    Select a patient to bring their medical documents, health
-                    trends and medication information into view.
-                  </p>
-                  <Button
-                    className="overview-cta"
-                    onClick={() => openDialog('patient')}
-                  >
-                    Select patient
-                    <ArrowRight size={18} aria-hidden="true" />
-                  </Button>
+                  <h2 id="welcome-title">
+                    {selectedPatient
+                      ? `Records for ${selectedPatient.displayName}`
+                      : 'Choose a patient to get started.'}
+                  </h2>
+                  {selectedPatient ? (
+                    <p>View the documents available for this patient.</p>
+                  ) : (
+                    <p>
+                      Select a patient to bring their medical documents, health
+                      trends and medication information into view.
+                    </p>
+                  )}
+                  {selectedPatient ? (
+                    <Button className="overview-cta" asChild>
+                      <a href="#documents">
+                        View documents{' '}
+                        <ArrowRight size={18} aria-hidden="true" />
+                      </a>
+                    </Button>
+                  ) : (
+                    <Button
+                      className="overview-cta"
+                      onClick={() => openDialog('patient')}
+                    >
+                      Select patient
+                      <ArrowRight size={18} aria-hidden="true" />
+                    </Button>
+                  )}
                 </div>
                 <div className="overview-art" aria-hidden="true">
                   <MedicalDocumentArt />
@@ -267,19 +301,35 @@ export default function App() {
               <div className="context-note">
                 <LockKeyhole size={18} aria-hidden="true" />
                 <p>
-                  A separate view for every patient. Select a patient before
-                  viewing or adding medical records.
+                  {selectedPatient
+                    ? 'Documents are shown for the selected patient.'
+                    : 'A separate view for every patient. Select a patient before viewing or adding medical records.'}
                 </p>
               </div>
             </>
+          ) : destination === 'family-access' ? (
+            <FamilyAccessPanel />
+          ) : destination === 'documents' && selectedPatient ? (
+            <DocumentsPanel
+              key={`${selectedPatient.id}:${listRevision}`}
+              onRequestUpload={() => openDialog('upload')}
+            />
           ) : currentState ? (
             <ResourceState
               state="empty"
               title={currentState.title}
-              description={currentState.description}
+              description={
+                selectedPatient
+                  ? `${active.label} information is not available yet.`
+                  : currentState.description
+              }
               icon={<active.icon size={28} aria-hidden="true" />}
-              actionLabel="Select patient"
-              onAction={() => openDialog('patient')}
+              {...(!selectedPatient
+                ? {
+                    actionLabel: 'Select patient',
+                    onAction: () => openDialog('patient'),
+                  }
+                : {})}
               footnote={
                 <>
                   <LockKeyhole size={16} aria-hidden="true" />
@@ -309,16 +359,29 @@ export default function App() {
           <DialogHeader>
             <DialogTitle>
               {dialog === 'upload'
-                ? 'Select a patient first'
+                ? selectedPatient
+                  ? 'Upload documents'
+                  : 'Select a patient first'
                 : 'Select patient'}
             </DialogTitle>
             <DialogDescription>
               {dialog === 'upload'
-                ? 'Medical documents must belong to a patient. No patient profiles are available, so uploading is not available yet.'
-                : 'No patient profiles are available. When you have access to a patient profile, you will be able to select it here.'}
+                ? selectedPatient
+                  ? 'Choose documents for the selected patient.'
+                  : 'Medical documents must belong to a patient. Select a patient before uploading.'
+                : 'Choose a patient profile available to your account.'}
             </DialogDescription>
           </DialogHeader>
-          <Button onClick={() => setDialog(null)}>Got it</Button>
+          {dialog === 'patient' ? (
+            <PatientPicker onSelected={() => setDialog(null)} />
+          ) : selectedPatient ? (
+            <DocumentUploadForm
+              key={selectedPatient.id}
+              onComplete={() => setListRevision((revision) => revision + 1)}
+            />
+          ) : (
+            <Button onClick={() => setDialog(null)}>Got it</Button>
+          )}
         </DialogContent>
       </Dialog>
     </div>

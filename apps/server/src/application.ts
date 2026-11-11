@@ -9,6 +9,8 @@ import { requestContext } from './common/request-context.js';
 import type { RequestLog } from './common/request-context.js';
 import type { AuthService } from './auth/auth.service.js';
 import type { PersonStore } from './identity/person.store.js';
+import type { AccessStore } from './access/access.store.js';
+import type { DocumentsService } from './documents/documents.service.js';
 
 export async function createApplication(
   options: {
@@ -16,11 +18,18 @@ export async function createApplication(
     docs?: boolean;
     auth?: AuthService;
     people?: PersonStore;
+    access?: AccessStore;
+    documents?: DocumentsService;
   } = {},
 ) {
   // Nest's default logger can include exception details. All HTTP logging is allowlisted.
   const app = await NestFactory.create<NestExpressApplication>(
-    AppModule.register(options.auth, options.people),
+    AppModule.register(
+      options.auth,
+      options.people,
+      options.access,
+      options.documents,
+    ),
     {
       logger: false,
       abortOnError: false,

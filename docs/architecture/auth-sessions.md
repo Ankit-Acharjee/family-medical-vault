@@ -8,7 +8,7 @@ The React client talks only to same-origin `/api/auth/*` endpoints. Nest perform
 
 The browser receives a random 256-bit opaque session cookie. Production cookies use the `__Host-` prefix, `Secure`, `HttpOnly`, `SameSite=Lax`, root path, and no Domain attribute. HTTP cookies are permitted only on development loopback origins. Session IDs rotate on successful login and callback; only SHA-256 hashes are stored in PostgreSQL. AES-256-GCM encrypts provider credentials and flow metadata with a server-only 32-byte key, authenticated against the row hash. Losing/changing that key invalidates existing sessions; do not reuse the database password or publish the key.
 
-Sessions have a 12-hour absolute limit and a 30-minute inactivity limit. Account/recovery liveness probes do not renew inactivity; no patient operations exist in this slice. Future authenticated business operations must explicitly define activity renewal. Expired rows are deleted on access and by bounded periodic cleanup. Expiry enforcement does not depend on cleanup succeeding.
+Sessions have a 12-hour absolute limit and a 30-minute inactivity limit. Account/recovery and authorized-patient-list liveness probes do not renew inactivity. Explicit document and caregiver-access operations renew inactivity after a verified provider refresh, capped by the original absolute expiry. Expired rows are deleted on access and by bounded periodic cleanup. Expiry enforcement does not depend on cleanup succeeding.
 
 ## Current session checks and concurrency
 

@@ -151,9 +151,9 @@ test('callbacks require same-browser flow, state and PKCE; valid exchange rotate
   assert.equal(next.recovery, false);
   await assert.rejects(f.auth.account(old));
   await assert.rejects(f.auth.callback(flow.id, code, data.state));
-  assert.deepEqual(await f.auth.account(next.id), {
-    email: 'fixture@example.test',
-  });
+  const account = await f.auth.account(next.id);
+  assert.equal(account.email, 'fixture@example.test');
+  assert.match(account.contextId, /^[A-Za-z0-9_-]{43}$/);
 });
 
 test('recovery grants no account access; reset is single-use and invalidates all application sessions', async () => {
@@ -249,7 +249,14 @@ test('HTTP cookies are opaque/HttpOnly; logout and replay fail even if provider 
     assert.ok(!cookie.includes('synthetic-access'));
     const old = jar.get('fmv_session');
     const account = await call('account');
-    assert.deepEqual(await account.json(), { email: 'fixture@example.test' });
+    const accountBody = await account.json();
+    assert.equal(accountBody.email, 'fixture@example.test');
+    assert.match(accountBody.contextId, /^[A-Za-z0-9_-]{43}$/);
+    assert.notEqual(accountBody.contextId, old);
+    assert.equal(
+      (await (await call('account')).json()).contextId,
+      accountBody.contextId,
+    );
     provider.failure = new ServiceUnavailableException(
       'synthetic-private-provider-error',
     );
@@ -364,6 +371,23 @@ test('automatic liveness probes never extend idle expiry', async (t) => {
   t.mock.timers.tick(15 * 60_000);
   await f.auth.account(id);
   t.mock.timers.tick(15 * 60_000 + 1);
+  await assert.rejects(f.auth.account(id), UnauthorizedException);
+  await f.auth.onModuleDestroy();
+});
+
+test('explicit business activity renews inactivity without changing absolute session expiry', async (t) => {
+  const f = fixture();
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const id = await f.auth.login('fixture@example.test', 'synthetic-password');
+  const until = f.decode(f.store.rows.get(digest(id))).until;
+  t.mock.timers.tick(15 * 60_000);
+  await f.auth.principal(id, true);
+  const renewed = f.decode(f.store.rows.get(digest(id)));
+  assert.equal(renewed.until, until);
+  assert.equal(renewed.idleUntil, Math.min(until, Date.now() + 30 * 60_000));
+  t.mock.timers.tick(16 * 60_000);
+  await f.auth.account(id);
+  t.mock.timers.tick(14 * 60_000 + 1);
   await assert.rejects(f.auth.account(id), UnauthorizedException);
   await f.auth.onModuleDestroy();
 });

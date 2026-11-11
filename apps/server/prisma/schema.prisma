@@ -33,10 +33,16 @@ model AuthRateLimit {
 }
 
 model AppAccount {
-  id      String  @id @db.Uuid
-  issuer  String
-  subject String
-  person  Person?
+  id                  String             @id @db.Uuid
+  issuer              String
+  subject             String
+  person              Person?
+  receivedGrants      AccessGrant[]      @relation("GrantRecipient")
+  issuedGrants        AccessGrant[]      @relation("GrantIssuer")
+  accessEvents        AccessEvent[]
+  documentEvents      DocumentEvent[]
+  issuedInvitations   AccessInvitation[] @relation("InvitationIssuer")
+  receivedInvitations AccessInvitation[] @relation("InvitationRecipient")
 
   @@unique([issuer, subject], map: "app_accounts_provider_key")
   @@map("app_accounts")
@@ -44,11 +50,147 @@ model AppAccount {
 }
 
 model Person {
-  id             String     @id @db.Uuid
-  ownerAccountId String     @unique @map("owner_account_id") @db.Uuid
-  displayName    String     @map("display_name")
-  account        AppAccount @relation(fields: [ownerAccountId], references: [id], onDelete: Restrict)
+  id             String             @id @db.Uuid
+  ownerAccountId String             @unique @map("owner_account_id") @db.Uuid
+  displayName    String             @map("display_name")
+  account        AppAccount         @relation(fields: [ownerAccountId], references: [id], onDelete: Restrict)
+  grants         AccessGrant[]
+  accessEvents   AccessEvent[]
+  documents      Document[]
+  documentEvents DocumentEvent[]
+  invitations    AccessInvitation[]
 
   @@map("persons")
+  @@schema("fmv")
+}
+
+model AccessGrant {
+  id                 String                  @id @db.Uuid
+  patientId          String                  @map("patient_id") @db.Uuid
+  granteeAccountId   String                  @map("grantee_account_id") @db.Uuid
+  issuerAccountId    String                  @map("issuer_account_id") @db.Uuid
+  actions            String[]
+  scopeKind          String                  @map("scope_kind")
+  categoryId         String?                 @map("category_id") @db.Uuid
+  documentId         String?                 @map("document_id") @db.Uuid
+  expiresAt          DateTime?               @map("expires_at") @db.Timestamptz(3)
+  revokedAt          DateTime?               @map("revoked_at") @db.Timestamptz(3)
+  createdAt          DateTime                @default(dbgenerated("statement_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  patient            Person                  @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  grantee            AppAccount              @relation("GrantRecipient", fields: [granteeAccountId], references: [id], onDelete: Restrict)
+  issuer             AppAccount              @relation("GrantIssuer", fields: [issuerAccountId], references: [id], onDelete: Restrict)
+  events             AccessEvent[]
+  parentDependencies AccessGrantDependency[] @relation("DependencyChild")
+  childDependencies  AccessGrantDependency[] @relation("DependencyParent")
+  category           DocumentCategory?       @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  document           Document?               @relation(fields: [patientId, documentId], references: [patientId, id], onDelete: Restrict)
+
+  @@unique([patientId, id], map: "access_grants_patient_identity")
+  @@index([patientId, granteeAccountId], map: "access_grants_lookup")
+  @@index([granteeAccountId], map: "access_grants_recipient")
+  @@map("access_grants")
+  @@schema("fmv")
+}
+
+model DocumentCategory {
+  id        String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug      String        @unique
+  name      String
+  documents Document[]
+  grants    AccessGrant[]
+
+  @@map("document_categories")
+  @@schema("fmv")
+}
+
+model AccessGrantDependency {
+  patientId     String      @map("patient_id") @db.Uuid
+  grantId       String      @map("grant_id") @db.Uuid
+  parentGrantId String      @map("parent_grant_id") @db.Uuid
+  child         AccessGrant @relation("DependencyChild", fields: [patientId, grantId], references: [patientId, id], onDelete: Restrict)
+  parent        AccessGrant @relation("DependencyParent", fields: [patientId, parentGrantId], references: [patientId, id], onDelete: Restrict)
+
+  @@id([grantId, parentGrantId])
+  @@map("access_grant_dependencies")
+  @@schema("fmv")
+}
+
+model AccessInvitation {
+  id                 String      @id @db.Uuid
+  tokenHash          String      @unique @map("token_hash")
+  kind               String
+  patientId          String?     @map("patient_id") @db.Uuid
+  issuerAccountId    String      @map("issuer_account_id") @db.Uuid
+  recipientAccountId String?     @map("recipient_account_id") @db.Uuid
+  actions            String[]
+  scopeKind          String      @map("scope_kind")
+  categoryId         String?     @map("category_id") @db.Uuid
+  documentId         String?     @map("document_id") @db.Uuid
+  state              String
+  createdAt          DateTime    @default(dbgenerated("statement_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  expiresAt          DateTime    @map("expires_at") @db.Timestamptz(3)
+  patient            Person?     @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  issuer             AppAccount  @relation("InvitationIssuer", fields: [issuerAccountId], references: [id], onDelete: Restrict)
+  recipient          AppAccount? @relation("InvitationRecipient", fields: [recipientAccountId], references: [id], onDelete: Restrict)
+
+  @@index([patientId], map: "access_invitations_patient")
+  @@map("access_invitations")
+  @@schema("fmv")
+}
+
+model Document {
+  id             String           @id @db.Uuid
+  uploadId       String           @unique @map("upload_id") @db.Uuid
+  patientId      String           @map("patient_id") @db.Uuid
+  categoryId     String           @map("category_id") @db.Uuid
+  title          String
+  mimeType       String           @map("mime_type")
+  bytes          Int
+  sha256         String
+  idempotencyKey String           @map("idempotency_key")
+  objectKey      String           @unique @map("object_key")
+  state          String
+  createdAt      DateTime         @default(dbgenerated("statement_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  patient        Person           @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  category       DocumentCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  grants         AccessGrant[]
+  events         DocumentEvent[]
+
+  @@unique([patientId, idempotencyKey])
+  @@unique([patientId, id], map: "documents_patient_identity")
+  @@index([patientId, createdAt], map: "documents_patient")
+  @@map("documents")
+  @@schema("fmv")
+}
+
+model DocumentEvent {
+  id             String     @id @db.Uuid
+  patientId      String     @map("patient_id") @db.Uuid
+  documentId     String     @map("document_id") @db.Uuid
+  actorAccountId String     @map("actor_account_id") @db.Uuid
+  kind           String
+  occurredAt     DateTime   @default(dbgenerated("statement_timestamp()")) @map("occurred_at") @db.Timestamptz(3)
+  retentionUntil DateTime   @default(dbgenerated("(statement_timestamp() + interval '90 days')")) @map("retention_until") @db.Timestamptz(3)
+  patient        Person     @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  document       Document   @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  actor          AppAccount @relation(fields: [actorAccountId], references: [id], onDelete: Restrict)
+
+  @@index([retentionUntil], map: "document_events_retention")
+  @@map("document_events")
+  @@schema("fmv")
+}
+
+model AccessEvent {
+  id             String       @id @db.Uuid
+  patientId      String       @map("patient_id") @db.Uuid
+  actorAccountId String       @map("actor_account_id") @db.Uuid
+  kind           String
+  grantId        String?      @map("grant_id") @db.Uuid
+  occurredAt     DateTime     @default(dbgenerated("statement_timestamp()")) @map("occurred_at") @db.Timestamptz(3)
+  patient        Person       @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  actor          AppAccount   @relation(fields: [actorAccountId], references: [id], onDelete: Restrict)
+  grant          AccessGrant? @relation(fields: [grantId], references: [id], onDelete: Restrict)
+
+  @@map("access_events")
   @@schema("fmv")
 }

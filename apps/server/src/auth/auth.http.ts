@@ -3,12 +3,14 @@ import {
   ForbiddenException,
   HttpException,
   Injectable,
+  Inject,
 } from '@nestjs/common';
 import type { CanActivate, ExecutionContext } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { timingSafeEqual } from 'node:crypto';
 import { AuthService } from './auth.service.js';
 import { digest, opaque, validOpaque } from './auth.crypto.js';
+import { Reflector } from '@nestjs/core';
 
 export const cookieName = (
   secure: boolean,
@@ -58,7 +60,10 @@ export function csrf(request: Request, response: Response, secure: boolean) {
 
 @Injectable()
 export class AuthBoundaryGuard implements CanActivate {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    @Inject(Reflector) private readonly reflector: Reflector,
+  ) {}
   async canActivate(context: ExecutionContext) {
     const request = context.switchToHttp().getRequest<Request>();
     const response = context.switchToHttp().getResponse<Response>();
@@ -76,10 +81,17 @@ export class AuthBoundaryGuard implements CanActivate {
       request.headers['sec-fetch-site'] !== 'none'
     )
       throw new ForbiddenException();
-    if (request.method === 'POST') {
+    const write = !['GET', 'HEAD', 'OPTIONS'].includes(request.method);
+    if (write) {
       if (request.headers.origin !== this.auth.config.origin)
         throw new ForbiddenException();
-      if (!request.is('application/json')) throw new BadRequestException();
+      const binary =
+        this.reflector.get<boolean>(
+          'fmv.binaryUpload',
+          context.getHandler(),
+        ) === true;
+      if (!request.is(binary ? 'application/octet-stream' : 'application/json'))
+        throw new BadRequestException();
       const header = request.headers['x-csrf-token'];
       const token = cookie(
         request,
@@ -93,9 +105,9 @@ export class AuthBoundaryGuard implements CanActivate {
         throw new ForbiddenException();
     }
     const limited = await this.auth.limit(
-      `ip:${request.method === 'POST' ? 'write' : 'read'}`,
+      `ip:${write ? 'write' : 'read'}`,
       request.ip ?? 'unknown',
-      request.method === 'POST' ? 30 : 120,
+      write ? 30 : 120,
       60_000,
     );
     if (!limited) {

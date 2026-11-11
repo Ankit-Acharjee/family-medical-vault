@@ -9,6 +9,8 @@ import { useTheme } from '../../hooks/use-theme';
 import { PersonPanel } from './PersonPanel';
 import type { OwnPersonResult } from '@fmv/contracts';
 import './account.css';
+import { PatientProvider } from '../patients';
+import { clearIncomingLink, getIncomingLink } from '../access/incoming-link';
 
 class AuthRequestError extends Error {
   constructor(readonly status: number) {
@@ -32,6 +34,22 @@ async function request<T>(
   });
   if (!response.ok) throw new AuthRequestError(response.status);
   return response.json() as Promise<T>;
+}
+async function loadAccount(): Promise<AuthAccount> {
+  const value = await request<unknown>('account');
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    !('email' in value) ||
+    typeof value.email !== 'string' ||
+    !value.email ||
+    !('contextId' in value) ||
+    typeof value.contextId !== 'string' ||
+    !value.contextId ||
+    value.contextId.length > 256
+  )
+    throw new Error('Invalid account response');
+  return { email: value.email, contextId: value.contextId };
 }
 const modeFromHash = (): AuthMode => {
   const value = window.location.hash.replace('#auth-', '');
@@ -72,7 +90,7 @@ export function AuthRoot({ children }: { children: ReactNode }) {
       }
       let next: AuthAccount | null = null;
       try {
-        next = await request<AuthAccount>('account');
+        next = await loadAccount();
       } catch (error) {
         if (
           !(error instanceof AuthRequestError) ||
@@ -193,14 +211,19 @@ export function AuthRoot({ children }: { children: ReactNode }) {
       active = false;
       ++personVersion.current;
     };
-  }, [accountPage, account?.email]);
+  }, [accountPage, account?.contextId, account?.email]);
   useEffect(() => {
     if (accountPage && account)
       document.getElementById('account-title')?.focus();
     if (!account || accountPage)
       document.title = `${accountPage && account ? 'Your account' : 'Account access'} | Family Medical Vault`;
   }, [accountPage, account]);
-  if (account && !accountPage && mode !== 'reset') return children;
+  if (account && !accountPage && mode !== 'reset')
+    return (
+      <PatientProvider key={account.contextId} sessionKey={account.contextId}>
+        {children}
+      </PatientProvider>
+    );
   return (
     <main
       className={`auth-screen${account && accountPage ? ' account-screen' : ''}`}
@@ -287,6 +310,7 @@ export function AuthRoot({ children }: { children: ReactNode }) {
                   try {
                     await request('logout', bootstrap?.csrf, {});
                   } finally {
+                    clearIncomingLink();
                     setAccount(null);
                     window.location.hash = 'auth-login';
                   }
@@ -302,14 +326,27 @@ export function AuthRoot({ children }: { children: ReactNode }) {
           mode={mode}
           busy={busy || !bootstrap?.enabled}
           {...(error ? { error } : {})}
-          {...(notice ? { notice } : {})}
+          {...(notice || getIncomingLink()
+            ? {
+                notice: [
+                  notice,
+                  getIncomingLink()
+                    ? 'If you sign in with Google, reopen the original access link after signing in.'
+                    : '',
+                ]
+                  .filter(Boolean)
+                  .join(' '),
+              }
+            : {})}
           onModeChange={changeMode}
           onSubmit={(values) =>
             void action(async () => {
               if (mode === 'login') {
                 await request('login', bootstrap?.csrf, values);
-                setAccount(await request<AuthAccount>('account'));
-                window.location.hash = 'overview';
+                setAccount(await loadAccount());
+                window.location.hash = getIncomingLink()
+                  ? 'family-access'
+                  : 'overview';
               }
               if (mode === 'register') {
                 const result = await request<AuthNotice>(

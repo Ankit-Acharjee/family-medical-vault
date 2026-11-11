@@ -41,7 +41,7 @@ test('health reports process liveness and generates a fresh request ID', async (
   await second.arrayBuffer();
 });
 
-test('OpenAPI documents health without inventing patient routes', async () => {
+test('OpenAPI documents implemented health, authentication, patient and vault routes', async () => {
   const response = await globalThis.fetch(`${base}/api/openapi.json`);
   assert.equal(response.status, 200);
   const document = await response.json();
@@ -49,10 +49,17 @@ test('OpenAPI documents health without inventing patient routes', async () => {
   assert.ok(document.paths['/api/auth/account']);
   assert.ok(
     Object.keys(document.paths).every(
-      (path) => path === '/health' || path.startsWith('/api/auth/'),
+      (path) =>
+        path === '/health' ||
+        path.startsWith('/api/auth/') ||
+        path.startsWith('/api/patients') ||
+        path.startsWith('/api/access/'),
     ),
   );
   assert.ok(document.paths['/health'].get.responses['200']);
+  assert.ok(document.paths['/api/patients'].get);
+  assert.ok(document.paths['/api/patients/{patientId}/documents'].get);
+  assert.ok(!document.paths['/api/trends']);
   const ui = await globalThis.fetch(`${base}/api/docs`);
   assert.equal(ui.status, 200);
   await ui.text();

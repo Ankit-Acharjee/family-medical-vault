@@ -33,7 +33,7 @@ async function mockAuth(
     }
     if (path === 'account')
       return loggedIn
-        ? route.fulfill({ json: { email } })
+        ? route.fulfill({ json: { email, contextId: 'fixture-context' } })
         : route.fulfill({ status: 401, json: { error: 'unauthenticated' } });
     if (path === 'login' && !options.response) loggedIn = true;
     if (path === 'logout') loggedIn = false;
@@ -48,6 +48,96 @@ async function mockAuth(
     });
   });
 }
+
+test('password sign-in preserves a scrubbed access link only in memory', async ({
+  page,
+}) => {
+  await mockAuth(page);
+  await page.route('**/api/patients', (route) =>
+    route.fulfill({ json: { patients: [] } }),
+  );
+  const token = 'x'.repeat(43);
+  await page.goto(`/#family-access?invite=${token}`);
+  await expect(
+    page.getByRole('heading', { name: 'Sign in to your account' }),
+  ).toBeVisible();
+  expect(new URL(page.url()).hash).toBe('#family-access');
+  await expect(page.getByText(/reopen the original access link/)).toBeVisible();
+  await enterEmail(page);
+  await page.getByLabel('Password').fill('fixture-password');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(
+    page.getByRole('heading', { name: 'Family Access' }),
+  ).toBeVisible();
+  await expect(page.getByLabel('Invitation code')).toHaveValue(token);
+  expect(
+    await page.evaluate(() =>
+      JSON.stringify({
+        local: { ...localStorage },
+        session: { ...sessionStorage },
+      }),
+    ),
+  ).not.toContain(token);
+  const nextToken = 'y'.repeat(43);
+  await page.evaluate((value) => {
+    window.location.hash = `family-access?invite=${value}`;
+  }, nextToken);
+  await expect(page.getByLabel('Invitation code')).toHaveValue(nextToken);
+  expect(new URL(page.url()).hash).toBe('#family-access');
+});
+
+test('an account response without a session context fails closed', async ({
+  page,
+}) => {
+  await mockAuth(page);
+  await page.route('**/api/auth/account', (route) =>
+    route.fulfill({ json: { email } }),
+  );
+  await page.goto('/');
+  await expect(
+    page.getByText('Sign-in is temporarily unavailable. Please try again.'),
+  ).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Overview' })).toHaveCount(0);
+});
+
+test('a new session for the same email clears the selected patient', async ({
+  page,
+}) => {
+  let contextId = 'session-a';
+  await page.route('**/api/auth/bootstrap', (route) =>
+    route.fulfill({ json: { enabled: true, csrf: 'fixture-csrf' } }),
+  );
+  await page.route('**/api/auth/account', (route) =>
+    route.fulfill({ json: { email, contextId } }),
+  );
+  await page.route('**/api/patients', (route) =>
+    route.fulfill({
+      json: {
+        patients: [
+          {
+            id: 'fixture-patient',
+            displayName: 'Fixture Patient',
+            relationship: 'self',
+            capabilities: [],
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto('/');
+  await page
+    .getByRole('button', { name: 'Select patient: No patient selected' })
+    .click();
+  await page.getByRole('button', { name: /Fixture Patient/ }).click();
+  await expect(
+    page.getByRole('button', { name: 'Select patient: Fixture Patient' }),
+  ).toBeVisible();
+  contextId = 'session-b';
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(
+    page.getByRole('button', { name: 'Select patient: No patient selected' }),
+  ).toBeVisible();
+});
 
 async function enterEmail(page: import('@playwright/test').Page) {
   await page.getByLabel('Email address').fill(email);

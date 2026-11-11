@@ -13,7 +13,8 @@ async function mockAccount(page: import('@playwright/test').Page) {
     const path = url.pathname.split('/').pop() ?? '';
     if (path === 'bootstrap')
       return route.fulfill({ json: { enabled: true, csrf: 'fixture-csrf' } });
-    if (path === 'account') return route.fulfill({ json: { email } });
+    if (path === 'account')
+      return route.fulfill({ json: { email, contextId: 'fixture-context' } });
     if (path === 'person')
       return route.fulfill({ json: { person: existingPerson } });
     return route.fulfill({ json: {} });

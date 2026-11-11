@@ -8,6 +8,33 @@ import { PrismaAuthStore } from './auth.store.js';
 import { SupabaseProvider } from './supabase.provider.js';
 import { PersonStore, PrismaPersonStore } from '../identity/person.store.js';
 import { ServiceUnavailableException } from '@nestjs/common';
+import { AccessStore, PrismaAccessStore } from '../access/access.store.js';
+import { PermissionService } from '../access/permission.service.js';
+import { PatientsController } from '../access/patients.controller.js';
+import { DocumentsController } from '../documents/documents.controller.js';
+import { DocumentsService } from '../documents/documents.service.js';
+import {
+  DocumentStore,
+  PrismaDocumentStore,
+} from '../documents/document.store.js';
+import { UnavailableObjectStore } from '../documents/object-store.js';
+import { CaregiverController } from '../access/caregiver.controller.js';
+import { CaregiverService } from '../access/caregiver.service.js';
+
+class DisabledDocumentStore extends DocumentStore {
+  asActor(): never {
+    throw new ServiceUnavailableException();
+  }
+  async list(): Promise<never> {
+    throw new ServiceUnavailableException();
+  }
+  async categories(): Promise<never> {
+    throw new ServiceUnavailableException();
+  }
+  async audit(): Promise<never> {
+    throw new ServiceUnavailableException();
+  }
+}
 
 class DisabledPersonStore extends PersonStore {
   async find(): Promise<never> {
@@ -17,11 +44,59 @@ class DisabledPersonStore extends PersonStore {
     throw new ServiceUnavailableException();
   }
 }
+class DisabledAccessStore extends AccessStore {
+  async load(): Promise<never> {
+    throw new ServiceUnavailableException();
+  }
+  async list(): Promise<never> {
+    throw new ServiceUnavailableException();
+  }
+  async document(): Promise<never> {
+    throw new ServiceUnavailableException();
+  }
+  async category(): Promise<never> {
+    throw new ServiceUnavailableException();
+  }
+}
 
 @Module({
-  controllers: [AuthController],
+  controllers: [
+    AuthController,
+    PatientsController,
+    DocumentsController,
+    CaregiverController,
+  ],
   providers: [
     AuthBoundaryGuard,
+    PermissionService,
+    {
+      provide: CaregiverService,
+      useFactory: () => new CaregiverService(authConfig()?.databaseUrl ?? null),
+    },
+    {
+      provide: DocumentStore,
+      useFactory: () => {
+        const config = authConfig();
+        return config
+          ? new PrismaDocumentStore(config.databaseUrl)
+          : new DisabledDocumentStore();
+      },
+    },
+    {
+      provide: DocumentsService,
+      inject: [PermissionService, DocumentStore],
+      useFactory: (permissions: PermissionService, store: DocumentStore) =>
+        new DocumentsService(permissions, store, new UnavailableObjectStore()),
+    },
+    {
+      provide: AccessStore,
+      useFactory: () => {
+        const config = authConfig();
+        return config
+          ? new PrismaAccessStore(config.databaseUrl)
+          : new DisabledAccessStore();
+      },
+    },
     {
       provide: PersonStore,
       useFactory: () => {
@@ -45,12 +120,21 @@ class DisabledPersonStore extends PersonStore {
   ],
 })
 export class AuthModule {
-  static register(auth?: AuthService, people?: PersonStore): DynamicModule {
+  static register(
+    auth?: AuthService,
+    people?: PersonStore,
+    access?: AccessStore,
+    documents?: DocumentsService,
+  ): DynamicModule {
     return {
       module: AuthModule,
       providers: [
         ...(auth ? [{ provide: AuthService, useValue: auth }] : []),
         ...(people ? [{ provide: PersonStore, useValue: people }] : []),
+        ...(access ? [{ provide: AccessStore, useValue: access }] : []),
+        ...(documents
+          ? [{ provide: DocumentsService, useValue: documents }]
+          : []),
       ],
     };
   }

@@ -23,7 +23,9 @@ async function mockPersonApi(
     if (path === 'bootstrap')
       return route.fulfill({ json: { enabled: true, csrf: 'fixture-csrf' } });
     if (path === 'account')
-      return route.fulfill({ json: { email: 'fixture@example.test' } });
+      return route.fulfill({
+        json: { email: 'fixture@example.test', contextId: 'fixture-context' },
+      });
     if (path !== 'person') return route.fulfill({ status: 404 });
 
     if (route.request().method() === 'GET')
@@ -162,7 +164,15 @@ test('a delayed creation response from a signed-out account cannot replace the n
       return route.fulfill({ json: { enabled: true, csrf: 'fixture-csrf' } });
     if (path === 'account')
       return loggedIn
-        ? route.fulfill({ json: { email: currentEmail } })
+        ? route.fulfill({
+            json: {
+              email: currentEmail,
+              contextId:
+                currentEmail === 'account-a@example.test'
+                  ? 'context-a'
+                  : 'context-b',
+            },
+          })
         : route.fulfill({ status: 401, json: { error: 'unauthenticated' } });
     if (path === 'logout') {
       loggedIn = false;

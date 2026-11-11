@@ -18,6 +18,7 @@ import { AuthStore } from './auth.store.js';
 import type { SessionTransaction, StoredSession } from './auth.store.js';
 import { AuthProvider } from './supabase.provider.js';
 import type { ProviderSession } from './supabase.provider.js';
+import { createHmac } from 'node:crypto';
 
 type FlowKind = 'signup' | 'recover' | 'google';
 type Flow = { kind: FlowKind; verifier: string; state: string; email?: string };
@@ -317,16 +318,27 @@ export class AuthService implements OnModuleDestroy {
     return result.value;
   }
   account(id: string | undefined) {
-    return this.session(id, 'account', async (session) => ({
+    return this.session(id, 'account', async (session, _tx, binding) => ({
       email: session.provider.user.email,
+      // Non-authorizing UI identity; changes on login/session replacement and
+      // cannot reveal a provider subject, session cookie or reusable token.
+      contextId: createHmac('sha256', this.config!.encryptionKey)
+        .update(`ui-context\0${binding}\0${session.provider.user.id}`)
+        .digest('base64url'),
     }));
   }
   // Internal account linkage uses the provider's stable subject, never email.
-  principal(id: string | undefined) {
-    return this.session(id, 'account', async (session) => ({
-      issuer: this.config!.providerUrl,
-      subject: session.provider.user.id,
-    }));
+  principal(id: string | undefined, activity = false) {
+    return this.session(id, 'account', async (session, tx) => {
+      if (activity) {
+        session.idleUntil = Math.min(session.until, Date.now() + IDLE);
+        await tx.put(this.record(id!, session, session.until));
+      }
+      return {
+        issuer: this.config!.providerUrl,
+        subject: session.provider.user.id,
+      };
+    });
   }
   recovery(id: string | undefined) {
     return this.session(id, 'recovery', async () => true);

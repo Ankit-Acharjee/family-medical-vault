@@ -6,7 +6,12 @@ test.beforeEach(async ({ page }) => {
     route.fulfill({ json: { enabled: true, csrf: 'synthetic-csrf' } }),
   );
   await page.route('**/api/auth/account', (route) =>
-    route.fulfill({ json: { email: 'fixture@example.test' } }),
+    route.fulfill({
+      json: { email: 'fixture@example.test', contextId: 'fixture-context' },
+    }),
+  );
+  await page.route('**/api/patients', (route) =>
+    route.fulfill({ json: { patients: [] } }),
   );
 });
 
@@ -195,6 +200,7 @@ for (const theme of ['light', 'dark'] as const) {
     expect([...new Set(apiPaths)].sort()).toEqual([
       '/api/auth/account',
       '/api/auth/bootstrap',
+      '/api/patients',
     ]);
   });
 }

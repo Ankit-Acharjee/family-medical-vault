@@ -33,6 +33,8 @@ export class PrismaAuthStore extends AuthStore {
     this.db = new PrismaClient({
       adapter: new PrismaPg({
         connectionString: url,
+        // Prisma's pg timestamp codec requires UTC on the database session.
+        options: '-c timezone=UTC',
         max: 4,
         connectionTimeoutMillis: 5000,
       }),
@@ -87,7 +89,7 @@ export class PrismaAuthStore extends AuthStore {
   async limit(id: string, until: Date, maximum: number) {
     const rows = await this.db.$queryRaw<
       { count: number }[]
-    >`INSERT INTO fmv.auth_rate_limits (id, count, expires_at) VALUES (${id}, 1, ${until}) ON CONFLICT (id) DO UPDATE SET count = LEAST(fmv.auth_rate_limits.count + 1, ${maximum + 1}) RETURNING count`;
+    >`INSERT INTO fmv.auth_rate_limits (id, count, expires_at) VALUES (${id}, 1, ${until.toISOString()}::timestamptz) ON CONFLICT (id) DO UPDATE SET count = LEAST(fmv.auth_rate_limits.count + 1, ${maximum + 1}) RETURNING count`;
     return (rows[0]?.count ?? maximum + 1) <= maximum;
   }
   async cleanup() {
