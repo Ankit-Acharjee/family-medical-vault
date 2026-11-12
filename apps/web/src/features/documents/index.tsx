@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { FileText, UploadCloud, UserRound } from 'lucide-react';
 import './upload.css';
+import { DuplicateUploadNotice } from './DuplicateUploadNotice';
 import {
   DocumentBrowserControls,
   DocumentTitleEditor,
@@ -89,7 +90,9 @@ function uploadResult(value: unknown): value is UploadResult {
     !!value.documentId &&
     (value.state === 'pending' ||
       value.state === 'ready' ||
-      value.state === 'failed')
+      value.state === 'failed') &&
+    (value.potentialDuplicate === undefined ||
+      typeof value.potentialDuplicate === 'boolean')
   );
 }
 
@@ -561,11 +564,15 @@ type QueueItem = {
   file: File;
   state: 'waiting' | 'uploading' | 'ready' | 'error';
   error?: string;
+  potentialDuplicate?: boolean;
 };
 export function DocumentUploadForm({
   onComplete,
 }: {
-  onComplete?: (allStored: boolean) => void;
+  onComplete?: (
+    allStored: boolean,
+    completion: { patientId: string; potentialDuplicate: boolean },
+  ) => void;
 }) {
   const { selectedPatient, loading: patientsLoading } = usePatientContext();
   const patientId = selectedPatient?.id ?? null;
@@ -594,6 +601,10 @@ export function DocumentUploadForm({
     inProgress.current = false;
     setBusy(false);
     setCheckingStorage(true);
+    // Advisory warnings expire on revalidation; preserve the actual file queue.
+    setItems((previous) =>
+      previous.map((item) => ({ ...item, potentialDuplicate: false })),
+    );
     // A native file picker can trigger focus revalidation. Keep its queue in
     // memory and preserve layout; disable actions until access is confirmed.
     if (!patientId && patientsLoading) return;
@@ -658,6 +669,9 @@ export function DocumentUploadForm({
     inProgress.current = true;
     setBusy(true);
     setError('');
+    setItems((previous) =>
+      previous.map((item) => ({ ...item, potentialDuplicate: false })),
+    );
     controller.current?.abort();
     const abort = new AbortController();
     controller.current = abort;
@@ -683,6 +697,7 @@ export function DocumentUploadForm({
       const csrf = (boot as AuthBootstrap).csrf!;
       let storedAny = false;
       let storedCount = 0;
+      let potentialDuplicate = false;
       for (const item of pending) {
         if (abort.signal.aborted || active.current !== patientId) break;
         update(item.key, { state: 'uploading', error: '' });
@@ -742,7 +757,11 @@ export function DocumentUploadForm({
             );
           }
           if (result.state !== 'ready') throw new Error();
-          update(item.key, { state: 'ready' });
+          update(item.key, {
+            state: 'ready',
+            potentialDuplicate: result.potentialDuplicate === true,
+          });
+          potentialDuplicate ||= result.potentialDuplicate === true;
           storedAny = true;
           storedCount += 1;
         } catch (e) {
@@ -751,7 +770,10 @@ export function DocumentUploadForm({
         }
       }
       if (storedAny && !abort.signal.aborted && active.current === patientId)
-        onComplete?.(storedCount === pending.length);
+        onComplete?.(storedCount === pending.length, {
+          patientId,
+          potentialDuplicate,
+        });
     } catch (e) {
       if (!abort.signal.aborted && active.current === patientId)
         setError(message(e));
@@ -925,6 +947,10 @@ export function DocumentUploadForm({
                 </ul>
               </>
             )}
+            {ready &&
+              items.some(
+                (item) => item.state === 'ready' && item.potentialDuplicate,
+              ) && <DuplicateUploadNotice />}
             <div className="document-upload__actions">
               {items.length > 0 && (
                 <Button

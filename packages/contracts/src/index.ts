@@ -63,6 +63,7 @@ export type UploadResult = {
   uploadId: string;
   documentId: string;
   state: UploadState;
+  potentialDuplicate?: boolean;
 };
 export type AccessProposal = {
   actions: PermissionAction[];

@@ -34,6 +34,7 @@ import { PatientPicker, usePatientContext } from './features/patients';
 import { DocumentUploadForm, DocumentsPanel } from './features/documents';
 import { FamilyAccessPanel } from './features/access';
 import { captureIncomingLink } from './features/access/incoming-link';
+import { DuplicateUploadNotice } from './features/documents/DuplicateUploadNotice';
 import './styles.css';
 import './overview.css';
 
@@ -85,11 +86,17 @@ export default function App() {
   const [expanded, setExpanded] = useState(false);
   const [dialog, setDialog] = useState<'patient' | 'upload' | null>(null);
   const [listRevision, setListRevision] = useState(0);
-  const [uploadNotice, setUploadNotice] = useState('');
+  const [uploadNotice, setUploadNotice] = useState<{
+    patientId: string;
+    potentialDuplicate: boolean;
+  } | null>(null);
   const { selectedPatient, loading: patientsLoading } = usePatientContext();
+  useEffect(() => {
+    setUploadNotice(null);
+  }, [selectedPatient?.id, patientsLoading]);
   const dialogTrigger = useRef<HTMLElement | null>(null);
   const openDialog = (kind: 'patient' | 'upload') => {
-    if (kind === 'upload') setUploadNotice('');
+    if (kind === 'upload') setUploadNotice(null);
     dialogTrigger.current =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
@@ -242,6 +249,16 @@ export default function App() {
               {selectedPatient?.displayName ?? 'No patient selected'}
             </span>
           </div>
+          {uploadNotice &&
+            uploadNotice.patientId === selectedPatient?.id &&
+            !patientsLoading && (
+              <div className="mb-4 space-y-2">
+                <p role="status" className="text-sm text-muted-foreground">
+                  Documents stored successfully.
+                </p>
+                {uploadNotice.potentialDuplicate && <DuplicateUploadNotice />}
+              </div>
+            )}
           {destination === 'overview' ? (
             <>
               <section
@@ -343,9 +360,6 @@ export default function App() {
               }
             />
           ) : null}
-          <p role="status" className="text-sm text-muted-foreground">
-            {uploadNotice}
-          </p>
           <footer className="page-footer">Family Medical Vault</footer>
         </main>
       </div>
@@ -384,11 +398,17 @@ export default function App() {
             <PatientPicker onSelected={() => setDialog(null)} />
           ) : selectedPatient || patientsLoading ? (
             <DocumentUploadForm
-              onComplete={(allStored) => {
+              onComplete={(allStored, completion) => {
+                if (
+                  !selectedPatient ||
+                  patientsLoading ||
+                  completion.patientId !== selectedPatient.id
+                )
+                  return;
                 setListRevision((revision) => revision + 1);
                 if (allStored) {
                   setDialog(null);
-                  setUploadNotice('Documents stored successfully.');
+                  setUploadNotice(completion);
                 }
               }}
             />

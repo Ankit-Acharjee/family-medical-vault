@@ -9,6 +9,7 @@ import type {
   DocumentsResult,
   DocumentSummary,
   PermissionAction,
+  UploadResult,
 } from '@fmv/contracts';
 import { PermissionService, isUuid } from '../access/permission.service.js';
 import type { AccessSnapshot } from '../access/access.store.js';
@@ -195,7 +196,10 @@ export class DocumentsService {
   }
   async begin(principal: Principal, patientId: string, input: BeginUpload) {
     const i = await this.intake(principal, patientId);
-    return i.core.begin(patientId, input, i.authorize);
+    const result = await i.core.begin(patientId, input, i.authorize);
+    return result.state === 'ready'
+      ? this.duplicateWarning(principal, patientId, result)
+      : result;
   }
   async content(
     principal: Principal,
@@ -210,7 +214,76 @@ export class DocumentsService {
   async finalize(principal: Principal, patientId: string, uploadId: string) {
     if (!isUuid(uploadId)) throw new NotFoundException();
     const i = await this.intake(principal, patientId);
-    return i.core.finalize(patientId, uploadId, i.authorize);
+    const result = await i.core.finalize(patientId, uploadId, i.authorize);
+    return this.duplicateWarning(principal, patientId, result);
+  }
+  private async duplicateWarning(
+    principal: Principal,
+    patientId: string,
+    result: UploadResult,
+  ): Promise<UploadResult> {
+    // Advisory metadata only: never fetch, remove or reuse another original.
+    // A lookup failure cannot turn a committed READY original into FAILED.
+    let rows: IntakeRecord[];
+    try {
+      rows = await this.store.list(patientId);
+    } catch {
+      await this.permissions.require(principal, patientId, 'upload', {
+        kind: 'document',
+        documentId: result.documentId,
+      });
+      return result;
+    }
+    await this.permissions.require(principal, patientId, 'upload', {
+      kind: 'document',
+      documentId: result.documentId,
+    });
+    const current = await this.permissions.snapshot(principal, patientId);
+    const source = rows.find(
+      (r) =>
+        r.patientId === patientId &&
+        r.documentId === result.documentId &&
+        r.uploadId === result.uploadId &&
+        r.state === 'ready',
+    );
+    if (!source) return result;
+    const resource = (r: IntakeRecord) => ({
+      id: r.documentId,
+      patientId: r.patientId,
+      categoryId: r.categoryId,
+      state: r.state,
+    });
+    if (
+      !this.permissions.allows(
+        current,
+        'upload',
+        { kind: 'document', documentId: source.documentId },
+        resource(source),
+      )
+    )
+      throw new NotFoundException();
+    const match = rows.some(
+      (r) =>
+        r.patientId === patientId &&
+        r.state === 'ready' &&
+        r.documentId !== source.documentId &&
+        r.sha256 === source.sha256 &&
+        r.bytes === source.bytes &&
+        (this.permissions.allows(
+          current,
+          'view',
+          { kind: 'document', documentId: r.documentId },
+          resource(r),
+        ) ||
+          this.permissions.allows(
+            current,
+            'export',
+            { kind: 'document', documentId: r.documentId },
+            resource(r),
+          )),
+    );
+    // No existence signal at all for upload-only users or hidden matches.
+    return match ? { ...result, potentialDuplicate: true } : result;
   }
   async read(
     principal: Principal,
