@@ -83,6 +83,7 @@ export class PermissionService {
     action: PermissionAction,
     target: PermissionScope,
     resource?: DocumentAuthority,
+    includeTrashed = false,
   ): boolean {
     if (
       !permissionActions.includes(action) ||
@@ -98,6 +99,7 @@ export class PermissionService {
         resource.patientId !== snapshot.patient.id)
     )
       return false;
+    if (resource?.deletedAt && !includeTrashed) return false;
     if (snapshot.patient.ownerAccountId === snapshot.accountId) return true;
     return snapshot.grants.some(
       (g) =>
@@ -124,8 +126,13 @@ export class PermissionService {
     patientId: string,
     action: PermissionAction,
     target: PermissionScope = { kind: 'patient' },
+    includeTrashed = false,
   ) {
-    if (!permissionActions.includes(action) || !isScope(target))
+    if (
+      !permissionActions.includes(action) ||
+      !isScope(target) ||
+      (includeTrashed && action !== 'edit')
+    )
       throw new NotFoundException();
     const snapshot = await this.snapshot(principal, patientId);
     let resource: DocumentAuthority | undefined;
@@ -146,7 +153,7 @@ export class PermissionService {
       if (error instanceof NotFoundException) throw error;
       throw new ServiceUnavailableException();
     }
-    if (!this.allows(snapshot, action, target, resource))
+    if (!this.allows(snapshot, action, target, resource, includeTrashed))
       throw new NotFoundException();
     return { accountId: snapshot.accountId!, patientId };
   }

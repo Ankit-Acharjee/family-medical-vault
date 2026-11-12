@@ -24,6 +24,7 @@ export type IntakeRecord = {
   objectKey: string;
   state: UploadState;
   createdAt: Date;
+  deletedAt?: Date | null;
 };
 
 export interface IntakeMetadata {
@@ -193,6 +194,7 @@ export class DocumentIntake {
           declared.idempotencyKey,
         );
         if (previous) {
+          if (previous.deletedAt) throw new IntakeError(404);
           if (
             previous.title !== declared.title ||
             previous.mimeType !== declared.mimeType ||
@@ -332,7 +334,8 @@ export class DocumentIntake {
           kind: 'document',
           documentId,
         });
-        if (record.state !== 'ready') throw new IntakeError(404);
+        if (record.state !== 'ready' || record.deletedAt)
+          throw new IntakeError(404);
         if (!(await metadata.objectActive(record.objectKey)))
           throw new IntakeError(404);
         this.available();
@@ -368,7 +371,8 @@ export class DocumentIntake {
     if (
       !record ||
       record.patientId !== patientId ||
-      record.uploadId !== uploadId
+      record.uploadId !== uploadId ||
+      record.deletedAt
     )
       throw new IntakeError(404);
     await this.authorize(authorize, patientId, 'upload', {

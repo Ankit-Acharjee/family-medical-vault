@@ -40,6 +40,12 @@ class DisabledDocumentStore extends DocumentStore {
   async audit(): Promise<never> {
     throw new ServiceUnavailableException();
   }
+  async listTrash(): Promise<never> {
+    throw new ServiceUnavailableException();
+  }
+  async changeTrash(): Promise<never> {
+    throw new ServiceUnavailableException();
+  }
   async rename(): Promise<never> {
     throw new ServiceUnavailableException();
   }

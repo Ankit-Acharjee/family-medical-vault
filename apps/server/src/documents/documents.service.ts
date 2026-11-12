@@ -1,6 +1,7 @@
 import {
   Injectable,
   BadRequestException,
+  ConflictException,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -10,6 +11,7 @@ import type {
   DocumentSummary,
   PermissionAction,
   UploadResult,
+  TrashDocumentsResult,
 } from '@fmv/contracts';
 import { PermissionService, isUuid } from '../access/permission.service.js';
 import type { AccessSnapshot } from '../access/access.store.js';
@@ -72,53 +74,155 @@ export class DocumentsService {
     const current = await this.permissions.snapshot(principal, patientId);
     if (!this.permitted(current)) throw new NotFoundException();
     const documents: DocumentSummary[] = rows
-      .map((r) => ({
-        id: r.documentId,
-        patientId: r.patientId,
-        title: r.displayTitle ?? r.title,
-        originalTitle: r.title,
-        categoryName:
-          categories.find((c) => c.id === r.categoryId)?.name ?? 'Unclassified',
-        mimeType: r.mimeType,
-        bytes: r.bytes,
-        createdAt: r.createdAt.toISOString(),
-        categoryId: r.categoryId,
-        canEdit: this.permissions.allows(
-          current,
-          'edit',
-          { kind: 'document', documentId: r.documentId },
-          {
-            id: r.documentId,
-            patientId: r.patientId,
-            categoryId: r.categoryId,
-            state: r.state,
-          },
-        ),
-        canView: this.permissions.allows(
-          current,
-          'view',
-          { kind: 'document', documentId: r.documentId },
-          {
-            id: r.documentId,
-            patientId: r.patientId,
-            categoryId: r.categoryId,
-            state: r.state,
-          },
-        ),
-        canExport: this.permissions.allows(
-          current,
-          'export',
-          { kind: 'document', documentId: r.documentId },
-          {
-            id: r.documentId,
-            patientId: r.patientId,
-            categoryId: r.categoryId,
-            state: r.state,
-          },
-        ),
-      }))
+      .filter(
+        (r) => !r.deletedAt && r.patientId === patientId && r.state === 'ready',
+      )
+      .map((r) => this.summary(r, current, categories))
       .filter((r) => r.canView || r.canExport);
     return { documents, storageReady: this.objects.ready };
+  }
+  private summary(
+    r: IntakeRecord & { displayTitle?: string | null },
+    current: AccessSnapshot,
+    categories: { id: string; name: string }[],
+    includeTrashed = false,
+  ): DocumentSummary {
+    const resource = {
+      id: r.documentId,
+      patientId: r.patientId,
+      categoryId: r.categoryId,
+      state: r.state,
+      deletedAt: r.deletedAt ?? null,
+    };
+    const target = { kind: 'document' as const, documentId: r.documentId };
+    return {
+      id: r.documentId,
+      patientId: r.patientId,
+      title: r.displayTitle ?? r.title,
+      originalTitle: r.title,
+      categoryName:
+        categories.find((c) => c.id === r.categoryId)?.name ?? 'Unclassified',
+      mimeType: r.mimeType,
+      bytes: r.bytes,
+      createdAt: r.createdAt.toISOString(),
+      categoryId: r.categoryId,
+      canEdit: this.permissions.allows(
+        current,
+        'edit',
+        target,
+        resource,
+        includeTrashed,
+      ),
+      canView: this.permissions.allows(
+        current,
+        'view',
+        target,
+        resource,
+        includeTrashed,
+      ),
+      canExport: this.permissions.allows(
+        current,
+        'export',
+        target,
+        resource,
+        includeTrashed,
+      ),
+    };
+  }
+  async listTrash(
+    principal: Principal,
+    patientId: string,
+  ): Promise<TrashDocumentsResult> {
+    const initial = await this.permissions.snapshot(principal, patientId);
+    if (!this.permitted(initial)) throw new NotFoundException();
+    let rows: (IntakeRecord & { displayTitle?: string | null })[],
+      categories: { id: string; name: string }[];
+    try {
+      rows = await this.store.listTrash(patientId);
+      categories = await this.store.categories();
+    } catch {
+      throw new ServiceUnavailableException();
+    }
+    const current = await this.permissions.snapshot(principal, patientId);
+    if (!this.permitted(current)) throw new NotFoundException();
+    return {
+      documents: rows.flatMap((r) => {
+        if (!r.deletedAt || r.patientId !== patientId || r.state !== 'ready')
+          return [];
+        // Trash exposes metadata only, and requires edit plus independent read/export.
+        const summary = this.summary(r, current, categories, true);
+        if (!summary.canEdit || !(summary.canView || summary.canExport))
+          return [];
+        const deadline = new Date(
+          r.deletedAt.getTime() + 30 * 24 * 60 * 60 * 1000,
+        );
+        return [
+          {
+            ...summary,
+            canView: false,
+            canExport: false,
+            canEdit: false,
+            deletedAt: r.deletedAt.toISOString(),
+            restoreUntil: deadline.toISOString(),
+            canRestore: current.now.getTime() < deadline.getTime(),
+          },
+        ];
+      }),
+    };
+  }
+  async changeTrash(
+    principal: Principal,
+    patientId: string,
+    documentId: string,
+    action: 'trash' | 'restore',
+    input: unknown,
+  ) {
+    if (!isUuid(documentId)) throw new NotFoundException();
+    const target = { kind: 'document' as const, documentId };
+    const actor = await this.permissions.require(
+      principal,
+      patientId,
+      'edit',
+      target,
+      true,
+    );
+    if (
+      !input ||
+      typeof input !== 'object' ||
+      Array.isArray(input) ||
+      Object.keys(input).length
+    )
+      throw new BadRequestException();
+    const authorize = async () => {
+      await this.permissions.require(
+        principal,
+        patientId,
+        'edit',
+        target,
+        true,
+      );
+    };
+    try {
+      const outcome = await this.store.changeTrash(
+        patientId,
+        documentId,
+        action,
+        actor.accountId,
+        authorize,
+      );
+      if (outcome === 'missing') throw new NotFoundException();
+      if (outcome === 'expired')
+        throw new ConflictException('Recovery is unavailable.');
+    } catch (e) {
+      if (
+        e instanceof NotFoundException ||
+        e instanceof ConflictException ||
+        e instanceof ServiceUnavailableException
+      )
+        throw e;
+      throw new ServiceUnavailableException();
+    }
+    return { saved: true as const };
   }
   async rename(
     principal: Principal,
@@ -244,7 +348,8 @@ export class DocumentsService {
         r.patientId === patientId &&
         r.documentId === result.documentId &&
         r.uploadId === result.uploadId &&
-        r.state === 'ready',
+        r.state === 'ready' &&
+        !r.deletedAt,
     );
     if (!source) return result;
     const resource = (r: IntakeRecord) => ({
@@ -252,6 +357,7 @@ export class DocumentsService {
       patientId: r.patientId,
       categoryId: r.categoryId,
       state: r.state,
+      deletedAt: r.deletedAt ?? null,
     });
     if (
       !this.permissions.allows(
@@ -266,6 +372,7 @@ export class DocumentsService {
       (r) =>
         r.patientId === patientId &&
         r.state === 'ready' &&
+        !r.deletedAt &&
         r.documentId !== source.documentId &&
         r.sha256 === source.sha256 &&
         r.bytes === source.bytes &&

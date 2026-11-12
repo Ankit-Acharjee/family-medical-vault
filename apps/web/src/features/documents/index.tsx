@@ -3,6 +3,11 @@ import { FileText, UploadCloud, UserRound } from 'lucide-react';
 import './upload.css';
 import { DuplicateUploadNotice } from './DuplicateUploadNotice';
 import {
+  DocumentsViewSwitcher,
+  DocumentTrashConfirmation,
+  TrashDocumentRow,
+} from './DocumentTrashPresentation';
+import {
   DocumentBrowserControls,
   DocumentTitleEditor,
 } from './DocumentBrowserControls';
@@ -15,6 +20,7 @@ import type {
   DocumentsResult,
   DocumentSummary,
   UploadResult,
+  TrashDocumentsResult,
 } from '@fmv/contracts';
 import { Button } from '../../components/ui/button';
 import {
@@ -81,6 +87,28 @@ function documents(
     )
   );
 }
+function trashDocuments(
+  value: unknown,
+  patientId: string,
+): value is TrashDocumentsResult {
+  return (
+    object(value) &&
+    Array.isArray(value.documents) &&
+    documents({ documents: value.documents, storageReady: false }, patientId) &&
+    value.documents.every(
+      (d: unknown) =>
+        object(d) &&
+        typeof d.deletedAt === 'string' &&
+        !Number.isNaN(Date.parse(d.deletedAt)) &&
+        typeof d.restoreUntil === 'string' &&
+        !Number.isNaN(Date.parse(d.restoreUntil)) &&
+        typeof d.canRestore === 'boolean' &&
+        d.canView === false &&
+        d.canExport === false &&
+        d.canEdit === false,
+    )
+  );
+}
 function uploadResult(value: unknown): value is UploadResult {
   return (
     object(value) &&
@@ -109,16 +137,34 @@ export function DocumentsPanel({
   const displayPatient =
     selectedPatient ?? (patientsLoading ? retainedPatient.current : null);
   const patientId = selectedPatient?.id ?? null;
-  const [list, setList] = useState<{
-    id: string;
-    value: DocumentsResult;
+  const [view, setView] = useState<'active' | 'trash'>('active');
+  const [list, setList] = useState<
+    | (
+        | { id: string; view: 'active'; value: DocumentsResult }
+        | { id: string; view: 'trash'; value: TrashDocumentsResult }
+      )
+    | null
+  >(null);
+  const [lifecycle, setLifecycle] = useState<{
+    patientId: string;
+    documentId: string;
+    title: string;
+    action: 'trash' | 'restore';
+    restoreUntil?: string;
   } | null>(null);
+  const [lifecycleBusy, setLifecycleBusy] = useState(false);
+  const [lifecycleError, setLifecycleError] = useState('');
+  const lifecycleAction = useRef<AbortController | null>(null);
+  const lifecycleInProgress = useRef(false);
+  const lifecycleTrigger = useRef<HTMLElement | null>(null);
+  const lifecycleRestoreFocus = useRef(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [version, setVersion] = useState(0);
   const [preview, setPreview] = useState<{
     id: string;
     title: string;
+    documentId: string;
     url: string;
     mime: string;
   } | null>(null);
@@ -138,6 +184,8 @@ export function DocumentsPanel({
   const [editError, setEditError] = useState('');
   const [notice, setNotice] = useState('');
   const editTrigger = useRef<HTMLButtonElement | null>(null);
+  const previewTrigger = useRef<HTMLElement | null>(null);
+  const previewRestoreFocus = useRef(false);
   const panel = useRef<HTMLElement | null>(null);
   const restoreAfterReload = useRef(false);
   const editAction = useRef<AbortController | null>(null);
@@ -146,6 +194,20 @@ export function DocumentsPanel({
   const active = useRef(patientId);
   active.current = patientId;
   const action = useRef<AbortController | null>(null);
+  useEffect(() => {
+    if (!previewRestoreFocus.current || busy || patientsLoading) return;
+    previewRestoreFocus.current = false;
+    (previewTrigger.current?.isConnected &&
+    !(
+      previewTrigger.current instanceof HTMLButtonElement &&
+      previewTrigger.current.disabled
+    )
+      ? previewTrigger.current
+      : (panel.current?.querySelector<HTMLButtonElement>(
+          '[aria-label="Document views"] button[aria-pressed="true"]',
+        ) ?? panel.current)
+    )?.focus();
+  }, [list, busy, patientsLoading]);
   useEffect(() => {
     if (!list || busy || patientsLoading || !restoreAfterReload.current) return;
     restoreAfterReload.current = false;
@@ -157,11 +219,27 @@ export function DocumentsPanel({
     )?.focus();
   }, [list, busy, patientsLoading]);
   useEffect(() => {
+    if (!lifecycleRestoreFocus.current || busy || patientsLoading) return;
+    lifecycleRestoreFocus.current = false;
+    (lifecycleTrigger.current?.isConnected &&
+    !(
+      lifecycleTrigger.current instanceof HTMLButtonElement &&
+      lifecycleTrigger.current.disabled
+    )
+      ? lifecycleTrigger.current
+      : (panel.current?.querySelector<HTMLButtonElement>(
+          '[aria-label="Document views"] button[aria-pressed="true"]',
+        ) ?? panel.current)
+    )?.focus();
+  }, [list, busy, patientsLoading]);
+  useEffect(() => {
+    lifecycleAction.current?.abort();
+    lifecycleInProgress.current = false;
+    setLifecycleBusy(false);
     action.current?.abort();
     editAction.current?.abort();
     editingBusy.current = false;
     setSaving(false);
-    setPreview(null);
     if (!patientId && patientsLoading) {
       setBusy(true);
       return;
@@ -169,6 +247,8 @@ export function DocumentsPanel({
     if (listPatient.current !== patientId) {
       setList(null);
       setEditing(null);
+      setLifecycle(null);
+      setPreview(null);
       setFilters({ query: '', category: '', from: '', to: '' });
       setNotice('');
       listPatient.current = patientId;
@@ -178,27 +258,69 @@ export function DocumentsPanel({
     if (!patientId) return;
     const controller = new AbortController();
     setBusy(true);
-    void request(`${base(patientId)}/documents`, { signal: controller.signal })
+    void request(
+      `${base(patientId)}/${view === 'active' ? 'documents' : 'trash'}`,
+      { signal: controller.signal },
+    )
       .then((r) => r.json() as Promise<unknown>)
       .then((result) => {
-        if (!documents(result, patientId)) throw new Error();
+        if (
+          view === 'active'
+            ? !documents(result, patientId)
+            : !trashDocuments(result, patientId)
+        )
+          throw new Error();
         if (!controller.signal.aborted && active.current === patientId) {
-          setList({ id: patientId, value: result });
-          setEditing((previous) =>
-            previous &&
-            result.documents.some(
-              (d) => d.id === previous.documentId && d.canEdit,
-            )
-              ? previous
-              : null,
-          );
+          if (view === 'active' && documents(result, patientId)) {
+            setList({ id: patientId, view: 'active', value: result });
+            setPreview((previous) =>
+              previous &&
+              result.documents.some(
+                (d) => d.id === previous.documentId && d.canView,
+              )
+                ? previous
+                : null,
+            );
+            setEditing((previous) =>
+              previous &&
+              result.documents.some(
+                (d) => d.id === previous.documentId && d.canEdit,
+              )
+                ? previous
+                : null,
+            );
+            setLifecycle((previous) =>
+              previous &&
+              previous.action === 'trash' &&
+              result.documents.some(
+                (d) => d.id === previous.documentId && d.canEdit,
+              )
+                ? previous
+                : null,
+            );
+          } else if (view === 'trash' && trashDocuments(result, patientId)) {
+            setList({ id: patientId, view: 'trash', value: result });
+            setPreview(null);
+            setEditing(null);
+            setLifecycle((previous) =>
+              previous &&
+              previous.action === 'restore' &&
+              result.documents.some(
+                (d) => d.id === previous.documentId && d.canRestore,
+              )
+                ? previous
+                : null,
+            );
+          }
         }
       })
       .catch((e: unknown) => {
         if (!controller.signal.aborted && active.current === patientId) {
           setError(message(e));
           setList(null);
+          setPreview(null);
           setEditing(null);
+          setLifecycle(null);
         }
       })
       .finally(() => {
@@ -209,8 +331,9 @@ export function DocumentsPanel({
       controller.abort();
       action.current?.abort();
       editAction.current?.abort();
+      lifecycleAction.current?.abort();
     };
-  }, [patientId, patientsLoading, version, refreshRevision]);
+  }, [patientId, patientsLoading, version, refreshRevision, view]);
   useEffect(
     () => () => {
       if (preview) URL.revokeObjectURL(preview.url);
@@ -219,6 +342,11 @@ export function DocumentsPanel({
   );
   async function read(document: DocumentSummary, download: boolean) {
     if (!patientId) return;
+    if (!download)
+      previewTrigger.current =
+        window.document.activeElement instanceof HTMLElement
+          ? window.document.activeElement
+          : null;
     action.current?.abort();
     const controller = new AbortController();
     action.current = controller;
@@ -242,6 +370,7 @@ export function DocumentsPanel({
         setPreview({
           id: patientId,
           title: document.title,
+          documentId: document.id,
           url,
           mime: document.mimeType,
         });
@@ -330,8 +459,107 @@ export function DocumentsPanel({
       }
     }
   }
+  async function changeTrash() {
+    if (
+      !lifecycle ||
+      !patientId ||
+      busy ||
+      patientsLoading ||
+      lifecycleInProgress.current ||
+      lifecycle.patientId !== patientId
+    )
+      return;
+    const selected = lifecycle;
+    const abort = new AbortController();
+    lifecycleAction.current?.abort();
+    lifecycleAction.current = abort;
+    lifecycleInProgress.current = true;
+    setLifecycleBusy(true);
+    setLifecycleError('');
+    let timedOut = false;
+    const deadline = window.setTimeout(() => {
+      timedOut = true;
+      abort.abort();
+    }, 30_000);
+    try {
+      const boot: unknown = await request('/api/auth/bootstrap', {
+        signal: abort.signal,
+      }).then((r) => r.json());
+      if (
+        !object(boot) ||
+        boot.enabled !== true ||
+        typeof boot.csrf !== 'string' ||
+        !/^[A-Za-z0-9_-]{43}$/.test(boot.csrf)
+      )
+        throw new Error();
+      if (abort.signal.aborted || active.current !== patientId) return;
+      const result: unknown = await request(
+        `${base(patientId)}/documents/${encodeURIComponent(selected.documentId)}/${selected.action}`,
+        {
+          method: 'POST',
+          signal: abort.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': boot.csrf,
+          },
+          body: '{}',
+        },
+      ).then((r) => r.json());
+      if (!object(result) || result.saved !== true) throw new Error();
+      if (abort.signal.aborted || active.current !== patientId) return;
+      setPreview(null);
+      setLifecycle(null);
+      setNotice(
+        selected.action === 'trash'
+          ? 'Document moved to Trash.'
+          : 'Document restored.',
+      );
+      lifecycleRestoreFocus.current = true;
+      setVersion((n) => n + 1);
+    } catch (e) {
+      if (
+        active.current === patientId &&
+        lifecycleAction.current === abort &&
+        (!abort.signal.aborted || timedOut)
+      ) {
+        if (timedOut)
+          setLifecycleError(
+            'The result could not be confirmed. Refresh documents or retry safely.',
+          );
+        else if (
+          e instanceof RequestError &&
+          [401, 403, 404].includes(e.status)
+        ) {
+          setList(null);
+          setPreview(null);
+          setLifecycle(null);
+          setError(message(e));
+        } else if (e instanceof RequestError && e.status === 409) {
+          setLifecycle(null);
+          setNotice('Recovery is no longer available.');
+          lifecycleRestoreFocus.current = true;
+          setVersion((n) => n + 1);
+        } else setLifecycleError(message(e));
+      }
+    } finally {
+      window.clearTimeout(deadline);
+      if (active.current === patientId && lifecycleAction.current === abort) {
+        setLifecycleBusy(false);
+        lifecycleInProgress.current = false;
+      }
+    }
+  }
   if (!displayPatient) return <p>Select a patient to view documents.</p>;
-  const current = list?.id === displayPatient.id ? list.value : null;
+  const current =
+    list?.id === displayPatient.id &&
+    list.view === 'active' &&
+    view === 'active'
+      ? list.value
+      : null;
+  const trash =
+    list?.id === displayPatient.id && list.view === 'trash' && view === 'trash'
+      ? list.value
+      : null;
   const dateValid = (date: string) =>
     !date ||
     (/^\d{4}-\d{2}-\d{2}$/.test(date) &&
@@ -374,6 +602,18 @@ export function DocumentsPanel({
       aria-label={`Documents for ${displayPatient.displayName}`}
     >
       <p>Patient: {displayPatient.displayName}</p>
+      <DocumentsViewSwitcher
+        value={view}
+        onChange={(next) => {
+          if (next !== view) {
+            setLifecycle(null);
+            setLifecycleError('');
+            setEditing(null);
+            setPreview(null);
+            setView(next);
+          }
+        }}
+      />
       {notice && <p role="status">{notice}</p>}
       {busy && <p role="status">Loading documents…</p>}
       {error && (
@@ -449,6 +689,27 @@ export function DocumentsPanel({
                       Edit title
                     </Button>
                   )}{' '}
+                  {doc.canEdit && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      disabled={busy || patientsLoading}
+                      aria-label={`Move to Trash ${doc.title}`}
+                      onClick={(event) => {
+                        lifecycleTrigger.current = event.currentTarget;
+                        setNotice('');
+                        setLifecycleError('');
+                        setLifecycle({
+                          patientId: patientId!,
+                          documentId: doc.id,
+                          title: doc.title,
+                          action: 'trash',
+                        });
+                      }}
+                    >
+                      Move to Trash
+                    </Button>
+                  )}
                   {doc.canView && (
                     <Button
                       variant="ghost"
@@ -481,7 +742,102 @@ export function DocumentsPanel({
           )}
         </>
       )}
+      {trash && (
+        <section aria-label="Trashed documents">
+          <p className="text-sm text-muted-foreground">
+            Documents in Trash cannot be opened or downloaded. Recovery is
+            available for 30 days.
+          </p>
+          {trash.documents.length ? (
+            <ul className="mt-4 grid gap-3">
+              {trash.documents.map((doc) => (
+                <TrashDocumentRow
+                  key={doc.id}
+                  document={doc}
+                  disabled={busy || patientsLoading}
+                  onRestore={() => {
+                    lifecycleTrigger.current =
+                      document.activeElement instanceof HTMLElement
+                        ? document.activeElement
+                        : null;
+                    setNotice('');
+                    setLifecycleError('');
+                    setLifecycle({
+                      patientId: patientId!,
+                      documentId: doc.id,
+                      title: doc.title,
+                      action: 'restore',
+                      restoreUntil: doc.restoreUntil,
+                    });
+                  }}
+                />
+              ))}
+            </ul>
+          ) : (
+            <p className="py-6 text-muted-foreground">
+              No documents are available in Trash.
+            </p>
+          )}
+        </section>
+      )}
       {actionError && <p role="alert">{actionError}</p>}
+      <Dialog
+        open={!!lifecycle && lifecycle.patientId === displayPatient.id}
+        onOpenChange={(open) => {
+          if (!open) {
+            if (lifecycleBusy) return;
+            lifecycleAction.current?.abort();
+            lifecycleInProgress.current = false;
+            setLifecycleBusy(false);
+            setLifecycle(null);
+          }
+        }}
+      >
+        <DialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            if (busy || patientsLoading) {
+              lifecycleRestoreFocus.current = true;
+              return;
+            }
+            (lifecycleTrigger.current?.isConnected
+              ? lifecycleTrigger.current
+              : (panel.current?.querySelector<HTMLButtonElement>(
+                  '[aria-label="Document views"] button[aria-pressed="true"]',
+                ) ?? panel.current)
+            )?.focus();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>
+              {lifecycle?.action === 'restore'
+                ? 'Restore document'
+                : 'Move document to Trash'}
+            </DialogTitle>
+            <DialogDescription>
+              {lifecycle?.action === 'restore'
+                ? 'Return the selected original to active documents.'
+                : 'Confirm the selected patient and document before moving it to Trash.'}
+            </DialogDescription>
+          </DialogHeader>
+          {lifecycle?.restoreUntil && (
+            <p className="text-sm text-muted-foreground">
+              Recovery until {new Date(lifecycle.restoreUntil).toLocaleString()}
+            </p>
+          )}
+          {lifecycle && (
+            <DocumentTrashConfirmation
+              action={lifecycle.action}
+              patientName={displayPatient.displayName}
+              title={lifecycle.title}
+              working={lifecycleBusy || busy || patientsLoading}
+              error={lifecycleError}
+              onConfirm={() => void changeTrash()}
+              onCancel={() => setLifecycle(null)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={!!editing && editing.patientId === displayPatient.id}
         onOpenChange={(open) => {
@@ -532,18 +888,32 @@ export function DocumentsPanel({
         </DialogContent>
       </Dialog>
       <Dialog
-        open={!!preview && preview.id === patientId}
+        open={!!preview && preview.id === displayPatient.id}
         onOpenChange={(open) => {
           if (!open) setPreview(null);
         }}
       >
-        <DialogContent>
+        <DialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            if (busy || patientsLoading) {
+              previewRestoreFocus.current = true;
+              return;
+            }
+            (previewTrigger.current?.isConnected
+              ? previewTrigger.current
+              : (panel.current?.querySelector<HTMLButtonElement>(
+                  '[aria-label="Document views"] button[aria-pressed="true"]',
+                ) ?? panel.current)
+            )?.focus();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>Document preview</DialogTitle>
             <DialogDescription>{preview?.title}</DialogDescription>
           </DialogHeader>
           {preview &&
-            preview.id === patientId &&
+            preview.id === displayPatient.id &&
             (preview.mime === 'application/pdf' ? (
               <iframe
                 title={`Preview ${preview.title}`}

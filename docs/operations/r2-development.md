@@ -19,7 +19,7 @@ From the repository root, check the migration ledger using the owner connection 
 pnpm --dir apps/server exec node --env-file=../../.env ./node_modules/prisma/build/index.js migrate status
 ```
 
-The reviewed development schema has eight migrations, including the object-generation and patient-object-layout migrations, and twelve application tables. Verify the actual ledger and schema against the reviewed migration files. Stop on unexpected drift, failed or incomplete migrations, an uncertain target, or failed TLS/UTC checks. Do not reset the database, baseline unrelated objects, alter the migration ledger, or touch provider-managed `auth` or `vault` schemas.
+Verify the actual ledger and schema against the reviewed files in `apps/server/prisma/migrations`, including object generations, private patient layout, display titles and protected document Trash. The application has twelve runtime tables; migration count is determined by the reviewed files and ledger rather than a fixed count in this runbook. Stop on unexpected drift, failed or incomplete migrations, an uncertain target, or failed TLS/UTC checks. Do not reset the database, baseline unrelated objects, alter the migration ledger, or touch provider-managed `auth` or `vault` schemas.
 
 **Only after explicit approval for the identified owner connection and development target**, apply reviewed pending migrations from the repository root:
 

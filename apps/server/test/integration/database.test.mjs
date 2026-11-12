@@ -328,15 +328,15 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
         );
         assert.equal(
           result.rowCount,
-          9,
-          'All nine foundation through document display-title migrations must exist',
+          10,
+          'All ten foundation through document trash migrations must exist',
         );
         assert.equal(
           result.rows
             .map((row) => row.migration_name)
             .sort()
             .join(','),
-          '20261105000100_foundation,20261105000300_auth_sessions,20261105000400_person_identity,20261110000100_patient_permissions,20261110000200_document_intake,20261110000300_caregiver_approvals,20261111000100_object_generations,20261111000200_patient_object_layout,20261112000100_document_display_titles',
+          '20261105000100_foundation,20261105000300_auth_sessions,20261105000400_person_identity,20261110000100_patient_permissions,20261110000200_document_intake,20261110000300_caregiver_approvals,20261111000100_object_generations,20261111000200_patient_object_layout,20261112000100_document_display_titles,20261112000200_document_trash',
         );
         assert.ok(result.rows.every((row) => row.finished && row.active));
       }
@@ -2698,6 +2698,471 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           );
         } finally {
           await service.onModuleDestroy();
+        }
+      },
+    );
+
+    await stage(
+      'DEL-01 trash preserves originals, denies upload replay and atomically restores within the database deadline',
+      async () => {
+        const store = new PrismaDocumentStore(runtimeUrl.href);
+        const other = new PrismaDocumentStore(runtimeUrl.href);
+        const access = new PrismaAccessStore(runtimeUrl.href);
+        const runtime = await connect(runtimeUrl);
+        class Objects extends MemoryObjectStore {
+          calls = 0;
+          beforeGet;
+          async get(...args) {
+            this.calls++;
+            await this.beforeGet?.();
+            return super.get(...args);
+          }
+          async put(...args) {
+            this.calls++;
+            return super.put(...args);
+          }
+          async remove(...args) {
+            this.calls++;
+            return super.remove(...args);
+          }
+        }
+        const objects = new Objects();
+        const core = new DocumentIntake(
+          store.asActor(vault.ownerAccountId),
+          objects,
+        );
+        const permissions = new PermissionService(access);
+        const authorize = async (p, a, s) =>
+          permissions.require(vault.ownerPrincipal, p, a, s);
+        const bytes = Buffer.from(
+          '%PDF-1.7\nSynthetic trash original\n%%EOF\n',
+        );
+        const declaration = {
+          title: 'Preserved trash original',
+          mimeType: 'application/pdf',
+          bytes: bytes.length,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          idempotencyKey: randomUUID(),
+        };
+        try {
+          const upload = await core.begin(
+            vault.patientId,
+            declaration,
+            authorize,
+          );
+          const target = { kind: 'document', documentId: upload.documentId };
+          const edit = () =>
+            permissions.require(
+              vault.ownerPrincipal,
+              vault.patientId,
+              'edit',
+              target,
+              true,
+            );
+          const change = (action, callback = edit, using = store) =>
+            using.changeTrash(
+              vault.patientId,
+              upload.documentId,
+              action,
+              vault.ownerAccountId,
+              callback,
+            );
+          assert.equal(
+            await change('trash'),
+            'missing',
+            'Pending uploads cannot enter trash',
+          );
+          await rejectedSql(
+            runtime,
+            'UPDATE fmv.documents SET deleted_at=clock_timestamp() WHERE id=$1::uuid',
+            [upload.documentId],
+            '23514',
+          );
+          await core.content(
+            vault.patientId,
+            upload.uploadId,
+            bytes,
+            authorize,
+          );
+          await core.finalize(vault.patientId, upload.uploadId, authorize);
+          const snapshot = async () =>
+            (
+              await query(
+                runtime,
+                'SELECT title,display_title,object_key,bytes,sha256,created_at,state,deleted_at FROM fmv.documents WHERE id=$1::uuid',
+                [upload.documentId],
+              )
+            ).rows[0];
+          const original = await snapshot();
+          const events = async () =>
+            (
+              await query(
+                runtime,
+                "SELECT kind,actor_account_id,retention_until-occurred_at=interval '90 days' AS retention FROM fmv.document_events WHERE document_id=$1::uuid AND kind IN ('document.trashed','document.restored') ORDER BY occurred_at,id",
+                [upload.documentId],
+              )
+            ).rows;
+          const manifests = await query(
+            runtime,
+            'SELECT * FROM fmv.document_object_attempts WHERE document_id=$1::uuid ORDER BY object_key',
+            [upload.documentId],
+          );
+          const privileges = await query(
+            runtime,
+            "SELECT has_column_privilege(current_user,'fmv.documents','deleted_at','UPDATE') AS can_trash,has_table_privilege(current_user,'fmv.documents','DELETE') AS can_delete",
+          );
+          assert.deepEqual(privileges.rows, [
+            { can_trash: true, can_delete: false },
+          ]);
+          let checks = 0;
+          assert.equal(
+            await change('trash', async () => {
+              checks++;
+              await edit();
+            }),
+            'changed',
+          );
+          assert.equal(
+            checks,
+            2,
+            'Both authorization checks run for a transition',
+          );
+          const trashed = await snapshot();
+          assert.ok(trashed.deleted_at instanceof Date);
+          assert.deepEqual({ ...trashed, deleted_at: null }, original);
+          assert.equal(await change('trash'), 'unchanged');
+          assert.deepEqual(
+            await snapshot(),
+            trashed,
+            'Retry cannot extend recovery',
+          );
+          assert.equal((await events()).length, 1);
+          assert.ok(
+            !(await store.list(vault.patientId)).some(
+              (row) => row.documentId === upload.documentId,
+            ),
+          );
+          assert.ok(
+            (await store.listTrash(vault.patientId)).some(
+              (row) => row.documentId === upload.documentId,
+            ),
+          );
+          for (const action of ['view', 'export', 'edit', 'manage', 'upload'])
+            await accessDenied(() =>
+              permissions.require(
+                vault.ownerPrincipal,
+                vault.patientId,
+                action,
+                target,
+              ),
+            );
+          await accessDenied(() =>
+            permissions.require(
+              vault.ownerPrincipal,
+              vault.patientId,
+              'view',
+              target,
+              true,
+            ),
+          );
+          assert.equal(
+            await store.rename(
+              vault.patientId,
+              upload.documentId,
+              'Hidden rename',
+              vault.ownerAccountId,
+              edit,
+            ),
+            false,
+          );
+          const caregiverService = new CaregiverService(runtimeUrl.href);
+          try {
+            const grant = await insertGrant(runtime, vault, {
+              scopeKind: 'document',
+              documentId: upload.documentId,
+              actions: ['view'],
+            });
+            const accessList = await caregiverService.list(
+              vault.ownerPrincipal,
+              vault.patientId,
+            );
+            assert.ok(
+              accessList.grants.some((g) => g.id === grant.id),
+              'Trash must not hide grants from an authorized manager',
+            );
+            await caregiverService.revoke(
+              vault.ownerPrincipal,
+              vault.patientId,
+              grant.id,
+            );
+            assert.ok(
+              (
+                await query(
+                  runtime,
+                  'SELECT revoked_at FROM fmv.access_grants WHERE id=$1::uuid',
+                  [grant.id],
+                )
+              ).rows[0].revoked_at,
+              'Trash must not block revocation',
+            );
+            await accessDenied(() =>
+              caregiverService.create(vault.ownerPrincipal, vault.patientId, {
+                actions: ['view'],
+                scope: { kind: 'document', documentId: upload.documentId },
+                expiresInHours: 1,
+              }),
+            );
+          } finally {
+            await caregiverService.onModuleDestroy();
+          }
+          const ioBefore = objects.calls;
+          const hidden = (error) => error.status === 404;
+          for (const action of ['view', 'export'])
+            await assert.rejects(
+              core.read(
+                vault.patientId,
+                upload.documentId,
+                action,
+                async () => {},
+              ),
+              hidden,
+            );
+          await assert.rejects(
+            core.begin(vault.patientId, declaration, async () => {}),
+            hidden,
+          );
+          await assert.rejects(
+            core.content(
+              vault.patientId,
+              upload.uploadId,
+              bytes,
+              async () => {},
+            ),
+            hidden,
+          );
+          await assert.rejects(
+            core.finalize(vault.patientId, upload.uploadId, async () => {}),
+            hidden,
+          );
+          assert.equal(
+            objects.calls,
+            ioBefore,
+            'Hidden records deny before object IO, even with permissive callbacks',
+          );
+          let postcheck = 0;
+          await assert.rejects(
+            change('restore', async () => {
+              if (++postcheck === 2)
+                throw new Error('Synthetic current access lost');
+            }),
+          );
+          assert.deepEqual(await snapshot(), trashed);
+          assert.equal(
+            (await events()).length,
+            1,
+            'Post-check denial rolls audit back',
+          );
+          await query(
+            owner,
+            "CREATE FUNCTION fmv.fail_trash_event_probe() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.kind IN ('document.trashed','document.restored') THEN RAISE EXCEPTION 'synthetic trash audit failure'; END IF; RETURN NEW; END $$",
+          );
+          await query(
+            owner,
+            'CREATE TRIGGER trash_failure_probe BEFORE INSERT ON fmv.document_events FOR EACH ROW EXECUTE FUNCTION fmv.fail_trash_event_probe()',
+          );
+          try {
+            await assert.rejects(change('restore'));
+            assert.deepEqual(await snapshot(), trashed);
+            assert.equal((await events()).length, 1);
+          } finally {
+            await query(
+              owner,
+              'DROP TRIGGER trash_failure_probe ON fmv.document_events',
+            );
+            await query(owner, 'DROP FUNCTION fmv.fail_trash_event_probe()');
+          }
+          assert.equal(await change('restore'), 'changed');
+          assert.equal(await change('restore'), 'unchanged');
+          assert.deepEqual(await snapshot(), original);
+          assert.deepEqual(
+            (
+              await core.read(
+                vault.patientId,
+                upload.documentId,
+                'view',
+                authorize,
+              )
+            ).bytes,
+            bytes,
+          );
+          const replay = await core.begin(
+            vault.patientId,
+            declaration,
+            authorize,
+          );
+          assert.equal(replay.uploadId, upload.uploadId);
+          assert.equal(replay.documentId, upload.documentId);
+          assert.equal(replay.state, 'ready');
+          assert.deepEqual(
+            (await events()).map((row) => row.kind),
+            ['document.trashed', 'document.restored'],
+          );
+          assert.ok(
+            (await events()).every(
+              (row) =>
+                row.retention && row.actor_account_id === vault.ownerAccountId,
+            ),
+          );
+          assert.deepEqual(
+            (
+              await query(
+                runtime,
+                'SELECT * FROM fmv.document_object_attempts WHERE document_id=$1::uuid ORDER BY object_key',
+                [upload.documentId],
+              )
+            ).rows,
+            manifests.rows,
+          );
+          // Use database-relative times so neither application clocks nor sleeps
+          // decide the strict 30-day boundary.
+          await change('trash');
+          await query(
+            owner,
+            "UPDATE fmv.documents SET deleted_at=clock_timestamp()-interval '30 days'+interval '1 minute' WHERE id=$1::uuid",
+            [upload.documentId],
+          );
+          assert.equal(await change('restore'), 'changed');
+          await change('trash');
+          await query(
+            owner,
+            "UPDATE fmv.documents SET deleted_at=clock_timestamp()-interval '30 days' WHERE id=$1::uuid",
+            [upload.documentId],
+          );
+          assert.equal(await change('restore'), 'expired');
+          // The deadline must be evaluated when the UPDATE runs, after any
+          // slow authorization callback, rather than at transaction start.
+          await query(
+            owner,
+            "UPDATE fmv.documents SET deleted_at=clock_timestamp()-interval '30 days'+interval '400 milliseconds' WHERE id=$1::uuid",
+            [upload.documentId],
+          );
+          let deadlineChecks = 0;
+          assert.equal(
+            await change('restore', async () => {
+              if (++deadlineChecks === 1) await delay(600);
+              await edit();
+            }),
+            'expired',
+          );
+          const expired = await snapshot();
+          const eventCount = (await events()).length;
+          assert.equal(await change('restore'), 'expired');
+          assert.equal(await change('trash'), 'unchanged');
+          assert.deepEqual(await snapshot(), expired);
+          assert.equal((await events()).length, eventCount);
+          assert.ok(
+            (await store.listTrash(vault.patientId)).some(
+              (row) => row.documentId === upload.documentId,
+            ),
+            'Expired metadata remains visible without claiming physical purge',
+          );
+          await query(
+            owner,
+            'UPDATE fmv.documents SET deleted_at=clock_timestamp() WHERE id=$1::uuid',
+            [upload.documentId],
+          );
+          assert.equal(await change('restore'), 'changed');
+          // A read holds the same row lock as a trash transition while bytes are
+          // in flight; after it commits, subsequent reads see the hidden state.
+          const entered = deferred(),
+            release = deferred();
+          objects.beforeGet = async () => {
+            entered.resolve();
+            await release.promise;
+          };
+          const reading = core.read(
+            vault.patientId,
+            upload.documentId,
+            'view',
+            authorize,
+          );
+          await within(entered.promise, 5000);
+          let transitioned = false;
+          const trashing = change('trash', edit, other).then((value) => {
+            transitioned = true;
+            return value;
+          });
+          try {
+            await delay(100);
+            assert.equal(
+              transitioned,
+              false,
+              'Trash waits for the active read row lock',
+            );
+          } finally {
+            release.resolve();
+          }
+          assert.deepEqual((await within(reading, 5000)).bytes, bytes);
+          assert.equal(await within(trashing, 5000), 'changed');
+          objects.beforeGet = undefined;
+          await assert.rejects(
+            core.read(
+              vault.patientId,
+              upload.documentId,
+              'view',
+              async () => {},
+            ),
+            hidden,
+          );
+          const beforeRace = (await events()).length;
+          const restored = await Promise.all([
+            change('restore'),
+            change('restore', edit, other),
+          ]);
+          assert.deepEqual(restored.sort(), ['changed', 'unchanged']);
+          assert.equal((await events()).length, beforeRace + 1);
+          const gate = deferred(),
+            unlock = deferred();
+          const rename = store.rename(
+            vault.patientId,
+            upload.documentId,
+            'Serialized title',
+            vault.ownerAccountId,
+            async () => {
+              gate.resolve();
+              await unlock.promise;
+            },
+          );
+          await within(gate.promise, 5000);
+          let trashFinished = false;
+          const afterRename = change('trash', edit, other).then((value) => {
+            trashFinished = true;
+            return value;
+          });
+          try {
+            await delay(100);
+            assert.equal(trashFinished, false);
+          } finally {
+            unlock.resolve();
+          }
+          assert.equal(await within(rename, 5000), true);
+          assert.equal(await within(afterRename, 5000), 'changed');
+          assert.equal((await snapshot()).display_title, 'Serialized title');
+          assert.equal(await change('restore'), 'changed');
+          assert.equal(
+            await store.changeTrash(
+              vault.strangerPersonId,
+              upload.documentId,
+              'trash',
+              vault.ownerAccountId,
+              async () => assert.fail('Wrong patient must not authorize'),
+            ),
+            'missing',
+          );
+        } finally {
+          await store.onModuleDestroy();
+          await other.onModuleDestroy();
+          await access.onModuleDestroy();
         }
       },
     );

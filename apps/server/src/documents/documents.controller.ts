@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   Param,
   Post,
   Put,
@@ -48,6 +49,44 @@ export class DocumentsController {
     @Param('patientId') p: string,
   ) {
     return this.documents.list(await this.principal(req), p);
+  }
+  @Get('trash') async listTrash(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+  ) {
+    return this.documents.listTrash(await this.principal(req), p);
+  }
+  @Post('documents/:documentId/trash')
+  @HttpCode(200)
+  async trash(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+    @Body() body: unknown,
+  ) {
+    return this.documents.changeTrash(
+      await this.principal(req),
+      p,
+      d,
+      'trash',
+      body,
+    );
+  }
+  @Post('documents/:documentId/restore')
+  @HttpCode(200)
+  async restore(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+    @Body() body: unknown,
+  ) {
+    return this.documents.changeTrash(
+      await this.principal(req),
+      p,
+      d,
+      'restore',
+      body,
+    );
   }
   @Get('categories') async categories(
     @Req() req: Request,

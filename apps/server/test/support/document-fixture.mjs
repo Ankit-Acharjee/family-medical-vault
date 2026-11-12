@@ -50,6 +50,7 @@ export class MemoryDocuments extends DocumentStore {
       patientId: record.patientId,
       categoryId: record.categoryId,
       state: record.state,
+      deletedAt: record.deletedAt,
     });
   }
   async reserveObject(documentId) {
@@ -210,7 +211,8 @@ export class MemoryDocuments extends DocumentStore {
           (row) =>
             row.patientId === patientId &&
             row.documentId === documentId &&
-            row.state === 'ready',
+            row.state === 'ready' &&
+            !row.deletedAt,
         );
         if (!record) return false;
         await authorize();
@@ -226,9 +228,59 @@ export class MemoryDocuments extends DocumentStore {
     this.check('list');
     return clone(
       [...this.rows.values()].filter(
-        (record) => record.patientId === patientId && record.state === 'ready',
+        (record) =>
+          record.patientId === patientId &&
+          record.state === 'ready' &&
+          !record.deletedAt,
       ),
     );
+  }
+  async listTrash(patientId) {
+    this.check('listTrash');
+    return clone(
+      [...this.rows.values()].filter(
+        (row) =>
+          row.patientId === patientId && row.state === 'ready' && row.deletedAt,
+      ),
+    );
+  }
+  async changeTrash(patientId, documentId, action, accountId, authorize) {
+    return this.asActor(accountId).withLock(`trash:${documentId}`, async () => {
+      const record = [...this.rows.values()].find(
+        (row) =>
+          row.patientId === patientId &&
+          row.documentId === documentId &&
+          row.state === 'ready',
+      );
+      if (!record) return 'missing';
+      await authorize();
+      this.check('trash');
+      let outcome = 'unchanged';
+      if (action === 'trash' && !record.deletedAt) {
+        record.deletedAt = new Date(this.access.now);
+        outcome = 'changed';
+      } else if (action === 'restore' && record.deletedAt) {
+        if (
+          this.access.now.getTime() >=
+          record.deletedAt.getTime() + 30 * 86400000
+        )
+          outcome = 'expired';
+        else {
+          record.deletedAt = null;
+          outcome = 'changed';
+        }
+      }
+      this.sync(record);
+      if (outcome === 'changed')
+        await this.audit(
+          patientId,
+          documentId,
+          accountId,
+          action === 'trash' ? 'document.trashed' : 'document.restored',
+        );
+      await authorize();
+      return outcome;
+    });
   }
   async categories() {
     this.check('categories');

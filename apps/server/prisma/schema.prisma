@@ -146,6 +146,7 @@ model Document {
   categoryId     String                  @map("category_id") @db.Uuid
   title          String
   displayTitle   String?                 @map("display_title")
+  deletedAt      DateTime?               @map("deleted_at") @db.Timestamptz(3)
   mimeType       String                  @map("mime_type")
   bytes          Int
   sha256         String

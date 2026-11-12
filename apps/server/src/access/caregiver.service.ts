@@ -107,8 +107,9 @@ class TransactionAccessStore extends AccessStore {
         patientId: string;
         categoryId: string;
         state: 'pending' | 'ready' | 'failed';
+        deletedAt: Date | null;
       }[]
-    >`SELECT id,patient_id AS "patientId",category_id AS "categoryId",state FROM fmv.documents WHERE id=${id}::uuid`;
+    >`SELECT id,patient_id AS "patientId",category_id AS "categoryId",state,deleted_at AS "deletedAt" FROM fmv.documents WHERE id=${id}::uuid`;
     return r ?? null;
   }
   async category(id: string) {
@@ -159,6 +160,7 @@ export class CaregiverService implements OnModuleDestroy {
     actions: PermissionAction[],
     target: PermissionScope,
     until?: Date,
+    allowTrashedRevocation = false,
   ) {
     const store = new TransactionAccessStore(db),
       permissions = new PermissionService(store);
@@ -174,6 +176,10 @@ export class CaregiverService implements OnModuleDestroy {
       !(await store.category(target.categoryId))
     )
       throw new NotFoundException();
+    // Revocation must remain possible while content is in Trash. This mode
+    // never grants actions or supports invitation/grant creation.
+    const includeTrashed =
+      allowTrashedRevocation && actions.length === 0 && !until;
     const evaluated = until
       ? { ...s, now: new Date(Math.max(s.now.getTime(), until.getTime() - 1)) }
       : s;
@@ -184,6 +190,7 @@ export class CaregiverService implements OnModuleDestroy {
           a as PermissionAction,
           target,
           resource ?? undefined,
+          includeTrashed,
         ),
       )
     )
@@ -200,6 +207,7 @@ export class CaregiverService implements OnModuleDestroy {
                     a as PermissionAction,
                     target,
                     resource ?? undefined,
+                    includeTrashed,
                   ),
                 );
                 if (!support) throw new NotFoundException();
@@ -336,6 +344,7 @@ export class CaregiverService implements OnModuleDestroy {
           r.scopeKind === 'document'
             ? ((await store.document(r.documentId!)) ?? undefined)
             : undefined,
+          true,
         );
       const visibleGrants = await Promise.all(grants.map(visible));
       const visibleInvitations = await Promise.all(rows.map(visible));
@@ -447,7 +456,15 @@ export class CaregiverService implements OnModuleDestroy {
           p,
         );
         if (!r) throw new NotFoundException();
-        const a = await this.delegate(db, principal, p, [], scope(r));
+        const a = await this.delegate(
+          db,
+          principal,
+          p,
+          [],
+          scope(r),
+          undefined,
+          true,
+        );
         if (r.state === 'accepted') throw new NotFoundException();
         if (r.state === 'revoked') return {};
         const changed =
@@ -465,7 +482,15 @@ export class CaregiverService implements OnModuleDestroy {
         }[]
       >`SELECT grantee_account_id AS "granteeAccountId",scope_kind AS "scopeKind",category_id AS "categoryId",document_id AS "documentId" FROM fmv.access_grants WHERE id=${id}::uuid AND patient_id=${p}::uuid`;
       if (!g) throw new NotFoundException();
-      const a = await this.delegate(db, principal, p, [], scope(g));
+      const a = await this.delegate(
+        db,
+        principal,
+        p,
+        [],
+        scope(g),
+        undefined,
+        true,
+      );
       // Revoke only grants derived from this exact authority; unrelated independent
       // grants for the same caregiver remain intact. Expiry cannot exceed parents.
       const revoked = await db.$queryRaw<

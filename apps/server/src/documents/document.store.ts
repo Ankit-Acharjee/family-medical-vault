@@ -7,11 +7,22 @@ import type { Prisma } from '../generated/prisma/client.js';
 import type { DocumentCategory } from '@fmv/contracts';
 import type { IntakeStore, IntakeMetadata, IntakeRecord } from './intake.js';
 
+export type TrashChangeResult = 'changed' | 'unchanged' | 'missing' | 'expired';
 export abstract class DocumentStore {
   abstract asActor(accountId: string): IntakeStore;
   abstract list(
     patientId: string,
   ): Promise<(IntakeRecord & { displayTitle?: string | null })[]>;
+  abstract listTrash(
+    patientId: string,
+  ): Promise<(IntakeRecord & { displayTitle?: string | null })[]>;
+  abstract changeTrash(
+    patientId: string,
+    documentId: string,
+    action: 'trash' | 'restore',
+    accountId: string,
+    authorize: () => Promise<void>,
+  ): Promise<TrashChangeResult>;
   abstract rename(
     patientId: string,
     documentId: string,
@@ -27,7 +38,7 @@ export abstract class DocumentStore {
     kind: 'document.viewed' | 'document.exported',
   ): Promise<void>;
 }
-const columns = `id AS "documentId", upload_id AS "uploadId", patient_id AS "patientId", category_id AS "categoryId", title, mime_type AS "mimeType", bytes, sha256, idempotency_key AS "idempotencyKey", object_key AS "objectKey", state, created_at AS "createdAt"`;
+const columns = `id AS "documentId", upload_id AS "uploadId", patient_id AS "patientId", category_id AS "categoryId", title, mime_type AS "mimeType", bytes, sha256, idempotency_key AS "idempotencyKey", object_key AS "objectKey", state, created_at AS "createdAt", deleted_at AS "deletedAt"`;
 // Column names are a static internal constant; all external values stay bound.
 async function find(
   db: Prisma.TransactionClient,
@@ -36,7 +47,7 @@ async function find(
   value: string,
 ) {
   const rows = await db.$queryRawUnsafe<IntakeRecord[]>(
-    `SELECT ${columns} FROM fmv.documents WHERE patient_id=$1::uuid AND ${where}=$2${where === 'idempotency_key' ? '' : '::uuid'}`,
+    `SELECT ${columns} FROM fmv.documents WHERE patient_id=$1::uuid AND ${where}=$2${where === 'idempotency_key' ? '' : '::uuid'} FOR NO KEY UPDATE`,
     patientId,
     value,
   );
@@ -156,8 +167,57 @@ export class PrismaDocumentStore
     return this.db.$queryRawUnsafe<
       (IntakeRecord & { displayTitle: string | null })[]
     >(
-      `SELECT ${columns}, display_title AS "displayTitle" FROM fmv.documents WHERE patient_id=$1::uuid AND state='ready' ORDER BY created_at DESC,id`,
+      `SELECT ${columns}, display_title AS "displayTitle" FROM fmv.documents WHERE patient_id=$1::uuid AND state='ready' AND deleted_at IS NULL ORDER BY created_at DESC,id`,
       patientId,
+    );
+  }
+  async listTrash(patientId: string) {
+    return this.db.$queryRawUnsafe<
+      (IntakeRecord & { displayTitle: string | null })[]
+    >(
+      `SELECT ${columns},display_title AS "displayTitle" FROM fmv.documents WHERE patient_id=$1::uuid AND state='ready' AND deleted_at IS NOT NULL ORDER BY deleted_at DESC,id`,
+      patientId,
+    );
+  }
+  async changeTrash(
+    patientId: string,
+    documentId: string,
+    action: 'trash' | 'restore',
+    accountId: string,
+    authorize: () => Promise<void>,
+  ): Promise<TrashChangeResult> {
+    return this.db.$transaction(
+      async (db) => {
+        const rows = await db.$queryRaw<
+          { deletedAt: Date | null; state: string }[]
+        >`SELECT deleted_at AS "deletedAt",state FROM fmv.documents WHERE patient_id=${patientId}::uuid AND id=${documentId}::uuid FOR NO KEY UPDATE`;
+        const row = rows[0];
+        if (!row || row.state !== 'ready') return 'missing';
+        await authorize();
+        if (
+          (action === 'trash' && row.deletedAt) ||
+          (action === 'restore' && !row.deletedAt)
+        ) {
+          await authorize();
+          return 'unchanged';
+        }
+        if (action === 'trash') {
+          await db.$executeRaw`UPDATE fmv.documents SET deleted_at=clock_timestamp() WHERE patient_id=${patientId}::uuid AND id=${documentId}::uuid`;
+        } else {
+          const changed =
+            await db.$executeRaw`UPDATE fmv.documents SET deleted_at=NULL WHERE patient_id=${patientId}::uuid AND id=${documentId}::uuid AND deleted_at + interval '30 days' > clock_timestamp()`;
+          if (changed !== 1) {
+            await authorize();
+            return 'expired';
+          }
+        }
+        const kind =
+          action === 'trash' ? 'document.trashed' : 'document.restored';
+        await db.$executeRaw`INSERT INTO fmv.document_events(id,patient_id,document_id,actor_account_id,kind) VALUES (${randomUUID()}::uuid,${patientId}::uuid,${documentId}::uuid,${accountId}::uuid,${kind})`;
+        await authorize();
+        return 'changed';
+      },
+      { maxWait: 5000, timeout: 15000 },
     );
   }
   async rename(
@@ -170,11 +230,11 @@ export class PrismaDocumentStore
     return this.db.$transaction(async (db) => {
       const rows = await db.$queryRaw<
         { title: string; displayTitle: string | null }[]
-      >`SELECT title,display_title AS "displayTitle" FROM fmv.documents WHERE patient_id=${patientId}::uuid AND id=${documentId}::uuid AND state='ready' FOR UPDATE`;
+      >`SELECT title,display_title AS "displayTitle" FROM fmv.documents WHERE patient_id=${patientId}::uuid AND id=${documentId}::uuid AND state='ready' AND deleted_at IS NULL FOR NO KEY UPDATE`;
       if (!rows[0]) return false;
       await authorize();
       if ((rows[0].displayTitle ?? rows[0].title) !== title) {
-        await db.$executeRaw`UPDATE fmv.documents SET display_title=${title} WHERE patient_id=${patientId}::uuid AND id=${documentId}::uuid AND state='ready'`;
+        await db.$executeRaw`UPDATE fmv.documents SET display_title=${title} WHERE patient_id=${patientId}::uuid AND id=${documentId}::uuid AND state='ready' AND deleted_at IS NULL`;
         await db.$executeRaw`INSERT INTO fmv.document_events(id,patient_id,document_id,actor_account_id,kind) VALUES (${randomUUID()}::uuid,${patientId}::uuid,${documentId}::uuid,${accountId}::uuid,'document.renamed')`;
       }
       await authorize();

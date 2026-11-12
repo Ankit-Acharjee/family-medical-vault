@@ -57,6 +57,12 @@ export type DocumentsResult = {
   documents: DocumentSummary[];
   storageReady: boolean;
 };
+export type TrashDocumentSummary = DocumentSummary & {
+  deletedAt: string;
+  restoreUntil: string;
+  canRestore: boolean;
+};
+export type TrashDocumentsResult = { documents: TrashDocumentSummary[] };
 export type DocumentCategory = { id: string; name: string };
 export type UploadState = 'pending' | 'ready' | 'failed';
 export type UploadResult = {

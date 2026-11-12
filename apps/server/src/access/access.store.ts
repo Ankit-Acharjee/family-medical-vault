@@ -29,6 +29,7 @@ export type DocumentAuthority = {
   patientId: string;
   categoryId: string;
   state: 'pending' | 'ready' | 'failed';
+  deletedAt?: Date | null;
 };
 export abstract class AccessStore {
   abstract load(
@@ -152,7 +153,7 @@ export class PrismaAccessStore extends AccessStore implements OnModuleDestroy {
   async document(documentId: string) {
     const rows = await this.db.$queryRaw<
       DocumentAuthority[]
-    >`SELECT id, patient_id AS "patientId", category_id AS "categoryId", state FROM fmv.documents WHERE id = ${documentId}::uuid`;
+    >`SELECT id, patient_id AS "patientId", category_id AS "categoryId", state, deleted_at AS "deletedAt" FROM fmv.documents WHERE id = ${documentId}::uuid`;
     return rows[0] ?? null;
   }
   async category(categoryId: string) {
