@@ -101,10 +101,13 @@ export function AuthRoot({ children }: { children: ReactNode }) {
       if (version !== loadVersion.current) return;
       setAccount(next);
       if (window.location.hash !== '#auth-error') setError('');
-    } catch {
+    } catch (error) {
       if (version === loadVersion.current) {
+        setBootstrap(null);
         setAccount(null);
         setError('Sign-in is temporarily unavailable. Please try again.');
+        // Retry only availability reads, never credentials or other mutations.
+        return !(error instanceof AuthRequestError) || error.status >= 500;
       }
     } finally {
       if (version === loadVersion.current) setLoading(false);
@@ -112,7 +115,24 @@ export function AuthRoot({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    void load();
+    let active = true;
+    let timer: number | undefined;
+    const attempt = async (remaining: number) => {
+      const version = loadVersion.current + 1;
+      const retry = await load();
+      if (active && retry && remaining > 0 && version === loadVersion.current) {
+        timer = window.setTimeout(() => {
+          if (active && version === loadVersion.current)
+            void attempt(remaining - 1);
+        }, 1500);
+      }
+    };
+    void attempt(5);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+      ++loadVersion.current;
+    };
   }, [load]);
   useEffect(() => {
     const change = () => {

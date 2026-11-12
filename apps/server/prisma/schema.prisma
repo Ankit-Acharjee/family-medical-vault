@@ -50,15 +50,16 @@ model AppAccount {
 }
 
 model Person {
-  id             String             @id @db.Uuid
-  ownerAccountId String             @unique @map("owner_account_id") @db.Uuid
-  displayName    String             @map("display_name")
-  account        AppAccount         @relation(fields: [ownerAccountId], references: [id], onDelete: Restrict)
-  grants         AccessGrant[]
-  accessEvents   AccessEvent[]
-  documents      Document[]
-  documentEvents DocumentEvent[]
-  invitations    AccessInvitation[]
+  id               String             @id @db.Uuid
+  storageNamespace String             @unique @default(dbgenerated("gen_random_uuid()")) @map("storage_namespace") @db.Uuid
+  ownerAccountId   String             @unique @map("owner_account_id") @db.Uuid
+  displayName      String             @map("display_name")
+  account          AppAccount         @relation(fields: [ownerAccountId], references: [id], onDelete: Restrict)
+  grants           AccessGrant[]
+  accessEvents     AccessEvent[]
+  documents        Document[]
+  documentEvents   DocumentEvent[]
+  invitations      AccessInvitation[]
 
   @@map("persons")
   @@schema("fmv")
@@ -139,27 +140,43 @@ model AccessInvitation {
 }
 
 model Document {
-  id             String           @id @db.Uuid
-  uploadId       String           @unique @map("upload_id") @db.Uuid
-  patientId      String           @map("patient_id") @db.Uuid
-  categoryId     String           @map("category_id") @db.Uuid
+  id             String                  @id @db.Uuid
+  uploadId       String                  @unique @map("upload_id") @db.Uuid
+  patientId      String                  @map("patient_id") @db.Uuid
+  categoryId     String                  @map("category_id") @db.Uuid
   title          String
-  mimeType       String           @map("mime_type")
+  mimeType       String                  @map("mime_type")
   bytes          Int
   sha256         String
-  idempotencyKey String           @map("idempotency_key")
-  objectKey      String           @unique @map("object_key")
+  idempotencyKey String                  @map("idempotency_key")
+  objectKey      String                  @unique @map("object_key")
   state          String
-  createdAt      DateTime         @default(dbgenerated("statement_timestamp()")) @map("created_at") @db.Timestamptz(3)
-  patient        Person           @relation(fields: [patientId], references: [id], onDelete: Restrict)
-  category       DocumentCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  createdAt      DateTime                @default(dbgenerated("statement_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  patient        Person                  @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  category       DocumentCategory        @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   grants         AccessGrant[]
   events         DocumentEvent[]
+  objects        DocumentObjectAttempt[] @relation("DocumentObjects")
+  currentObject  DocumentObjectAttempt   @relation("CurrentObject", fields: [id, objectKey], references: [documentId, objectKey], onDelete: Restrict)
 
   @@unique([patientId, idempotencyKey])
   @@unique([patientId, id], map: "documents_patient_identity")
   @@index([patientId, createdAt], map: "documents_patient")
   @@map("documents")
+  @@schema("fmv")
+}
+
+model DocumentObjectAttempt {
+  objectKey  String     @id @map("object_key")
+  documentId String     @map("document_id") @db.Uuid
+  createdAt  DateTime   @default(dbgenerated("statement_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  retiredAt  DateTime?  @map("retired_at") @db.Timestamptz(3)
+  document   Document   @relation("DocumentObjects", fields: [documentId], references: [id], onDelete: Restrict)
+  currentFor Document[] @relation("CurrentObject")
+
+  @@unique([documentId, objectKey], map: "document_object_attempts_identity")
+  @@index([documentId], map: "document_object_attempts_document")
+  @@map("document_object_attempts")
   @@schema("fmv")
 }
 

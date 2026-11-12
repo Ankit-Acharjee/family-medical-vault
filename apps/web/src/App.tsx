@@ -85,9 +85,11 @@ export default function App() {
   const [expanded, setExpanded] = useState(false);
   const [dialog, setDialog] = useState<'patient' | 'upload' | null>(null);
   const [listRevision, setListRevision] = useState(0);
-  const { selectedPatient } = usePatientContext();
+  const [uploadNotice, setUploadNotice] = useState('');
+  const { selectedPatient, loading: patientsLoading } = usePatientContext();
   const dialogTrigger = useRef<HTMLElement | null>(null);
   const openDialog = (kind: 'patient' | 'upload') => {
+    if (kind === 'upload') setUploadNotice('');
     dialogTrigger.current =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
@@ -338,6 +340,9 @@ export default function App() {
               }
             />
           ) : null}
+          <p role="status" className="text-sm text-muted-foreground">
+            {uploadNotice}
+          </p>
           <footer className="page-footer">Family Medical Vault</footer>
         </main>
       </div>
@@ -359,14 +364,14 @@ export default function App() {
           <DialogHeader>
             <DialogTitle>
               {dialog === 'upload'
-                ? selectedPatient
+                ? selectedPatient || patientsLoading
                   ? 'Upload documents'
                   : 'Select a patient first'
                 : 'Select patient'}
             </DialogTitle>
             <DialogDescription>
               {dialog === 'upload'
-                ? selectedPatient
+                ? selectedPatient || patientsLoading
                   ? 'Choose documents for the selected patient.'
                   : 'Medical documents must belong to a patient. Select a patient before uploading.'
                 : 'Choose a patient profile available to your account.'}
@@ -374,10 +379,15 @@ export default function App() {
           </DialogHeader>
           {dialog === 'patient' ? (
             <PatientPicker onSelected={() => setDialog(null)} />
-          ) : selectedPatient ? (
+          ) : selectedPatient || patientsLoading ? (
             <DocumentUploadForm
-              key={selectedPatient.id}
-              onComplete={() => setListRevision((revision) => revision + 1)}
+              onComplete={(allStored) => {
+                setListRevision((revision) => revision + 1);
+                if (allStored) {
+                  setDialog(null);
+                  setUploadNotice('Documents stored successfully.');
+                }
+              }}
             />
           ) : (
             <Button onClick={() => setDialog(null)}>Got it</Button>

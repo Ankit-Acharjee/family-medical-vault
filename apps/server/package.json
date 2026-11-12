@@ -19,6 +19,8 @@
     "dev:watch": "pnpm --filter @fmv/contracts build && pnpm db:generate && tsc-watch -p tsconfig.json --onSuccess \"node dist/main.js\""
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1166.0",
+    "@fmv/contracts": "workspace:*",
     "@nestjs/common": "12.3.3",
     "@nestjs/core": "12.3.3",
     "@nestjs/platform-express": "12.3.3",
@@ -28,8 +30,7 @@
     "class-transformer": "0.5.1",
     "class-validator": "0.15.1",
     "reflect-metadata": "0.2.2",
-    "rxjs": "7.8.2",
-    "@fmv/contracts": "workspace:*"
+    "rxjs": "7.8.2"
   },
   "devDependencies": {
     "@types/express": "5.0.6",

@@ -1,4 +1,5 @@
 import type { DocumentMimeType } from '@fmv/contracts';
+export const OBJECT_STORE = Symbol('FMV_OBJECT_STORE');
 
 // The application authorizes every operation. Adapters never return public URLs.
 export interface ObjectStore {

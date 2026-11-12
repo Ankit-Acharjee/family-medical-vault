@@ -25,6 +25,8 @@
 - Deployment/hosting: `docs/architecture/decisions.md`, `docs/architecture/open-decisions.md`
 
 ## Implementation discipline
+
+UI delivery must cover the complete interaction lifecycle: native picker open/cancel/return, focus and background revalidation, stable form identity/layout, success dismissal and feedback, partial failure/retry, keyboard focus restoration, and narrow-screen behavior. Preserve draft/file state for the same validated context; clear it on context change or lost access. Test the actual application flow rather than relying solely on isolated components or static screenshots.
 1. State which requirement IDs the change implements.
 2. Read only the relevant canonical files; do not guess missing requirements.
 3. Change the smallest relevant package/module; keep the app/server boundary and one authoritative authorization store.
@@ -35,6 +37,7 @@
 ## Branch workflow
 - `develop` is the primary development and integration branch. Start routine work from `develop`.
 - `main` is reserved for approved production releases; do not merge routine development directly into it.
+- After each completed feature passes review and required verification, commit it with the implementation context below, push to `develop`, and proceed to the next task. The user has granted standing approval for this workflow; hosted writes and deployments retain their separate approval requirements.
 
 ## Local resource limits
 - This device has limited resources. Keep routine implementation and checks Docker-free.

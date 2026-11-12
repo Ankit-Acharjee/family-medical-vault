@@ -17,7 +17,13 @@ import {
   DocumentStore,
   PrismaDocumentStore,
 } from '../documents/document.store.js';
-import { UnavailableObjectStore } from '../documents/object-store.js';
+import {
+  UnavailableObjectStore,
+  OBJECT_STORE,
+} from '../documents/object-store.js';
+import type { ObjectStore } from '../documents/object-store.js';
+import { R2ObjectStore } from '../documents/r2-object-store.js';
+import { storageConfig } from '../documents/storage.config.js';
 import { CaregiverController } from '../access/caregiver.controller.js';
 import { CaregiverService } from '../access/caregiver.service.js';
 
@@ -70,6 +76,15 @@ class DisabledAccessStore extends AccessStore {
     AuthBoundaryGuard,
     PermissionService,
     {
+      provide: OBJECT_STORE,
+      useFactory: () => {
+        const config = storageConfig();
+        return config
+          ? new R2ObjectStore(config)
+          : new UnavailableObjectStore();
+      },
+    },
+    {
       provide: CaregiverService,
       useFactory: () => new CaregiverService(authConfig()?.databaseUrl ?? null),
     },
@@ -84,9 +99,12 @@ class DisabledAccessStore extends AccessStore {
     },
     {
       provide: DocumentsService,
-      inject: [PermissionService, DocumentStore],
-      useFactory: (permissions: PermissionService, store: DocumentStore) =>
-        new DocumentsService(permissions, store, new UnavailableObjectStore()),
+      inject: [PermissionService, DocumentStore, OBJECT_STORE],
+      useFactory: (
+        permissions: PermissionService,
+        store: DocumentStore,
+        objects: ObjectStore,
+      ) => new DocumentsService(permissions, store, objects),
     },
     {
       provide: AccessStore,

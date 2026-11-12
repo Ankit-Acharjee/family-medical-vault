@@ -228,6 +228,52 @@ test('reset validates matching passwords and reports successful update', async (
   );
 });
 
+test('sign-in recovers automatically when the API starts late', async ({
+  page,
+}) => {
+  await mockAuth(page);
+  let attempts = 0;
+  await page.route('**/api/auth/bootstrap', (route) => {
+    attempts += 1;
+    return attempts < 3
+      ? route.fulfill({ status: 503, json: {} })
+      : route.fulfill({ json: { enabled: true, csrf: 'fixture-csrf' } });
+  });
+  await page.goto('/');
+  await expect(page.getByRole('alert')).toContainText(
+    'temporarily unavailable',
+  );
+  await expect(
+    page.getByRole('button', { name: 'Sign in', exact: true }),
+  ).toBeEnabled({ timeout: 10_000 });
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(attempts).toBe(3);
+});
+
+test('bootstrap rate limits require manual retry', async ({ page }) => {
+  await mockAuth(page);
+  let attempts = 0;
+  let ready = false;
+  await page.route('**/api/auth/bootstrap', (route) => {
+    attempts += 1;
+    return !ready
+      ? route.fulfill({ status: 429, json: {} })
+      : route.fulfill({ json: { enabled: true, csrf: 'fixture-csrf' } });
+  });
+  await page.goto('/');
+  await expect(page.getByRole('alert')).toContainText(
+    'temporarily unavailable',
+  );
+  const initialAttempts = attempts;
+  await page.waitForTimeout(1800);
+  expect(attempts).toBe(initialAttempts);
+  ready = true;
+  await page.getByRole('button', { name: 'Try again' }).click();
+  await expect(
+    page.getByRole('button', { name: 'Sign in', exact: true }),
+  ).toBeEnabled();
+});
+
 test('rate limits are announced and unavailable auth can be retried', async ({
   page,
 }) => {

@@ -3,13 +3,14 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { Buffer } from 'node:buffer';
 import { createHash, randomUUID } from 'node:crypto';
-import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL, URL } from 'node:url';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
+import { setTimeout as schedule, clearTimeout as cancel } from 'node:timers';
 import pg from 'pg';
 import { PrismaAuthStore } from '../../dist/auth/auth.store.js';
 import { PrismaPersonStore } from '../../dist/identity/person.store.js';
@@ -123,6 +124,24 @@ const deferred = () => {
   return { promise, resolve };
 };
 
+async function within(promise, milliseconds) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = schedule(
+          () =>
+            reject(new Error('Synthetic database work exceeded its deadline')),
+          milliseconds,
+        );
+      }),
+    ]);
+  } finally {
+    cancel(timer);
+  }
+}
+
 async function insertGrant(client, fixture, overrides = {}) {
   const grant = {
     id: randomUUID(),
@@ -207,6 +226,14 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
       );
       const upgradeAccount = randomUUID(),
         upgradePerson = randomUUID();
+      const upgradeDocument = randomUUID(),
+        upgradeUpload = randomUUID();
+      const upgradeKey = randomUUID().replaceAll('-', '');
+      const upgradeBytes = Buffer.from(
+        '%PDF-1.7\nRetained pre-generation original\n%%EOF\n',
+      );
+      const upgradeCreatedAt = new Date('2026-11-10T02:03:04.567Z');
+      const upgradeObjects = new MemoryObjectStore();
       try {
         const migrations = path.join(upgradeDirectory, 'migrations');
         await mkdir(migrations);
@@ -247,6 +274,45 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           'INSERT INTO fmv.persons(id,owner_account_id,display_name) VALUES($1::uuid,$2::uuid,$3)',
           [upgradePerson, upgradeAccount, 'Retained upgrade fixture'],
         );
+        for (const name of [
+          '20261110000100_patient_permissions',
+          '20261110000200_document_intake',
+          '20261110000300_caregiver_approvals',
+        ])
+          await cp(
+            path.join(server, 'prisma/migrations', name),
+            path.join(migrations, name),
+            { recursive: true },
+          );
+        assert.equal(
+          prisma(ownerUrl, ['migrate', 'deploy', '--config', config]),
+          0,
+          'Pre-generation document schema must upgrade retained P1.2 identities',
+        );
+        const category = (
+          await query(
+            owner,
+            "SELECT id FROM fmv.document_categories WHERE slug='unclassified'",
+          )
+        ).rows[0];
+        await query(
+          owner,
+          `INSERT INTO fmv.documents(id,upload_id,patient_id,category_id,title,mime_type,bytes,sha256,idempotency_key,object_key,state,created_at)
+          VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,'application/pdf',$6,$7,$8,$9,'ready',$10)`,
+          [
+            upgradeDocument,
+            upgradeUpload,
+            upgradePerson,
+            category.id,
+            'Retained original',
+            upgradeBytes.length,
+            createHash('sha256').update(upgradeBytes).digest('hex'),
+            randomUUID(),
+            upgradeKey,
+            upgradeCreatedAt,
+          ],
+        );
+        await upgradeObjects.put(upgradeKey, upgradeBytes, 'application/pdf');
       } finally {
         await rm(upgradeDirectory, { recursive: true, force: true });
       }
@@ -262,37 +328,101 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
         );
         assert.equal(
           result.rowCount,
-          6,
-          'Foundation, auth, identity, permissions, intake and approval migrations must exist',
+          8,
+          'Foundation, auth, identity, permissions, intake, approval, generation and storage-layout migrations must exist',
         );
         assert.equal(
           result.rows
             .map((row) => row.migration_name)
             .sort()
             .join(','),
-          '20261105000100_foundation,20261105000300_auth_sessions,20261105000400_person_identity,20261110000100_patient_permissions,20261110000200_document_intake,20261110000300_caregiver_approvals',
+          '20261105000100_foundation,20261105000300_auth_sessions,20261105000400_person_identity,20261110000100_patient_permissions,20261110000200_document_intake,20261110000300_caregiver_approvals,20261111000100_object_generations,20261111000200_patient_object_layout',
         );
         assert.ok(result.rows.every((row) => row.finished && row.active));
       }
       await baseline();
       const retained = await query(
         owner,
-        'SELECT id,owner_account_id,display_name FROM fmv.persons WHERE id=$1::uuid',
+        'SELECT id,owner_account_id,display_name,storage_namespace FROM fmv.persons WHERE id=$1::uuid',
         [upgradePerson],
       );
+      const upgradeNamespace = retained.rows[0].storage_namespace;
+      assert.ok(upgradeNamespace);
+      assert.notEqual(upgradeNamespace, upgradePerson);
       assert.deepEqual(retained.rows, [
         {
           id: upgradePerson,
           owner_account_id: upgradeAccount,
           display_name: 'Retained upgrade fixture',
+          storage_namespace: upgradeNamespace,
         },
       ]);
+      const backfilled = await query(
+        owner,
+        'SELECT object_key,document_id,created_at,retired_at FROM fmv.document_object_attempts WHERE document_id=$1::uuid',
+        [upgradeDocument],
+      );
+      assert.equal(backfilled.rowCount, 1);
+      assert.equal(backfilled.rows[0].object_key, upgradeKey);
+      assert.equal(backfilled.rows[0].document_id, upgradeDocument);
+      assert.equal(
+        backfilled.rows[0].created_at.toISOString(),
+        upgradeCreatedAt.toISOString(),
+      );
+      assert.equal(backfilled.rows[0].retired_at, null);
+      const upgradeStore = new PrismaDocumentStore(runtimeUrl.href),
+        upgradeAccess = new PrismaAccessStore(runtimeUrl.href);
+      try {
+        const permissions = new PermissionService(upgradeAccess);
+        const core = new DocumentIntake(
+          upgradeStore.asActor(upgradeAccount),
+          upgradeObjects,
+        );
+        const read = await core.read(
+          upgradePerson,
+          upgradeDocument,
+          'view',
+          async (p, a, s) => {
+            await permissions.require(
+              {
+                issuer: 'https://upgrade.example.test',
+                subject: 'upgrade-subject',
+              },
+              p,
+              a,
+              s,
+            );
+          },
+        );
+        assert.equal(read.record.documentId, upgradeDocument);
+        assert.equal(read.record.uploadId, upgradeUpload);
+        assert.equal(read.record.patientId, upgradePerson);
+        assert.equal(read.record.objectKey, upgradeKey);
+        assert.deepEqual(read.bytes, upgradeBytes);
+      } finally {
+        await upgradeStore.onModuleDestroy();
+        await upgradeAccess.onModuleDestroy();
+      }
       assert.equal(
         prisma(ownerUrl, ['migrate', 'deploy']),
         0,
         'Repeated migration must succeed',
       );
       await baseline();
+      const unchanged = await query(
+        owner,
+        'SELECT p.storage_namespace,d.object_key FROM fmv.persons p JOIN fmv.documents d ON d.patient_id=p.id WHERE d.id=$1::uuid',
+        [upgradeDocument],
+      );
+      assert.deepEqual(unchanged.rows, [
+        { storage_namespace: upgradeNamespace, object_key: upgradeKey },
+      ]);
+      const unchangedAttempt = await query(
+        owner,
+        'SELECT object_key FROM fmv.document_object_attempts WHERE document_id=$1::uuid',
+        [upgradeDocument],
+      );
+      assert.deepEqual(unchangedAttempt.rows, [{ object_key: upgradeKey }]);
       const tables = await query(
         owner,
         "SELECT tablename FROM pg_tables WHERE schemaname = 'fmv' AND tablename <> '_prisma_migrations'",
@@ -302,7 +432,7 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           .map((row) => row.tablename)
           .sort()
           .join(','),
-        'access_events,access_grant_dependencies,access_grants,access_invitations,app_accounts,auth_rate_limits,auth_sessions,document_categories,document_events,documents,persons',
+        'access_events,access_grant_dependencies,access_grants,access_invitations,app_accounts,auth_rate_limits,auth_sessions,document_categories,document_events,document_object_attempts,documents,persons',
         'Only reviewed application tables may exist',
       );
       const permissions = await query(
@@ -470,6 +600,30 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           );
           assert.equal(new Set(results.map((p) => p.id)).size, 1);
           const person = results[0];
+          assert.deepEqual(Object.keys(person).sort(), ['displayName', 'id']);
+          const namespace = (
+            await query(
+              owner,
+              'SELECT storage_namespace FROM fmv.persons WHERE id=$1::uuid',
+              [person.id],
+            )
+          ).rows[0].storage_namespace;
+          assert.match(
+            namespace,
+            /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/,
+          );
+          assert.notEqual(namespace, person.id);
+          await rejectedSql(
+            owner,
+            'UPDATE fmv.persons SET storage_namespace=$1::uuid WHERE id=$2::uuid',
+            [randomUUID(), person.id],
+            '23514',
+          );
+          await query(
+            owner,
+            'UPDATE fmv.persons SET storage_namespace=storage_namespace WHERE id=$1::uuid',
+            [person.id],
+          );
           assert.deepEqual(
             await right.create(principal, 'Different name'),
             person,
@@ -478,6 +632,25 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           assert.equal(await right.find(other), null);
           const second = await right.create(other, 'Fixture Person');
           assert.notEqual(second.id, person.id);
+          const namespaces = await query(
+            owner,
+            'SELECT id,storage_namespace FROM fmv.persons WHERE id=ANY($1::uuid[])',
+            [[person.id, second.id]],
+          );
+          assert.equal(
+            namespaces.rows.find((row) => row.id === person.id)
+              .storage_namespace,
+            namespace,
+          );
+          assert.notEqual(
+            namespaces.rows.find((row) => row.id === second.id)
+              .storage_namespace,
+            namespace,
+          );
+          assert.deepEqual(Object.keys(await right.find(principal)).sort(), [
+            'displayName',
+            'id',
+          ]);
           const otherIssuer = await right.create(
             { ...principal, issuer: 'https://other.supabase.co' },
             'Fixture Person',
@@ -682,6 +855,7 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           'document_categories',
           'documents',
           'document_events',
+          'document_object_attempts',
         ];
         const flags = await query(
           runtime,
@@ -702,12 +876,15 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           'UPDATE fmv.access_grant_dependencies SET parent_grant_id=grant_id',
           'DELETE FROM fmv.access_grant_dependencies',
           "UPDATE fmv.documents SET title='Forbidden'",
-          "UPDATE fmv.documents SET object_key='ffffffffffffffffffffffffffffffff'",
           'DELETE FROM fmv.documents',
           "INSERT INTO fmv.document_categories(slug,name) VALUES ('forbidden','Forbidden')",
           "UPDATE fmv.document_categories SET name='Forbidden'",
           'UPDATE fmv.document_events SET occurred_at=statement_timestamp()',
           'DELETE FROM fmv.document_events',
+          'DELETE FROM fmv.document_object_attempts',
+          "UPDATE fmv.document_object_attempts SET object_key=repeat('f',32)",
+          'UPDATE fmv.document_object_attempts SET document_id=gen_random_uuid()',
+          'UPDATE fmv.document_object_attempts SET created_at=statement_timestamp()',
           "UPDATE fmv.access_invitations SET actions=ARRAY['export']::text[]",
           "UPDATE fmv.access_invitations SET token_hash=repeat('f',64)",
           'DELETE FROM fmv.access_invitations',
@@ -722,6 +899,22 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           [names],
         );
         assert.equal(publicPrivileges.rows[0].n, 0);
+        const manifestPrivileges = await query(
+          runtime,
+          `SELECT
+          has_table_privilege(current_user,'fmv.document_object_attempts','SELECT') AS can_read,
+          has_table_privilege(current_user,'fmv.document_object_attempts','INSERT') AS can_insert,
+          has_column_privilege(current_user,'fmv.document_object_attempts','retired_at','UPDATE') AS can_retire,
+          has_column_privilege(current_user,'fmv.documents','object_key','UPDATE') AS can_switch_pointer`,
+        );
+        assert.deepEqual(manifestPrivileges.rows, [
+          {
+            can_read: true,
+            can_insert: true,
+            can_retire: true,
+            can_switch_pointer: true,
+          },
+        ]);
       },
     );
 
@@ -862,7 +1055,20 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
             authorize,
           );
           assert.deepEqual(read.bytes, bytes);
-          assert.match(read.record.objectKey, /^[a-f0-9]{32}$/);
+          const storageNamespace = (
+            await query(
+              owner,
+              'SELECT storage_namespace FROM fmv.persons WHERE id=$1::uuid',
+              [vault.patientId],
+            )
+          ).rows[0].storage_namespace;
+          const objectPrefix = `originals/v1/${storageNamespace.replaceAll('-', '')}/${upload.documentId.replaceAll('-', '')}/`;
+          assert.ok(read.record.objectKey.startsWith(objectPrefix));
+          assert.match(
+            read.record.objectKey.slice(objectPrefix.length),
+            /^[a-f0-9]{32}$/,
+          );
+          assert.equal(read.record.objectKey.includes(vault.patientId), false);
           assert.equal((await first.list(vault.patientId)).length, 1);
           await first.audit(
             vault.patientId,
@@ -985,6 +1191,439 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
             rawTimestamp.rows[0].created_at.toISOString(),
             timestampRecord.createdAt.toISOString(),
             'Document timestamps must preserve milliseconds and UTC offset across Prisma and PostgreSQL',
+          );
+          const foreignKey = await first
+            .asActor(vault.ownerAccountId)
+            .withLock(
+              `foreign-generation:${timestampRecord.documentId}`,
+              (metadata) => metadata.reserveObject(timestampRecord.documentId),
+            );
+          const reservedPrefix = `originals/v1/${storageNamespace.replaceAll('-', '')}/${timestampRecord.documentId.replaceAll('-', '')}/`;
+          assert.ok(foreignKey.startsWith(reservedPrefix));
+          assert.match(
+            foreignKey.slice(reservedPrefix.length),
+            /^[a-f0-9]{32}$/,
+          );
+          for (const malformedKey of [
+            '../' + read.record.objectKey,
+            objectPrefix + '../' + randomUUID().replaceAll('-', ''),
+            objectPrefix + randomUUID(),
+            objectPrefix.toUpperCase() + 'a'.repeat(32),
+            objectPrefix + 'a'.repeat(31),
+            objectPrefix + 'a'.repeat(32) + '/extra',
+          ]) {
+            await rejectedSql(
+              runtime,
+              'UPDATE fmv.documents SET object_key=$1 WHERE id=$2::uuid',
+              [malformedKey, upload.documentId],
+              '23514',
+            );
+            await rejectedSql(
+              runtime,
+              'INSERT INTO fmv.document_object_attempts(object_key,document_id) VALUES($1,$2::uuid)',
+              [malformedKey, upload.documentId],
+              '23514',
+            );
+          }
+          for (const [invalidPointer, expectedCode] of [
+            [randomUUID().replaceAll('-', ''), '23503'],
+            [objectPrefix + randomUUID().replaceAll('-', ''), '23503'],
+            [foreignKey, '23514'],
+          ])
+            await rejectedSql(
+              runtime,
+              'UPDATE fmv.documents SET object_key=$1 WHERE id=$2::uuid',
+              [invalidPointer, upload.documentId],
+              expectedCode,
+            );
+          const retainedPointer = await query(
+            runtime,
+            'SELECT object_key FROM fmv.documents WHERE id=$1::uuid',
+            [upload.documentId],
+          );
+          assert.equal(
+            retainedPointer.rows[0].object_key,
+            read.record.objectKey,
+          );
+        } finally {
+          await first.onModuleDestroy();
+          await second.onModuleDestroy();
+          await access.onModuleDestroy();
+        }
+      },
+    );
+
+    await stage(
+      'durable object generations survive rollback, late DELETE and saturated upload pools',
+      async () => {
+        const first = new PrismaDocumentStore(runtimeUrl.href),
+          second = new PrismaDocumentStore(runtimeUrl.href);
+        const access = new PrismaAccessStore(runtimeUrl.href),
+          permissions = new PermissionService(access);
+        const runtime = await connect(runtimeUrl);
+        class Objects extends MemoryObjectStore {
+          puts = [];
+          gets = [];
+          removals = [];
+          beforeRemove;
+          async put(key, bytes, mime) {
+            this.puts.push(key);
+            await super.put(key, bytes, mime);
+          }
+          async get(key) {
+            this.gets.push(key);
+            return super.get(key);
+          }
+          async remove(key) {
+            this.removals.push(key);
+            await this.beforeRemove?.(key);
+            await super.remove(key);
+          }
+        }
+        const objects = new Objects(),
+          actor = first.asActor(vault.ownerAccountId);
+        const core = new DocumentIntake(actor, objects);
+        const other = new DocumentIntake(
+          second.asActor(vault.ownerAccountId),
+          objects,
+        );
+        const bytes = Buffer.from(
+          '%PDF-1.7\nSynthetic durable generation original\n%%EOF\n',
+        );
+        const declaration = () => ({
+          title: 'Synthetic generation original',
+          mimeType: 'application/pdf',
+          bytes: bytes.length,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          idempotencyKey: randomUUID(),
+        });
+        const authorize = async (p, a, s) => {
+          await permissions.require(vault.ownerPrincipal, p, a, s);
+        };
+        try {
+          const upload = await core.begin(
+            vault.patientId,
+            declaration(),
+            authorize,
+          );
+          const initial = (
+            await query(
+              runtime,
+              'SELECT object_key,state FROM fmv.documents WHERE id=$1::uuid',
+              [upload.documentId],
+            )
+          ).rows[0];
+          const rollbackCore = new DocumentIntake(
+            {
+              withLock: (key, work) =>
+                actor.withLock(key, async (metadata) => {
+                  await work(metadata);
+                  throw new Error(
+                    'Synthetic outer transaction rollback after object PUT',
+                  );
+                }),
+            },
+            objects,
+          );
+          await assert.rejects(
+            rollbackCore.content(
+              vault.patientId,
+              upload.uploadId,
+              bytes,
+              authorize,
+            ),
+            (error) => error.status === 503,
+          );
+          const orphanKey = objects.puts.at(-1);
+          const rolledBack = (
+            await query(
+              runtime,
+              'SELECT object_key,state FROM fmv.documents WHERE id=$1::uuid',
+              [upload.documentId],
+            )
+          ).rows[0];
+          assert.deepEqual(rolledBack, initial);
+          assert.notEqual(orphanKey, initial.object_key);
+          const attempts = await query(
+            runtime,
+            'SELECT object_key,document_id,retired_at IS NOT NULL AS retired FROM fmv.document_object_attempts WHERE document_id=$1::uuid',
+            [upload.documentId],
+          );
+          assert.equal(attempts.rowCount, 2);
+          assert.equal(
+            attempts.rows.find((row) => row.object_key === initial.object_key)
+              .retired,
+            true,
+          );
+          assert.equal(
+            attempts.rows.find((row) => row.object_key === orphanKey).retired,
+            false,
+          );
+          assert.ok(
+            attempts.rows.every((row) => row.document_id === upload.documentId),
+          );
+          assert.deepEqual(await objects.get(orphanKey), bytes);
+          const gets = objects.gets.length;
+          await assert.rejects(
+            other.finalize(vault.patientId, upload.uploadId, authorize),
+            (error) => error.status === 409,
+          );
+          assert.equal(objects.gets.length, gets);
+          await other.content(
+            vault.patientId,
+            upload.uploadId,
+            bytes,
+            authorize,
+          );
+          await other.finalize(vault.patientId, upload.uploadId, authorize);
+          const recovered = (
+            await query(
+              runtime,
+              'SELECT object_key,state FROM fmv.documents WHERE id=$1::uuid',
+              [upload.documentId],
+            )
+          ).rows[0];
+          assert.equal(recovered.state, 'ready');
+          assert.notEqual(recovered.object_key, orphanKey);
+          assert.notEqual(recovered.object_key, initial.object_key);
+          assert.deepEqual(
+            (
+              await core.read(
+                vault.patientId,
+                upload.documentId,
+                'view',
+                authorize,
+              )
+            ).bytes,
+            bytes,
+          );
+          await assert.rejects(
+            actor.withLock(
+              `refuse-ready-retirement:${upload.documentId}`,
+              (metadata) =>
+                metadata.retireObject(upload.documentId, recovered.object_key),
+            ),
+          );
+          await rejectedSql(
+            runtime,
+            'UPDATE fmv.document_object_attempts SET retired_at=statement_timestamp() WHERE object_key=$1',
+            [recovered.object_key],
+            '23514',
+          );
+          for (const transition of ['NULL', "retired_at+interval '1 second'"])
+            await rejectedSql(
+              runtime,
+              `UPDATE fmv.document_object_attempts SET retired_at=${transition} WHERE object_key=$1`,
+              [initial.object_key],
+              '23514',
+            );
+          const initialRetirement = (
+            await query(
+              runtime,
+              'SELECT retired_at FROM fmv.document_object_attempts WHERE object_key=$1',
+              [initial.object_key],
+            )
+          ).rows[0].retired_at;
+          await query(
+            runtime,
+            'UPDATE fmv.document_object_attempts SET retired_at=retired_at WHERE object_key=$1',
+            [initial.object_key],
+          );
+          const idempotentRetirement = (
+            await query(
+              runtime,
+              'SELECT retired_at FROM fmv.document_object_attempts WHERE object_key=$1',
+              [initial.object_key],
+            )
+          ).rows[0].retired_at;
+          assert.equal(
+            idempotentRetirement.toISOString(),
+            initialRetirement.toISOString(),
+          );
+          await query(
+            runtime,
+            'UPDATE fmv.document_object_attempts SET retired_at=statement_timestamp() WHERE object_key=$1',
+            [orphanKey],
+          );
+          const retained = await query(
+            runtime,
+            'SELECT object_key,document_id,retired_at FROM fmv.document_object_attempts WHERE document_id=$1::uuid',
+            [upload.documentId],
+          );
+          assert.equal(retained.rowCount, 3);
+          assert.ok(
+            retained.rows.every((row) => row.document_id === upload.documentId),
+          );
+          assert.equal(
+            retained.rows.find((row) => row.object_key === recovered.object_key)
+              .retired_at,
+            null,
+          );
+          assert.ok(retained.rows.some((row) => row.object_key === orphanKey));
+          assert.ok(
+            retained.rows.find((row) => row.object_key === orphanKey)
+              .retired_at,
+          );
+
+          const parallelUploads = await Promise.all(
+            Array.from({ length: 3 }, () =>
+              core.begin(vault.patientId, declaration(), authorize),
+            ),
+          );
+          const entered = deferred();
+          let occupied = 0;
+          const saturated = new DocumentIntake(
+            {
+              withLock: (key, work) =>
+                actor.withLock(key, async (metadata) => {
+                  if (++occupied === 3) entered.resolve();
+                  await entered.promise;
+                  return work(metadata);
+                }),
+            },
+            objects,
+          );
+          const writes = parallelUploads.map((row) =>
+            saturated.content(vault.patientId, row.uploadId, bytes, authorize),
+          );
+          try {
+            await within(Promise.all(writes), 12000);
+          } finally {
+            entered.resolve();
+            await Promise.allSettled(writes);
+          }
+          assert.equal(
+            occupied,
+            3,
+            'All three upload transactions must occupy the outer pool together',
+          );
+          await within(
+            Promise.all(
+              parallelUploads.map((row) =>
+                core.finalize(vault.patientId, row.uploadId, authorize),
+              ),
+            ),
+            12000,
+          );
+          const parallelRows = await query(
+            runtime,
+            'SELECT id,object_key,state FROM fmv.documents WHERE id=ANY($1::uuid[])',
+            [parallelUploads.map((row) => row.documentId)],
+          );
+          assert.equal(parallelRows.rowCount, 3);
+          assert.ok(parallelRows.rows.every((row) => row.state === 'ready'));
+          assert.equal(
+            new Set(parallelRows.rows.map((row) => row.object_key)).size,
+            3,
+          );
+          const parallelManifests = await query(
+            runtime,
+            'SELECT document_id,object_key,retired_at FROM fmv.document_object_attempts WHERE document_id=ANY($1::uuid[])',
+            [parallelUploads.map((row) => row.documentId)],
+          );
+          assert.equal(parallelManifests.rowCount, 6);
+          for (const row of parallelRows.rows) {
+            const active = parallelManifests.rows.filter(
+              (manifest) =>
+                manifest.document_id === row.id && !manifest.retired_at,
+            );
+            assert.equal(active.length, 1);
+            assert.equal(active[0].object_key, row.object_key);
+            assert.deepEqual(await objects.get(row.object_key), bytes);
+          }
+
+          const delayed = await core.begin(
+            vault.patientId,
+            declaration(),
+            authorize,
+          );
+          await core.content(
+            vault.patientId,
+            delayed.uploadId,
+            bytes,
+            authorize,
+          );
+          const oldKey = (
+            await query(
+              runtime,
+              'SELECT object_key FROM fmv.documents WHERE id=$1::uuid',
+              [delayed.documentId],
+            )
+          ).rows[0].object_key;
+          const release = deferred();
+          let lateDelete;
+          objects.beforeRemove = async (key) => {
+            if (key !== oldKey) return;
+            lateDelete = release.promise.then(() =>
+              MemoryObjectStore.prototype.remove.call(objects, key),
+            );
+            throw new Error('Synthetic DELETE timeout before late completion');
+          };
+          try {
+            await assert.rejects(
+              core.content(vault.patientId, delayed.uploadId, bytes, authorize),
+              (error) => error.status === 503,
+            );
+            assert.ok(lateDelete);
+            objects.beforeRemove = undefined;
+            await other.content(
+              vault.patientId,
+              delayed.uploadId,
+              bytes,
+              authorize,
+            );
+            await other.finalize(vault.patientId, delayed.uploadId, authorize);
+            const latest = (
+              await query(
+                runtime,
+                'SELECT object_key,state FROM fmv.documents WHERE id=$1::uuid',
+                [delayed.documentId],
+              )
+            ).rows[0];
+            assert.equal(latest.state, 'ready');
+            assert.notEqual(latest.object_key, oldKey);
+            release.resolve();
+            await lateDelete;
+            assert.deepEqual(
+              (
+                await core.read(
+                  vault.patientId,
+                  delayed.documentId,
+                  'export',
+                  authorize,
+                )
+              ).bytes,
+              bytes,
+            );
+            assert.ok(!objects.removals.includes(latest.object_key));
+            const generations = await query(
+              runtime,
+              'SELECT object_key,document_id,retired_at IS NOT NULL AS retired FROM fmv.document_object_attempts WHERE document_id=$1::uuid',
+              [delayed.documentId],
+            );
+            assert.ok(
+              generations.rows.every(
+                (row) => row.document_id === delayed.documentId,
+              ),
+            );
+            assert.equal(
+              generations.rows.find((row) => row.object_key === oldKey).retired,
+              true,
+            );
+            assert.equal(
+              generations.rows.find(
+                (row) => row.object_key === latest.object_key,
+              ).retired,
+              false,
+            );
+          } finally {
+            release.resolve();
+            await lateDelete;
+          }
+          assert.equal(
+            new Set(objects.puts).size,
+            objects.puts.length,
+            'No external PUT may reuse an object generation',
           );
         } finally {
           await first.onModuleDestroy();
@@ -1836,6 +2475,167 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           );
         } finally {
           await service.onModuleDestroy();
+        }
+      },
+    );
+
+    await stage(
+      'generation backfill preserves a FORCE-RLS legacy document under its non-superuser non-bypass owner',
+      async () => {
+        const admin = await connect(ownerUrl);
+        const suffix = randomUUID().replaceAll('-', '');
+        const probeSchema = `fmv_probe_${suffix}`,
+          probeRole = `fmv_owner_probe_${suffix}`;
+        assert.match(probeSchema, /^fmv_probe_[a-f0-9]{32}$/);
+        assert.match(probeRole, /^fmv_owner_probe_[a-f0-9]{32}$/);
+        assert.ok(
+          probeSchema.length <= 63 &&
+            probeRole.length <= 63 &&
+            probeSchema !== 'fmv',
+        );
+        const documentId = randomUUID(),
+          objectKey = randomUUID().replaceAll('-', '');
+        const createdAt = new Date('2026-11-10T03:04:05.678Z');
+        let schemaCreated = false,
+          roleCreated = false;
+        const history = await query(
+          admin,
+          'SELECT migration_name,checksum,finished_at,rolled_back_at FROM fmv._prisma_migrations ORDER BY migration_name',
+        );
+        try {
+          await query(
+            admin,
+            `CREATE ROLE "${probeRole}" NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT`,
+          );
+          roleCreated = true;
+          await query(
+            admin,
+            `CREATE SCHEMA "${probeSchema}" AUTHORIZATION "${probeRole}"`,
+          );
+          schemaCreated = true;
+          await query(
+            admin,
+            `CREATE TABLE "${probeSchema}".documents(id UUID PRIMARY KEY,object_key TEXT NOT NULL UNIQUE,created_at TIMESTAMPTZ(3) NOT NULL,state TEXT NOT NULL)`,
+          );
+          await query(
+            admin,
+            `INSERT INTO "${probeSchema}".documents(id,object_key,created_at,state) VALUES($1::uuid,$2,$3,'ready')`,
+            [documentId, objectKey, createdAt],
+          );
+          await query(
+            admin,
+            `ALTER TABLE "${probeSchema}".documents ENABLE ROW LEVEL SECURITY`,
+          );
+          await query(
+            admin,
+            `ALTER TABLE "${probeSchema}".documents FORCE ROW LEVEL SECURITY`,
+          );
+          await query(
+            admin,
+            `ALTER TABLE "${probeSchema}".documents OWNER TO "${probeRole}"`,
+          );
+          const trustedSql = await readFile(
+            path.join(
+              server,
+              'prisma/migrations/20261111000100_object_generations/migration.sql',
+            ),
+            'utf8',
+          );
+          const probeSql = trustedSql.replaceAll('fmv.', `${probeSchema}.`);
+          assert.ok(!probeSql.includes('fmv.'));
+          try {
+            await query(admin, `SET ROLE "${probeRole}"`);
+            const identity = await query(
+              admin,
+              'SELECT current_user AS name,rolsuper,rolbypassrls,rolinherit,rolcanlogin FROM pg_roles WHERE rolname=current_user',
+            );
+            assert.deepEqual(identity.rows, [
+              {
+                name: probeRole,
+                rolsuper: false,
+                rolbypassrls: false,
+                rolinherit: false,
+                rolcanlogin: false,
+              },
+            ]);
+            const hiddenBefore = await query(
+              admin,
+              `SELECT count(*)::integer AS n FROM "${probeSchema}".documents`,
+            );
+            assert.equal(
+              hiddenBefore.rows[0].n,
+              0,
+              'The FORCE-RLS owner must see no legacy rows without a SELECT policy',
+            );
+            // Execute the actual migration, changing only its trusted schema prefix.
+            // Its temporary CURRENT_USER policy must make the hidden row available
+            // to the backfill and disappear before that transaction commits.
+            await query(admin, probeSql);
+            const hiddenAfter = await query(
+              admin,
+              `SELECT count(*)::integer AS n FROM "${probeSchema}".documents`,
+            );
+            assert.equal(hiddenAfter.rows[0].n, 0);
+          } finally {
+            try {
+              await query(admin, 'ROLLBACK');
+            } finally {
+              await query(admin, 'RESET ROLE');
+            }
+          }
+          const backfilled = await query(
+            admin,
+            `SELECT object_key,document_id,created_at,retired_at FROM "${probeSchema}".document_object_attempts`,
+          );
+          assert.deepEqual(backfilled.rows, [
+            {
+              object_key: objectKey,
+              document_id: documentId,
+              created_at: createdAt,
+              retired_at: null,
+            },
+          ]);
+          const policies = await query(
+            admin,
+            'SELECT count(*)::integer AS n FROM pg_policies WHERE schemaname=$1 AND policyname=$2',
+            [probeSchema, 'migration_object_backfill'],
+          );
+          assert.equal(
+            policies.rows[0].n,
+            0,
+            'The temporary backfill policy must never remain after commit',
+          );
+          const flags = await query(
+            admin,
+            'SELECT c.relname,c.relrowsecurity,c.relforcerowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname=ANY($2::text[])',
+            [probeSchema, ['documents', 'document_object_attempts']],
+          );
+          assert.equal(flags.rowCount, 2);
+          assert.ok(
+            flags.rows.every(
+              (row) => row.relrowsecurity && row.relforcerowsecurity,
+            ),
+          );
+          const after = await query(
+            admin,
+            'SELECT migration_name,checksum,finished_at,rolled_back_at FROM fmv._prisma_migrations ORDER BY migration_name',
+          );
+          assert.deepEqual(
+            after.rows,
+            history.rows,
+            'The probe must not modify the application migration ledger',
+          );
+        } finally {
+          try {
+            await query(admin, 'ROLLBACK');
+          } finally {
+            await query(admin, 'RESET ROLE');
+          }
+          // Both identifiers were generated and validated above. Cleanup cannot
+          // target fmv, provider schemas, or a pre-existing role.
+          if (schemaCreated)
+            await query(admin, `DROP SCHEMA "${probeSchema}" CASCADE`);
+          if (roleCreated) await query(admin, `DROP ROLE "${probeRole}"`);
         }
       },
     );

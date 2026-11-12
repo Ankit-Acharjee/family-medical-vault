@@ -4,6 +4,7 @@ import { createApplication } from '../../dist/application.js';
 import { PermissionService } from '../../dist/access/permission.service.js';
 import { DocumentStore } from '../../dist/documents/document.store.js';
 import { DocumentsService } from '../../dist/documents/documents.service.js';
+import { createObjectKey } from '../../dist/documents/object-key.js';
 import { MemoryObjectStore } from '../../dist/documents/memory-object-store.js';
 import { fixture, config } from './auth-fixture.mjs';
 import { MemoryAccess, ids, principals } from './access-fixture.mjs';
@@ -14,10 +15,14 @@ const clone = (value) => globalThis.structuredClone(value);
 
 // All state is synthetic. Locks model the adapter contract, not PostgreSQL proof.
 export class MemoryDocuments extends DocumentStore {
+  storageScopes = new Map();
   rows = new Map();
+  committedRows = new Map();
+  manifests = new Map();
   locks = new Map();
   events = [];
   fail = null;
+  failCommit = false;
   categoryRows = [
     { id: ids.category, name: 'Unclassified' },
     { id: ids.otherCategory, name: 'Other synthetic category' },
@@ -26,6 +31,8 @@ export class MemoryDocuments extends DocumentStore {
     super();
     this.access = access;
     access.documents.clear();
+    for (const patientId of access.people.keys())
+      this.storageScopes.set(patientId, randomUUID().replaceAll('-', ''));
   }
   check(operation) {
     if (this.fail === operation)
@@ -45,6 +52,57 @@ export class MemoryDocuments extends DocumentStore {
       state: record.state,
     });
   }
+  async reserveObject(documentId) {
+    this.check('reserve');
+    const record = [...this.committedRows.values()].find(
+      (record) => record.documentId === documentId,
+    );
+    if (!record) throw new Error('synthetic unknown committed document');
+    const objectKey = createObjectKey(
+      this.storageScopes.get(record.patientId),
+      documentId,
+    );
+    this.manifests.set(objectKey, {
+      objectKey,
+      documentId,
+      createdAt: new Date(),
+      retiredAt: null,
+    });
+    return objectKey;
+  }
+  async useObject(uploadId, objectKey) {
+    this.check('use');
+    const record = this.rows.get(uploadId),
+      manifest = this.manifests.get(objectKey);
+    if (
+      !record ||
+      record.state === 'ready' ||
+      !manifest ||
+      manifest.documentId !== record.documentId ||
+      manifest.retiredAt
+    )
+      throw new Error('synthetic inactive generation');
+    record.objectKey = objectKey;
+  }
+  async objectActive(objectKey) {
+    this.check('active');
+    const manifest = this.manifests.get(objectKey);
+    return Boolean(manifest && !manifest.retiredAt);
+  }
+  async retireObject(documentId, objectKey) {
+    this.check('retire');
+    const manifest = this.manifests.get(objectKey);
+    const current = [...this.committedRows.values()].find(
+      (record) => record.documentId === documentId,
+    );
+    if (
+      !manifest ||
+      manifest.documentId !== documentId ||
+      (current?.state === 'ready' && current.objectKey === objectKey)
+    )
+      throw new Error('synthetic generation cannot retire');
+    manifest.retiredAt ??= new Date();
+  }
   asActor(accountId) {
     return {
       withLock: async (key, work) => {
@@ -56,9 +114,14 @@ export class MemoryDocuments extends DocumentStore {
         const tail = previous.then(() => gate);
         this.locks.set(key, tail);
         await previous;
+        const snapshot = clone(this.rows),
+          events = clone(this.events),
+          initialKeys = [];
         try {
           this.check('lock');
-          return await work({
+          const outcome = await work({
+            resolveStorageScope: async (patientId) =>
+              this.storageScopes.get(patientId) ?? null,
             resolveCategory: async (id = ids.category) =>
               this.categoryRows.some((category) => category.id === id)
                 ? id
@@ -82,12 +145,32 @@ export class MemoryDocuments extends DocumentStore {
               )
                 throw new Error('synthetic uniqueness conflict');
               this.rows.set(record.uploadId, clone(record));
+              this.manifests.set(record.objectKey, {
+                documentId: record.documentId,
+                objectKey: record.objectKey,
+                createdAt: new Date(),
+                retiredAt: null,
+              });
+              initialKeys.push(record.objectKey);
               this.sync(record);
             },
+            reserveObject: (documentId) => this.reserveObject(documentId),
+            useObject: (uploadId, objectKey) =>
+              this.useObject(uploadId, objectKey),
+            objectActive: (objectKey) => this.objectActive(objectKey),
+            retireObject: (documentId, objectKey) =>
+              this.retireObject(documentId, objectKey),
             setState: async (uploadId, state) => {
               this.check('state');
               const record = this.rows.get(uploadId);
               if (!record) throw new Error('synthetic unknown upload');
+              if (
+                state === 'ready' &&
+                !(await this.objectActive(record.objectKey))
+              )
+                throw new Error(
+                  'synthetic retired generation cannot become ready',
+                );
               if (state === 'ready' && record.state !== 'ready')
                 this.events.push({
                   kind: 'document.uploaded',
@@ -99,6 +182,19 @@ export class MemoryDocuments extends DocumentStore {
               this.sync(record);
             },
           });
+          if (this.failCommit) {
+            this.failCommit = false;
+            throw new Error('synthetic outer commit failure');
+          }
+          this.committedRows = clone(this.rows);
+          return outcome;
+        } catch (error) {
+          this.rows = snapshot;
+          this.events = events;
+          for (const key of initialKeys) this.manifests.delete(key);
+          this.access.documents.clear();
+          for (const record of this.rows.values()) this.sync(record);
+          throw error;
         } finally {
           release();
           if (this.locks.get(key) === tail) this.locks.delete(key);

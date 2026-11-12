@@ -9,6 +9,7 @@ import type {
   UploadState,
 } from '@fmv/contracts';
 import type { ObjectStore } from './object-store.js';
+import { createObjectKey } from './object-key.js';
 
 export type IntakeRecord = {
   uploadId: string;
@@ -26,6 +27,7 @@ export type IntakeRecord = {
 };
 
 export interface IntakeMetadata {
+  resolveStorageScope(patientId: string): Promise<string | null>;
   resolveCategory(categoryId?: string): Promise<string | null>;
   findByIdempotency(
     patientId: string,
@@ -38,6 +40,12 @@ export interface IntakeMetadata {
   ): Promise<IntakeRecord | null>;
   create(record: IntakeRecord): Promise<void>;
   setState(uploadId: string, state: UploadState): Promise<void>;
+  // Reservations and retirements commit independently of the outer upload
+  // transaction before external IO. Keys are immutable and never reused.
+  reserveObject(documentId: string): Promise<string>;
+  useObject(uploadId: string, objectKey: string): Promise<void>;
+  objectActive(objectKey: string): Promise<boolean>;
+  retireObject(documentId: string, objectKey: string): Promise<void>;
 }
 
 export interface IntakeStore {
@@ -195,13 +203,16 @@ export class DocumentIntake {
             throw new IntakeError(409);
           return result(previous);
         }
+        const storageScope = await metadata.resolveStorageScope(patientId);
+        if (!storageScope) throw new IntakeError(503);
+        const documentId = randomUUID();
         const record: IntakeRecord = {
           ...declared,
           categoryId,
           patientId,
           uploadId: randomUUID(),
-          documentId: randomUUID(),
-          objectKey: randomUUID().replaceAll('-', ''),
+          documentId,
+          objectKey: createObjectKey(storageScope, documentId),
           state: 'pending',
           createdAt: new Date(),
         };
@@ -233,17 +244,20 @@ export class DocumentIntake {
         this.available();
         validateBytes(original, record);
         if (record.state === 'ready') return result(record);
-        // A retry first removes any partial or previous object under the same key.
-        // Removal must be idempotent. Failure leaves the record non-READY.
+        // Retire the old generation durably before deletion. A late DELETE can
+        // never affect the fresh key used by this attempt, even after rollback.
         await this.fail(metadata, record);
+        const objectKey = await metadata.reserveObject(record.documentId);
+        await metadata.useObject(uploadId, objectKey);
         await metadata.setState(uploadId, 'pending');
+        const nextRecord = { ...record, objectKey, state: 'pending' as const };
         try {
-          await this.objects.put(record.objectKey, original, record.mimeType);
+          await this.objects.put(objectKey, original, record.mimeType);
         } catch {
-          await this.fail(metadata, record);
+          await this.fail(metadata, nextRecord);
           throw new IntakeError(503);
         }
-        return result({ ...record, state: 'pending' });
+        return result(nextRecord);
       },
     );
   }
@@ -264,6 +278,8 @@ export class DocumentIntake {
         );
         this.available();
         if (record.state === 'failed') throw new IntakeError(409);
+        if (!(await metadata.objectActive(record.objectKey)))
+          throw new IntakeError(409);
         let bytes: Buffer;
         try {
           bytes = await this.objects.get(record.objectKey);
@@ -279,6 +295,8 @@ export class DocumentIntake {
           kind: 'category',
           categoryId: record.categoryId,
         });
+        if (!(await metadata.objectActive(record.objectKey)))
+          throw new IntakeError(409);
         if (record.state === 'ready') return result(record);
         try {
           await metadata.setState(uploadId, 'ready');
@@ -315,6 +333,8 @@ export class DocumentIntake {
           documentId,
         });
         if (record.state !== 'ready') throw new IntakeError(404);
+        if (!(await metadata.objectActive(record.objectKey)))
+          throw new IntakeError(404);
         this.available();
         let bytes: Buffer;
         try {
@@ -327,6 +347,8 @@ export class DocumentIntake {
           kind: 'document',
           documentId,
         });
+        if (!(await metadata.objectActive(record.objectKey)))
+          throw new IntakeError(404);
         return { record, bytes: Buffer.from(bytes) };
       },
     );
@@ -357,12 +379,14 @@ export class DocumentIntake {
   }
 
   private async fail(metadata: IntakeMetadata, record: IntakeRecord) {
-    // Never remove a potentially READY object unless FAILED is durably recorded.
+    // Retirement survives metadata rollback. Neither finalize nor future PUTs
+    // may use this key again; cleanup may retry only this exact retired key.
+    await metadata.retireObject(record.documentId, record.objectKey);
     await metadata.setState(record.uploadId, 'failed');
     try {
       await this.objects.remove(record.objectKey);
     } catch {
-      // FAILED retains the opaque key so a retry can safely retry compensation.
+      // The durable retired manifest retains any uncertain orphan for cleanup.
       throw new IntakeError(503);
     }
   }

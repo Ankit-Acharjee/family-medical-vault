@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { FileText, UploadCloud, UserRound } from 'lucide-react';
+import './upload.css';
 import { documentMimeTypes, maximumDocumentBytes } from '@fmv/contracts';
 import type {
   AuthBootstrap,
@@ -280,15 +282,16 @@ type QueueItem = {
 export function DocumentUploadForm({
   onComplete,
 }: {
-  onComplete?: () => void;
+  onComplete?: (allStored: boolean) => void;
 }) {
-  const { selectedPatient } = usePatientContext();
+  const { selectedPatient, loading: patientsLoading } = usePatientContext();
   const patientId = selectedPatient?.id ?? null;
   const [availability, setAvailability] = useState<{
     id: string;
     ready: boolean;
     categories: DocumentCategory[];
   } | null>(null);
+  const [checkingStorage, setCheckingStorage] = useState(true);
   const [category, setCategory] = useState('');
   const [items, setItems] = useState<QueueItem[]>([]);
   const [error, setError] = useState('');
@@ -298,14 +301,28 @@ export function DocumentUploadForm({
   active.current = patientId;
   const controller = useRef<AbortController | null>(null);
   const inProgress = useRef(false);
+  const queuePatient = useRef(patientId);
+  const retainedPatient = useRef(selectedPatient);
+  if (selectedPatient) retainedPatient.current = selectedPatient;
+  const formPatient =
+    selectedPatient ?? (patientsLoading ? retainedPatient.current : null);
   useEffect(() => {
     controller.current?.abort();
     inProgress.current = false;
-    setItems([]);
-    setAvailability(null);
-    setCategory('');
-    setError('');
     setBusy(false);
+    setCheckingStorage(true);
+    // A native file picker can trigger focus revalidation. Keep its queue in
+    // memory and preserve layout; disable actions until access is confirmed.
+    if (!patientId && patientsLoading) return;
+    setAvailability((previous) =>
+      previous?.id === patientId ? previous : null,
+    );
+    setError('');
+    if (queuePatient.current !== patientId) {
+      queuePatient.current = patientId;
+      setItems([]);
+      setCategory('');
+    }
     if (!patientId) return;
     const abort = new AbortController();
     controller.current = abort;
@@ -340,11 +357,17 @@ export function DocumentUploadForm({
           });
       })
       .catch((e: unknown) => {
-        if (!abort.signal.aborted && active.current === patientId)
+        if (!abort.signal.aborted && active.current === patientId) {
+          setAvailability(null);
           setError(message(e));
+        }
+      })
+      .finally(() => {
+        if (!abort.signal.aborted && active.current === patientId)
+          setCheckingStorage(false);
       });
     return () => abort.abort();
-  }, [patientId, version]);
+  }, [patientId, patientsLoading, version]);
   async function start() {
     if (!patientId || !availability?.ready || inProgress.current) return;
     const pending = items.filter((item) => item.state !== 'ready');
@@ -376,6 +399,7 @@ export function DocumentUploadForm({
         throw new Error();
       const csrf = (boot as AuthBootstrap).csrf!;
       let storedAny = false;
+      let storedCount = 0;
       for (const item of pending) {
         if (abort.signal.aborted || active.current !== patientId) break;
         update(item.key, { state: 'uploading', error: '' });
@@ -437,13 +461,14 @@ export function DocumentUploadForm({
           if (result.state !== 'ready') throw new Error();
           update(item.key, { state: 'ready' });
           storedAny = true;
+          storedCount += 1;
         } catch (e) {
           if (!abort.signal.aborted && active.current === patientId)
             update(item.key, { state: 'error', error: message(e) });
         }
       }
       if (storedAny && !abort.signal.aborted && active.current === patientId)
-        onComplete?.();
+        onComplete?.(storedCount === pending.length);
     } catch (e) {
       if (!abort.signal.aborted && active.current === patientId)
         setError(message(e));
@@ -454,125 +479,196 @@ export function DocumentUploadForm({
       }
     }
   }
-  if (!selectedPatient) return <p>Select a patient before uploading.</p>;
-  const ready = availability?.id === patientId && availability.ready;
+  if (!formPatient || (selectedPatient && queuePatient.current !== patientId))
+    return (
+      <p role="status">
+        {patientsLoading || selectedPatient
+          ? 'Checking patient access…'
+          : 'Select a patient before uploading.'}
+      </p>
+    );
+  const ready =
+    availability?.id === patientId &&
+    availability.ready &&
+    !patientsLoading &&
+    !checkingStorage;
   return (
-    <section aria-label={`Upload documents for ${selectedPatient.displayName}`}>
-      <p>Patient: {selectedPatient.displayName}</p>
-      {!availability && !error && (
-        <p role="status">Checking document storage…</p>
-      )}
-      {error && (
-        <div role="alert">
-          <p>{error}</p>
-          {!availability && (
-            <Button onClick={() => setVersion((n) => n + 1)}>Try again</Button>
-          )}
+    <>
+      <section
+        className="document-upload"
+        aria-busy={patientsLoading || checkingStorage}
+        aria-label={`Upload documents for ${formPatient.displayName}`}
+      >
+        <div className="document-upload__patient">
+          <span className="document-upload__patient-icon" aria-hidden="true">
+            <UserRound size={19} />
+          </span>
+          <div>
+            <span className="document-upload__eyebrow">Uploading for</span>
+            <strong>{formPatient.displayName}</strong>
+          </div>
+          <span className="document-upload__recheck" role="status">
+            {availability && (patientsLoading || checkingStorage)
+              ? 'Rechecking access…'
+              : ''}
+          </span>
         </div>
-      )}
-      {availability && !availability.ready && (
-        <p>Document storage is unavailable. Please try again later.</p>
-      )}
-      {availability && (
-        <>
-          <label htmlFor="upload-category">Category</label>
-          <select
-            id="upload-category"
-            value={category}
-            disabled={busy || !ready || items.length > 0}
-            onChange={(event) => setCategory(event.target.value)}
+        {!availability && !error && (
+          <p className="document-upload__notice" role="status">
+            Checking document storage…
+          </p>
+        )}
+        {error && (
+          <div
+            className="document-upload__notice document-upload__notice--error"
+            role="alert"
           >
-            <option value="">Default</option>
-            {availability.categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-          <label htmlFor="upload-files">
-            Choose files (PDF, JPEG, PNG or WebP; up to 25 MiB each)
-          </label>
-          <input
-            id="upload-files"
-            type="file"
-            className="block w-full min-w-0 max-w-full"
-            multiple
-            accept="application/pdf,image/jpeg,image/png,image/webp"
-            disabled={busy || !ready}
-            onChange={(event) => {
-              const files = Array.from(event.target.files ?? []);
-              event.target.value = '';
-              if (items.length + files.length > 20) {
-                setError('Choose up to 20 files at a time.');
-                return;
-              }
-              if (
-                files.some(
-                  (file) =>
-                    !documentMimeTypes.includes(
-                      file.type as DocumentMimeType,
-                    ) ||
-                    !file.size ||
-                    file.size > maximumDocumentBytes ||
-                    !file.name.trim() ||
-                    file.name.trim().length > 200,
-                )
-              ) {
-                setError(
-                  'Choose supported files with a name and a size between 1 byte and 25 MiB.',
-                );
-                return;
-              }
-              setError('');
-              setItems((previous) => [
-                ...previous,
-                ...files.map((file): QueueItem => ({
-                  key: crypto.randomUUID(),
-                  file,
-                  state: 'waiting',
-                })),
-              ]);
-            }}
-          />
-          {items.length > 0 && (
-            <>
-              <ul>
-                {items.map((item) => (
-                  <li key={item.key} className="[overflow-wrap:anywhere]">
-                    {item.file.name}:{' '}
-                    {item.state === 'ready'
-                      ? 'Stored'
-                      : item.state === 'uploading'
-                        ? 'Uploading…'
-                        : item.state === 'error'
-                          ? 'Failed'
-                          : 'Waiting'}
-                    {item.error && <span> — {item.error}</span>}
-                  </li>
-                ))}
-              </ul>
-              <Button
-                variant="outline"
-                disabled={busy}
-                onClick={() => {
-                  setItems([]);
-                  setError('');
-                }}
-              >
-                Clear file queue
+            <p>{error}</p>
+            {!availability && (
+              <Button onClick={() => setVersion((n) => n + 1)}>
+                Try again
               </Button>
-            </>
-          )}
-          <Button
-            disabled={
-              !ready || busy || !items.some((item) => item.state !== 'ready')
-            }
-            onClick={() => void start()}
-          >
-            {busy ? 'Uploading…' : 'Upload selected files'}
-          </Button>
-        </>
-      )}
-    </section>
+            )}
+          </div>
+        )}
+        {availability && !availability.ready && (
+          <p className="document-upload__notice">
+            Document storage is unavailable. Please try again later.
+          </p>
+        )}
+        {availability && (
+          <>
+            <div className="document-upload__field">
+              <label htmlFor="upload-category">
+                Category <span>(optional)</span>
+              </label>
+              <select
+                className="document-upload__select"
+                id="upload-category"
+                value={category}
+                disabled={busy || !ready || items.length > 0}
+                onChange={(event) => setCategory(event.target.value)}
+              >
+                <option value="">Default</option>
+                {availability.categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="document-upload__field">
+              <span className="document-upload__label">Files</span>
+              <label className="document-upload__picker" htmlFor="upload-files">
+                <UploadCloud size={22} aria-hidden="true" />
+                <strong>Choose files</strong>
+                <span>PDF, JPEG, PNG or WebP · up to 25 MiB each</span>
+                <input
+                  id="upload-files"
+                  type="file"
+                  className="document-upload__input"
+                  multiple
+                  accept="application/pdf,image/jpeg,image/png,image/webp"
+                  disabled={busy || !ready}
+                  onChange={(event) => {
+                    const files = Array.from(event.target.files ?? []);
+                    event.target.value = '';
+                    if (items.length + files.length > 20) {
+                      setError('Choose up to 20 files at a time.');
+                      return;
+                    }
+                    if (
+                      files.some(
+                        (file) =>
+                          !documentMimeTypes.includes(
+                            file.type as DocumentMimeType,
+                          ) ||
+                          !file.size ||
+                          file.size > maximumDocumentBytes ||
+                          !file.name.trim() ||
+                          file.name.trim().length > 200,
+                      )
+                    ) {
+                      setError(
+                        'Choose supported files with a name and a size between 1 byte and 25 MiB.',
+                      );
+                      return;
+                    }
+                    setError('');
+                    setItems((previous) => [
+                      ...previous,
+                      ...files.map((file): QueueItem => ({
+                        key: crypto.randomUUID(),
+                        file,
+                        state: 'waiting',
+                      })),
+                    ]);
+                  }}
+                />
+              </label>
+            </div>
+            {items.length > 0 && (
+              <>
+                <div className="document-upload__queue-heading">
+                  Selected files <span>{items.length} / 20</span>
+                </div>
+                <ul className="document-upload__queue" aria-live="polite">
+                  {items.map((item) => (
+                    <li key={item.key} className="document-upload__item">
+                      <FileText size={18} aria-hidden="true" />
+                      <div className="document-upload__item-content">
+                        <span className="document-upload__filename">
+                          {item.file.name}:{' '}
+                        </span>
+                        <span
+                          className={`document-upload__status document-upload__status--${item.state}`}
+                        >
+                          {item.state === 'ready'
+                            ? 'Stored'
+                            : item.state === 'uploading'
+                              ? 'Uploading…'
+                              : item.state === 'error'
+                                ? 'Failed'
+                                : 'Waiting'}
+                        </span>
+                        {item.error && (
+                          <span className="document-upload__item-error">
+                            {item.error}
+                          </span>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            <div className="document-upload__actions">
+              {items.length > 0 && (
+                <Button
+                  variant="outline"
+                  disabled={busy || patientsLoading || checkingStorage}
+                  onClick={() => {
+                    setItems([]);
+                    setError('');
+                  }}
+                >
+                  Clear file queue
+                </Button>
+              )}
+              <Button
+                disabled={
+                  !ready ||
+                  busy ||
+                  !items.some((item) => item.state !== 'ready')
+                }
+                onClick={() => void start()}
+              >
+                {busy ? 'Uploading…' : 'Upload selected files'}
+              </Button>
+            </div>
+          </>
+        )}
+      </section>
+    </>
   );
 }

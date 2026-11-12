@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { maximumDocumentBytes } from '@fmv/contracts';
 import { DocumentIntake, IntakeError } from '../dist/documents/intake.js';
+import { createObjectKey } from '../dist/documents/object-key.js';
 import { MemoryObjectStore } from '../dist/documents/memory-object-store.js';
 import { UnavailableObjectStore } from '../dist/documents/object-store.js';
 
@@ -26,7 +27,10 @@ const deferred = () => {
 };
 
 class Metadata {
+  storageScopes = new Map();
   rows = new Map();
+  committedRows = new Map();
+  manifests = new Map();
   locks = new Map();
   failCreate = false;
   failReady = false;
@@ -40,18 +44,46 @@ class Metadata {
     this.locks.set(key, tail);
     await before;
     const snapshot = structuredClone(this.rows);
+    const initialKeys = [];
+    const metadata = Object.fromEntries(
+      [
+        'resolveCategory',
+        'resolveStorageScope',
+        'findByIdempotency',
+        'findUpload',
+        'findDocument',
+        'setState',
+        'reserveObject',
+        'useObject',
+        'objectActive',
+        'retireObject',
+      ].map((method) => [method, this[method].bind(this)]),
+    );
+    metadata.create = async (record) => {
+      await this.create(record);
+      initialKeys.push(record.objectKey);
+    };
     try {
-      const outcome = await work(this);
+      const outcome = await work(metadata);
       if (this.failCommit) {
         this.failCommit = false;
-        this.rows = snapshot;
         throw new Error('synthetic transaction connection loss');
       }
+      this.committedRows = structuredClone(this.rows);
       return outcome;
+    } catch (error) {
+      this.rows = snapshot;
+      for (const objectKey of initialKeys) this.manifests.delete(objectKey);
+      throw error;
     } finally {
       gate.resolve();
       if (this.locks.get(key) === tail) this.locks.delete(key);
     }
+  }
+  async resolveStorageScope(patientId) {
+    if (!this.storageScopes.has(patientId))
+      this.storageScopes.set(patientId, randomUUID().replaceAll('-', ''));
+    return this.storageScopes.get(patientId);
   }
   async resolveCategory(id) {
     return this.categories.has(id ?? category) ? (id ?? category) : null;
@@ -80,17 +112,69 @@ class Metadata {
       null,
     );
     this.rows.set(record.uploadId, structuredClone(record));
+    this.manifests.set(record.objectKey, {
+      documentId: record.documentId,
+      objectKey: record.objectKey,
+      createdAt: new Date(),
+      retiredAt: null,
+    });
+  }
+  async reserveObject(documentId) {
+    const record = [...this.committedRows.values()].find(
+      (record) => record.documentId === documentId,
+    );
+    assert.ok(record);
+    const objectKey = createObjectKey(
+      await this.resolveStorageScope(record.patientId),
+      documentId,
+    );
+    assert.ok(!this.manifests.has(objectKey));
+    this.manifests.set(objectKey, {
+      documentId,
+      objectKey,
+      createdAt: new Date(),
+      retiredAt: null,
+    });
+    return objectKey;
+  }
+  async useObject(uploadId, objectKey) {
+    const record = this.rows.get(uploadId);
+    const manifest = this.manifests.get(objectKey);
+    assert.ok(
+      record &&
+        record.state !== 'ready' &&
+        manifest &&
+        manifest.documentId === record.documentId &&
+        !manifest.retiredAt,
+    );
+    record.objectKey = objectKey;
+  }
+  async objectActive(objectKey) {
+    const manifest = this.manifests.get(objectKey);
+    return Boolean(manifest && !manifest.retiredAt);
+  }
+  async retireObject(documentId, objectKey) {
+    const manifest = this.manifests.get(objectKey);
+    assert.ok(manifest && manifest.documentId === documentId);
+    const current = [...this.committedRows.values()].find(
+      (record) => record.documentId === documentId,
+    );
+    if (current?.state === 'ready' && current.objectKey === objectKey)
+      throw new Error('synthetic READY generation cannot retire');
+    manifest.retiredAt ??= new Date();
   }
   async setState(id, state) {
     if (state === 'failed' && this.failFailed)
       throw new Error('synthetic metadata failure');
     const row = this.rows.get(id);
     assert.ok(row);
-    row.state = state;
     if (state === 'ready' && this.failReady) {
       this.failReady = false;
-      throw new Error('synthetic uncertain ready write');
+      throw new Error('synthetic rejected ready write');
     }
+    if (state === 'ready')
+      assert.equal(await this.objectActive(row.objectKey), true);
+    row.state = state;
   }
 }
 
@@ -102,6 +186,7 @@ class Objects extends MemoryObjectStore {
   failRemove = false;
   onGet;
   onPut;
+  onRemove;
   async put(key, bytes, mime) {
     this.puts.push({ key, mime });
     await this.onPut?.();
@@ -116,6 +201,7 @@ class Objects extends MemoryObjectStore {
   }
   async remove(key) {
     this.removals.push(key);
+    await this.onRemove?.(key);
     if (this.failRemove) throw new Error('synthetic cleanup failure');
     await super.remove(key);
   }
@@ -163,7 +249,10 @@ test('private original lifecycle requires finalize, retains exact bytes and uses
   );
   assert.deepEqual(bytes, pdf);
   assert.equal(record.title, 'Synthetic original.pdf');
-  assert.match(record.objectKey, /^[a-f0-9]{32}$/);
+  assert.match(
+    record.objectKey,
+    /^originals\/v1\/[a-f0-9]{32}\/[a-f0-9]{32}\/[a-f0-9]{32}$/,
+  );
   assert.ok(!record.objectKey.includes(patient));
   assert.equal(record.categoryId, category);
   assert.ok(
@@ -352,9 +441,12 @@ test('partial put is compensated and failed retry retains identity without dupli
   const f = setup();
   const declaration = f.input();
   const upload = await f.begin(declaration);
-  const key = f.metadata.rows.get(upload.uploadId).objectKey;
+  const initialKey = f.metadata.rows.get(upload.uploadId).objectKey;
   f.objects.failPut = true;
   await assert.rejects(f.content(upload.uploadId), status(503));
+  const key = f.metadata.rows.get(upload.uploadId).objectKey;
+  assert.notEqual(key, initialKey);
+  assert.ok(f.metadata.manifests.get(key).retiredAt);
   assert.equal(f.metadata.rows.get(upload.uploadId).state, 'failed');
   await assert.rejects(f.objects.get(key));
   await assert.rejects(f.finalize(upload.uploadId), status(409));
@@ -363,18 +455,25 @@ test('partial put is compensated and failed retry retains identity without dupli
   await f.content(upload.uploadId);
   assert.equal((await f.finalize(upload.uploadId)).state, 'ready');
   assert.equal(f.metadata.rows.size, 1);
-  assert.equal(f.metadata.rows.get(upload.uploadId).objectKey, key);
+  const current = f.metadata.rows.get(upload.uploadId);
+  assert.notEqual(current.objectKey, key);
+  assert.equal(current.documentId, upload.documentId);
+  assert.equal(current.idempotencyKey, declaration.idempotencyKey);
+  assert.equal(
+    new Set(f.objects.puts.map(({ key }) => key)).size,
+    f.objects.puts.length,
+  );
 });
 
 test('partial object whose cleanup fails stays failed and its next retry removes the orphan', async () => {
   const f = setup();
   const upload = await f.begin();
-  const key = f.metadata.rows.get(upload.uploadId).objectKey;
   f.objects.failPut = true;
   f.objects.onPut = async () => {
     f.objects.failRemove = true;
   };
   await assert.rejects(f.content(upload.uploadId), status(503));
+  const key = f.metadata.rows.get(upload.uploadId).objectKey;
   assert.equal(f.metadata.rows.get(upload.uploadId).state, 'failed');
   assert.deepEqual(await f.objects.get(key), pdf);
   await assert.rejects(
@@ -413,24 +512,27 @@ test('cleanup failure keeps a failed recoverable manifest; metadata failure neve
   const f = setup();
   const upload = await f.begin();
   await f.content(upload.uploadId);
-  const key = f.metadata.rows.get(upload.uploadId).objectKey;
+  let key = f.metadata.rows.get(upload.uploadId).objectKey;
   f.objects.failRemove = true;
   await assert.rejects(f.content(upload.uploadId), status(503));
   assert.equal(f.metadata.rows.get(upload.uploadId).state, 'failed');
   assert.deepEqual(await f.objects.get(key), pdf);
   f.objects.failRemove = false;
   await f.content(upload.uploadId);
+  key = f.metadata.rows.get(upload.uploadId).objectKey;
   f.metadata.failReady = true;
   f.metadata.failFailed = true;
   await assert.rejects(f.finalize(upload.uploadId), status(503));
-  // Simulates an uncertain READY write followed by a failed FAILED transition.
-  // Preserve the verified original instead of producing READY without bytes.
+  // Retirement survives a failed state write. Preserve the original bytes but
+  // require a fresh generation before the upload can become READY.
   assert.deepEqual(await f.objects.get(key), pdf);
+  assert.ok(f.metadata.manifests.get(key).retiredAt);
   f.metadata.failFailed = false;
+  await f.content(upload.uploadId);
   assert.equal((await f.finalize(upload.uploadId)).state, 'ready');
 });
 
-test('uncertain ready update compensates only after recording failed, and can recover', async () => {
+test('rejected ready update durably retires before compensation and can recover with a fresh generation', async () => {
   const f = setup();
   const upload = await f.begin();
   await f.content(upload.uploadId);
@@ -456,6 +558,176 @@ test('transaction rollback after finalize leaves verified bytes and a recoverabl
     pdf,
   );
   assert.equal((await f.finalize(upload.uploadId)).state, 'ready');
+});
+
+test('initial document and empty object manifest roll back atomically on failed begin commit', async () => {
+  const f = setup();
+  f.metadata.failCommit = true;
+  await assert.rejects(f.begin(), status(503));
+  assert.equal(f.metadata.rows.size, 0);
+  assert.equal(f.metadata.manifests.size, 0);
+  assert.equal(f.objects.puts.length, 0);
+});
+
+test('durably reserved generation survives outer content rollback and its old retired pointer cannot finalize', async () => {
+  const f = setup();
+  const upload = await f.begin();
+  const initialKey = f.metadata.rows.get(upload.uploadId).objectKey;
+  f.metadata.failCommit = true;
+  await assert.rejects(f.content(upload.uploadId), status(503));
+  const attemptedKey = f.objects.puts[0].key;
+  assert.notEqual(attemptedKey, initialKey);
+  assert.equal(f.metadata.rows.get(upload.uploadId).objectKey, initialKey);
+  assert.ok(f.metadata.manifests.get(initialKey).retiredAt);
+  assert.equal(
+    f.metadata.manifests.get(attemptedKey).documentId,
+    upload.documentId,
+  );
+  assert.equal(f.metadata.manifests.get(attemptedKey).retiredAt, null);
+  assert.deepEqual(await f.objects.get(attemptedKey), pdf);
+  const gets = f.objects.gets.length;
+  await assert.rejects(f.finalize(upload.uploadId), status(409));
+  assert.equal(f.objects.gets.length, gets);
+  await f.content(upload.uploadId);
+  await f.finalize(upload.uploadId);
+  const ready = f.metadata.rows.get(upload.uploadId);
+  assert.notEqual(ready.objectKey, attemptedKey);
+  assert.equal(ready.documentId, upload.documentId);
+  assert.ok(f.metadata.manifests.has(attemptedKey));
+  assert.deepEqual(await f.objects.get(attemptedKey), pdf);
+});
+
+test('durable retirement survives failed outer commit and blocks re-finalizing still-present old bytes', async () => {
+  const f = setup();
+  const upload = await f.begin();
+  await f.content(upload.uploadId);
+  const oldKey = f.metadata.rows.get(upload.uploadId).objectKey;
+  f.objects.failRemove = true;
+  f.metadata.failCommit = true;
+  await assert.rejects(f.content(upload.uploadId), status(503));
+  assert.equal(f.metadata.rows.get(upload.uploadId).state, 'pending');
+  assert.equal(f.metadata.rows.get(upload.uploadId).objectKey, oldKey);
+  assert.ok(f.metadata.manifests.get(oldKey).retiredAt);
+  assert.deepEqual(await f.objects.get(oldKey), pdf);
+  const gets = f.objects.gets.length;
+  await assert.rejects(f.finalize(upload.uploadId), status(409));
+  assert.equal(f.objects.gets.length, gets);
+  f.objects.failRemove = false;
+  await f.content(upload.uploadId);
+  await f.finalize(upload.uploadId);
+  assert.notEqual(f.metadata.rows.get(upload.uploadId).objectKey, oldKey);
+});
+
+test('a timed-out DELETE completing after retry finalization cannot delete the READY generation', async () => {
+  const f = setup();
+  const upload = await f.begin();
+  await f.content(upload.uploadId);
+  const oldKey = f.metadata.rows.get(upload.uploadId).objectKey;
+  const release = deferred();
+  let lateDelete;
+  f.objects.onRemove = async (key) => {
+    if (key !== oldKey) return;
+    lateDelete = release.promise.then(() =>
+      MemoryObjectStore.prototype.remove.call(f.objects, key),
+    );
+    throw new Error(
+      'synthetic DELETE timeout with uncertain provider completion',
+    );
+  };
+  try {
+    await assert.rejects(f.content(upload.uploadId), status(503));
+    assert.ok(lateDelete);
+    assert.ok(f.metadata.manifests.get(oldKey).retiredAt);
+    f.objects.onRemove = undefined;
+    await f.content(upload.uploadId);
+    await f.finalize(upload.uploadId);
+    const ready = f.metadata.rows.get(upload.uploadId);
+    assert.notEqual(ready.objectKey, oldKey);
+    assert.equal(ready.state, 'ready');
+    release.resolve();
+    await lateDelete;
+    assert.deepEqual(
+      (await f.intake.read(patient, upload.documentId, 'view', allow)).bytes,
+      pdf,
+    );
+    assert.equal(await f.metadata.objectActive(ready.objectKey), true);
+    assert.ok(f.metadata.manifests.has(oldKey));
+  } finally {
+    release.resolve();
+    await lateDelete;
+  }
+});
+
+test('a late partial PUT after failed outer commit retains its retired durable orphan manifest', async () => {
+  const f = setup();
+  const upload = await f.begin();
+  const initialKey = f.metadata.rows.get(upload.uploadId).objectKey;
+  const release = deferred();
+  let latePut, attemptedKey;
+  f.objects.onPut = async () => {
+    attemptedKey = f.metadata.rows.get(upload.uploadId).objectKey;
+    latePut = release.promise.then(() =>
+      MemoryObjectStore.prototype.put.call(
+        f.objects,
+        attemptedKey,
+        pdf,
+        'application/pdf',
+      ),
+    );
+    throw new Error('synthetic PUT timeout with uncertain provider completion');
+  };
+  f.metadata.failCommit = true;
+  try {
+    await assert.rejects(f.content(upload.uploadId), status(503));
+    assert.notEqual(attemptedKey, initialKey);
+    assert.equal(f.metadata.rows.get(upload.uploadId).objectKey, initialKey);
+    assert.equal(
+      f.metadata.manifests.get(attemptedKey).documentId,
+      upload.documentId,
+    );
+    assert.ok(f.metadata.manifests.get(attemptedKey).retiredAt);
+    release.resolve();
+    await latePut;
+    assert.deepEqual(await f.objects.get(attemptedKey), pdf);
+    await assert.rejects(f.finalize(upload.uploadId), status(409));
+    f.objects.onPut = undefined;
+    await f.content(upload.uploadId);
+    await f.finalize(upload.uploadId);
+    assert.notEqual(
+      f.metadata.rows.get(upload.uploadId).objectKey,
+      attemptedKey,
+    );
+    assert.ok(f.metadata.manifests.get(attemptedKey).retiredAt);
+    assert.deepEqual(await f.objects.get(attemptedKey), pdf);
+  } finally {
+    release.resolve();
+    await latePut;
+  }
+});
+
+test('unknown or retired current generations never read bytes or finalize, including READY metadata', async () => {
+  for (const invalid of ['unknown', 'retired']) {
+    const f = setup();
+    const upload = await f.begin();
+    await f.content(upload.uploadId);
+    await f.finalize(upload.uploadId);
+    const key = f.metadata.rows.get(upload.uploadId).objectKey;
+    if (invalid === 'unknown') f.metadata.manifests.delete(key);
+    else f.metadata.manifests.get(key).retiredAt = new Date();
+    const gets = f.objects.gets.length,
+      removes = f.objects.removals.length;
+    await assert.rejects(
+      f.intake.read(patient, upload.documentId, 'view', allow),
+      status(404),
+    );
+    await assert.rejects(
+      f.intake.read(patient, upload.documentId, 'export', allow),
+      status(404),
+    );
+    await assert.rejects(f.finalize(upload.uploadId), status(409));
+    assert.equal(f.objects.gets.length, gets);
+    assert.equal(f.objects.removals.length, removes);
+  }
 });
 
 test('missing and corrupted objects never finalize or read successfully', async () => {
@@ -620,4 +892,65 @@ test('unconfigured object storage and database failures fail closed with sanitiz
     (error) => status(503)(error) && !error.message.includes('sensitive'),
   );
   assert.equal(f.metadata.rows.size, 0);
+});
+
+test('private patient groups persist across documents and attempts without exposing metadata', async () => {
+  const f = setup();
+  const declaration = f.input(pdf, {
+    title: 'Private Alice cholesterol report.pdf',
+  });
+  const first = await f.begin(declaration);
+  const second = await f.begin();
+  const otherPatient = randomUUID();
+  const third = await f.intake.begin(otherPatient, f.input(), allow);
+  const keyFor = (upload) => f.metadata.rows.get(upload.uploadId).objectKey;
+  const firstKey = keyFor(first);
+  const secondKey = keyFor(second);
+  const thirdKey = keyFor(third);
+  const segments = (key) => key.split('/');
+  assert.equal(segments(firstKey)[2], segments(secondKey)[2]);
+  assert.notEqual(segments(firstKey)[2], segments(thirdKey)[2]);
+  assert.equal(segments(firstKey)[2], f.metadata.storageScopes.get(patient));
+  assert.equal(segments(firstKey)[3], first.documentId.replaceAll('-', ''));
+  assert.notEqual(segments(firstKey)[3], segments(secondKey)[3]);
+
+  f.objects.failPut = true;
+  await assert.rejects(f.content(first.uploadId), status(503));
+  const failedKey = keyFor(first);
+  f.objects.failPut = false;
+  await f.content(first.uploadId);
+  const retriedKey = keyFor(first);
+  assert.equal(new Set([firstKey, failedKey, retriedKey]).size, 3);
+  for (const key of [firstKey, failedKey, retriedKey])
+    assert.equal(
+      segments(key).slice(0, 4).join('/'),
+      segments(firstKey).slice(0, 4).join('/'),
+    );
+  for (const key of [firstKey, secondKey, thirdKey, failedKey, retriedKey]) {
+    assert.match(
+      key,
+      /^originals\/v1\/[a-f0-9]{32}\/[a-f0-9]{32}\/[a-f0-9]{32}$/,
+    );
+    for (const secret of [
+      patient,
+      otherPatient,
+      patient.replaceAll('-', ''),
+      otherPatient.replaceAll('-', ''),
+      category.replaceAll('-', ''),
+      declaration.title,
+      'Alice',
+      'cholesterol',
+      '.pdf',
+    ])
+      assert.ok(!key.includes(secret));
+  }
+});
+
+test('missing private patient storage scope fails before creating metadata or writing bytes', async () => {
+  const f = setup();
+  f.metadata.resolveStorageScope = async () => null;
+  await assert.rejects(f.begin(), status(503));
+  assert.equal(f.metadata.rows.size, 0);
+  assert.equal(f.metadata.manifests.size, 0);
+  assert.equal(f.objects.puts.length, 0);
 });
