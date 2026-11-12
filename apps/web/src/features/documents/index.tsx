@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { FileText, UploadCloud, UserRound } from 'lucide-react';
 import './upload.css';
+import { PdfExtractionDialog } from './PdfExtractionDialog';
+import type { PdfSource } from './PdfExtractionDialog';
 import { DuplicateUploadNotice } from './DuplicateUploadNotice';
 import {
   DocumentsViewSwitcher,
@@ -168,6 +170,9 @@ export function DocumentsPanel({
     url: string;
     mime: string;
   } | null>(null);
+  const [extraction, setExtraction] = useState<PdfSource | null>(null);
+  const extractionTrigger = useRef<HTMLButtonElement | null>(null);
+  const extractionRestoreFocus = useRef(false);
   const [actionError, setActionError] = useState('');
   const [filters, setFilters] = useState<BrowseFilters>({
     query: '',
@@ -194,6 +199,17 @@ export function DocumentsPanel({
   const active = useRef(patientId);
   active.current = patientId;
   const action = useRef<AbortController | null>(null);
+  useEffect(() => {
+    if (!extractionRestoreFocus.current || busy || patientsLoading) return;
+    extractionRestoreFocus.current = false;
+    (extractionTrigger.current?.isConnected &&
+    !extractionTrigger.current.disabled
+      ? extractionTrigger.current
+      : (panel.current?.querySelector<HTMLButtonElement>(
+          '[aria-label="Document views"] button[aria-pressed="true"]',
+        ) ?? panel.current)
+    )?.focus();
+  }, [list, busy, patientsLoading]);
   useEffect(() => {
     if (!previewRestoreFocus.current || busy || patientsLoading) return;
     previewRestoreFocus.current = false;
@@ -249,6 +265,7 @@ export function DocumentsPanel({
       setEditing(null);
       setLifecycle(null);
       setPreview(null);
+      setExtraction(null);
       setFilters({ query: '', category: '', from: '', to: '' });
       setNotice('');
       listPatient.current = patientId;
@@ -281,6 +298,17 @@ export function DocumentsPanel({
                 ? previous
                 : null,
             );
+            setExtraction((previous) =>
+              previous &&
+              result.documents.some(
+                (d) =>
+                  d.id === previous.documentId &&
+                  d.canView &&
+                  d.mimeType === 'application/pdf',
+              )
+                ? previous
+                : null,
+            );
             setEditing((previous) =>
               previous &&
               result.documents.some(
@@ -301,6 +329,7 @@ export function DocumentsPanel({
           } else if (view === 'trash' && trashDocuments(result, patientId)) {
             setList({ id: patientId, view: 'trash', value: result });
             setPreview(null);
+            setExtraction(null);
             setEditing(null);
             setLifecycle((previous) =>
               previous &&
@@ -319,6 +348,7 @@ export function DocumentsPanel({
           setError(message(e));
           setList(null);
           setPreview(null);
+          setExtraction(null);
           setEditing(null);
           setLifecycle(null);
         }
@@ -340,6 +370,12 @@ export function DocumentsPanel({
     },
     [preview],
   );
+  const denyExtraction = useCallback(() => {
+    setExtraction(null);
+    setPreview(null);
+    setList(null);
+    setError('Document access is no longer available. Refresh and try again.');
+  }, []);
   async function read(document: DocumentSummary, download: boolean) {
     if (!patientId) return;
     if (!download)
@@ -379,6 +415,7 @@ export function DocumentsPanel({
         if (e instanceof RequestError && [401, 403, 404].includes(e.status)) {
           setList(null);
           setPreview(null);
+          setExtraction(null);
           setError(message(e));
         } else setActionError(message(e));
       }
@@ -508,6 +545,7 @@ export function DocumentsPanel({
       if (!object(result) || result.saved !== true) throw new Error();
       if (abort.signal.aborted || active.current !== patientId) return;
       setPreview(null);
+      setExtraction(null);
       setLifecycle(null);
       setNotice(
         selected.action === 'trash'
@@ -532,6 +570,7 @@ export function DocumentsPanel({
         ) {
           setList(null);
           setPreview(null);
+          setExtraction(null);
           setLifecycle(null);
           setError(message(e));
         } else if (e instanceof RequestError && e.status === 409) {
@@ -610,6 +649,7 @@ export function DocumentsPanel({
             setLifecycleError('');
             setEditing(null);
             setPreview(null);
+            setExtraction(null);
             setView(next);
           }
         }}
@@ -720,6 +760,24 @@ export function DocumentsPanel({
                       Preview
                     </Button>
                   )}{' '}
+                  {doc.canView && doc.mimeType === 'application/pdf' && (
+                    <Button
+                      variant="ghost"
+                      disabled={busy || patientsLoading}
+                      aria-label={`Extract text ${doc.title}`}
+                      onClick={(event) => {
+                        extractionTrigger.current = event.currentTarget;
+                        setExtraction({
+                          patientId: patientId!,
+                          documentId: doc.id,
+                          title: doc.title,
+                          bytes: doc.bytes,
+                        });
+                      }}
+                    >
+                      Extract text
+                    </Button>
+                  )}
                   {doc.canExport && (
                     <Button
                       variant="ghost"
@@ -887,6 +945,29 @@ export function DocumentsPanel({
           )}
         </DialogContent>
       </Dialog>
+      {extraction && extraction.patientId === displayPatient.id && (
+        <PdfExtractionDialog
+          source={extraction}
+          enabled={
+            !busy && !patientsLoading && patientId === extraction.patientId
+          }
+          onClose={() => setExtraction(null)}
+          onDenied={denyExtraction}
+          restoreFocus={() => {
+            if (busy || patientsLoading) {
+              extractionRestoreFocus.current = true;
+              return;
+            }
+            (extractionTrigger.current?.isConnected &&
+            !extractionTrigger.current.disabled
+              ? extractionTrigger.current
+              : (panel.current?.querySelector<HTMLButtonElement>(
+                  '[aria-label="Document views"] button[aria-pressed="true"]',
+                ) ?? panel.current)
+            )?.focus();
+          }}
+        />
+      )}
       <Dialog
         open={!!preview && preview.id === displayPatient.id}
         onOpenChange={(open) => {
