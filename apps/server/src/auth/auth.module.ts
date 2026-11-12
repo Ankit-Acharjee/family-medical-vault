@@ -40,6 +40,9 @@ class DisabledDocumentStore extends DocumentStore {
   async audit(): Promise<never> {
     throw new ServiceUnavailableException();
   }
+  async rename(): Promise<never> {
+    throw new ServiceUnavailableException();
+  }
 }
 
 class DisabledPersonStore extends PersonStore {

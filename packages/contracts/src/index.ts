@@ -43,6 +43,9 @@ export type DocumentSummary = {
   id: string;
   patientId: string;
   title: string;
+  originalTitle?: string;
+  categoryName?: string;
+  canEdit?: boolean;
   mimeType: DocumentMimeType;
   bytes: number;
   createdAt: string;

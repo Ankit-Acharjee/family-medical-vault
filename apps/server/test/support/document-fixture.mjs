@@ -202,6 +202,26 @@ export class MemoryDocuments extends DocumentStore {
       },
     };
   }
+  async rename(patientId, documentId, title, accountId, authorize) {
+    return this.asActor(accountId).withLock(
+      `rename:${documentId}`,
+      async () => {
+        const record = [...this.rows.values()].find(
+          (row) =>
+            row.patientId === patientId &&
+            row.documentId === documentId &&
+            row.state === 'ready',
+        );
+        if (!record) return false;
+        await authorize();
+        this.check('rename');
+        record.displayTitle = title;
+        await this.audit(patientId, documentId, accountId, 'document.renamed');
+        await authorize();
+        return true;
+      },
+    );
+  }
   async list(patientId) {
     this.check('list');
     return clone(

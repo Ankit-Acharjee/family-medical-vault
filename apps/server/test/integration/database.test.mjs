@@ -328,15 +328,15 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
         );
         assert.equal(
           result.rowCount,
-          8,
-          'Foundation, auth, identity, permissions, intake, approval, generation and storage-layout migrations must exist',
+          9,
+          'All nine foundation through document display-title migrations must exist',
         );
         assert.equal(
           result.rows
             .map((row) => row.migration_name)
             .sort()
             .join(','),
-          '20261105000100_foundation,20261105000300_auth_sessions,20261105000400_person_identity,20261110000100_patient_permissions,20261110000200_document_intake,20261110000300_caregiver_approvals,20261111000100_object_generations,20261111000200_patient_object_layout',
+          '20261105000100_foundation,20261105000300_auth_sessions,20261105000400_person_identity,20261110000100_patient_permissions,20261110000200_document_intake,20261110000300_caregiver_approvals,20261111000100_object_generations,20261111000200_patient_object_layout,20261112000100_document_display_titles',
         );
         assert.ok(result.rows.every((row) => row.finished && row.active));
       }
@@ -1249,6 +1249,229 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           await first.onModuleDestroy();
           await second.onModuleDestroy();
           await access.onModuleDestroy();
+        }
+      },
+    );
+
+    await stage(
+      'display-title renames preserve originals, idempotency and atomic audit under restricted runtime grants',
+      async () => {
+        const store = new PrismaDocumentStore(runtimeUrl.href);
+        const runtime = await connect(runtimeUrl);
+        const objects = new MemoryObjectStore();
+        const core = new DocumentIntake(
+          store.asActor(vault.ownerAccountId),
+          objects,
+        );
+        const bytes = Buffer.from(
+          '%PDF-1.7\nSynthetic rename original\n%%EOF\n',
+        );
+        const declaration = {
+          title: 'Immutable intake title',
+          mimeType: 'application/pdf',
+          bytes: bytes.length,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          idempotencyKey: randomUUID(),
+        };
+        const authorize = async () => {};
+        try {
+          const upload = await core.begin(
+            vault.patientId,
+            declaration,
+            authorize,
+          );
+          assert.equal(
+            await store.rename(
+              vault.patientId,
+              upload.documentId,
+              'Premature',
+              vault.ownerAccountId,
+              authorize,
+            ),
+            false,
+          );
+          await core.content(
+            vault.patientId,
+            upload.uploadId,
+            bytes,
+            authorize,
+          );
+          await core.finalize(vault.patientId, upload.uploadId, authorize);
+          const snapshot = async () =>
+            (
+              await query(
+                runtime,
+                'SELECT title,display_title,object_key,bytes,sha256,created_at FROM fmv.documents WHERE id=$1::uuid',
+                [upload.documentId],
+              )
+            ).rows[0];
+          const original = await snapshot();
+          assert.equal(original.display_title, null);
+          for (const column of ['title', 'sha256', 'bytes', 'created_at']) {
+            await denied(
+              runtime,
+              `UPDATE fmv.documents SET ${column}=${column} WHERE id='${upload.documentId}'::uuid`,
+            );
+          }
+          for (const invalid of ['', 'x'.repeat(201)]) {
+            await rejectedSql(
+              runtime,
+              'UPDATE fmv.documents SET display_title=$2 WHERE id=$1::uuid',
+              [upload.documentId, invalid],
+              '23514',
+            );
+          }
+          let checks = 0;
+          assert.equal(
+            await store.rename(
+              vault.patientId,
+              upload.documentId,
+              'Renamed record',
+              vault.ownerAccountId,
+              async () => {
+                checks++;
+              },
+            ),
+            true,
+          );
+          assert.equal(
+            checks,
+            2,
+            'Authorization must run after the lock and before commit',
+          );
+          assert.deepEqual(await snapshot(), {
+            ...original,
+            display_title: 'Renamed record',
+          });
+          assert.deepEqual(
+            await core.begin(vault.patientId, declaration, authorize),
+            { ...upload, state: 'ready' },
+          );
+          assert.deepEqual(
+            (
+              await core.read(
+                vault.patientId,
+                upload.documentId,
+                'view',
+                authorize,
+              )
+            ).bytes,
+            bytes,
+          );
+          const renameEvents = async () =>
+            (
+              await query(
+                runtime,
+                "SELECT actor_account_id,retention_until-occurred_at=interval '90 days' AS retention FROM fmv.document_events WHERE document_id=$1::uuid AND kind='document.renamed'",
+                [upload.documentId],
+              )
+            ).rows;
+          const events = await renameEvents();
+          assert.equal(events.length, 1);
+          assert.equal(events[0].actor_account_id, vault.ownerAccountId);
+          assert.equal(events[0].retention, true);
+          assert.equal(
+            await store.rename(
+              vault.patientId,
+              upload.documentId,
+              'Renamed record',
+              vault.ownerAccountId,
+              authorize,
+            ),
+            true,
+          );
+          assert.equal(
+            (await renameEvents()).length,
+            1,
+            'Unchanged display titles must not create duplicate audit',
+          );
+          for (const denyAt of [1, 2]) {
+            let calls = 0;
+            await assert.rejects(
+              store.rename(
+                vault.patientId,
+                upload.documentId,
+                'Denied title',
+                vault.ownerAccountId,
+                async () => {
+                  if (++calls === denyAt)
+                    throw new Error('Synthetic authorization denial');
+                },
+              ),
+            );
+            assert.deepEqual(await snapshot(), {
+              ...original,
+              display_title: 'Renamed record',
+            });
+            assert.equal((await renameEvents()).length, 1);
+          }
+          assert.equal(
+            await store.rename(
+              vault.strangerPersonId,
+              upload.documentId,
+              'Foreign',
+              vault.ownerAccountId,
+              authorize,
+            ),
+            false,
+          );
+          assert.equal(
+            await store.rename(
+              vault.patientId,
+              randomUUID(),
+              'Missing',
+              vault.ownerAccountId,
+              authorize,
+            ),
+            false,
+          );
+          await query(
+            owner,
+            "CREATE FUNCTION fmv.fail_rename_event_probe() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.kind='document.renamed' THEN RAISE EXCEPTION 'synthetic rename audit failure'; END IF; RETURN NEW; END $$",
+          );
+          await query(
+            owner,
+            'CREATE TRIGGER rename_failure_probe BEFORE INSERT ON fmv.document_events FOR EACH ROW EXECUTE FUNCTION fmv.fail_rename_event_probe()',
+          );
+          try {
+            await assert.rejects(
+              store.rename(
+                vault.patientId,
+                upload.documentId,
+                'Failed audit',
+                vault.ownerAccountId,
+                authorize,
+              ),
+            );
+            assert.deepEqual(await snapshot(), {
+              ...original,
+              display_title: 'Renamed record',
+            });
+            assert.equal((await renameEvents()).length, 1);
+          } finally {
+            await query(
+              owner,
+              'DROP TRIGGER rename_failure_probe ON fmv.document_events',
+            );
+            await query(owner, 'DROP FUNCTION fmv.fail_rename_event_probe()');
+          }
+          assert.equal(
+            await store.rename(
+              vault.patientId,
+              upload.documentId,
+              'Clean retry',
+              vault.ownerAccountId,
+              authorize,
+            ),
+            true,
+          );
+          assert.equal((await renameEvents()).length, 2);
+          assert.deepEqual(await snapshot(), {
+            ...original,
+            display_title: 'Clean retry',
+          });
+        } finally {
+          await store.onModuleDestroy();
         }
       },
     );

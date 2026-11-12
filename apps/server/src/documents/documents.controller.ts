@@ -5,6 +5,7 @@ import {
   Param,
   Post,
   Put,
+  Patch,
   Req,
   Res,
   UseGuards,
@@ -53,6 +54,14 @@ export class DocumentsController {
     @Param('patientId') p: string,
   ) {
     return this.documents.categories(await this.principal(req), p);
+  }
+  @Patch('documents/:documentId/title') async rename(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+    @Body() body: unknown,
+  ) {
+    return this.documents.rename(await this.principal(req), p, d, body);
   }
   @Post('uploads') async begin(
     @Req() req: Request,

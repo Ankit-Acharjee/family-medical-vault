@@ -211,22 +211,24 @@ export default function App() {
             </Button>
           </div>
         </header>
-        <div className="search-strip">
-          <div className="search-field">
-            <Search size={18} aria-hidden="true" />
-            <Input
-              aria-label="Search documents"
-              aria-describedby="search-help"
-              placeholder="Search documents"
-              disabled
-            />
+        {destination !== 'documents' && (
+          <div className="search-strip">
+            <div className="search-field">
+              <Search size={18} aria-hidden="true" />
+              <Input
+                aria-label="Search documents"
+                aria-describedby="search-help"
+                placeholder="Search documents"
+                disabled
+              />
+            </div>
+            <p id="search-help">
+              {selectedPatient
+                ? 'Document search is not available yet.'
+                : 'Select a patient to search their documents.'}
+            </p>
           </div>
-          <p id="search-help">
-            {selectedPatient
-              ? 'Document search is not available yet.'
-              : 'Select a patient to search their documents.'}
-          </p>
-        </div>
+        )}
         <main id="main-content" tabIndex={-1}>
           <div className="page-heading">
             <div>
@@ -311,9 +313,10 @@ export default function App() {
             </>
           ) : destination === 'family-access' ? (
             <FamilyAccessPanel />
-          ) : destination === 'documents' && selectedPatient ? (
+          ) : destination === 'documents' &&
+            (selectedPatient || patientsLoading) ? (
             <DocumentsPanel
-              key={`${selectedPatient.id}:${listRevision}`}
+              refreshRevision={listRevision}
               onRequestUpload={() => openDialog('upload')}
             />
           ) : currentState ? (

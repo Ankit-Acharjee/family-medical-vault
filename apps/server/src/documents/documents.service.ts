@@ -1,5 +1,6 @@
 import {
   Injectable,
+  BadRequestException,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -57,9 +58,11 @@ export class DocumentsService {
   ): Promise<DocumentsResult> {
     const s = await this.permissions.snapshot(principal, patientId);
     if (!this.permitted(s)) throw new NotFoundException();
-    let rows: IntakeRecord[];
+    let rows: (IntakeRecord & { displayTitle?: string | null })[];
+    let categories: { id: string; name: string }[];
     try {
       rows = await this.store.list(patientId);
+      categories = await this.store.categories();
     } catch {
       throw new ServiceUnavailableException();
     }
@@ -71,11 +74,25 @@ export class DocumentsService {
       .map((r) => ({
         id: r.documentId,
         patientId: r.patientId,
-        title: r.title,
+        title: r.displayTitle ?? r.title,
+        originalTitle: r.title,
+        categoryName:
+          categories.find((c) => c.id === r.categoryId)?.name ?? 'Unclassified',
         mimeType: r.mimeType,
         bytes: r.bytes,
         createdAt: r.createdAt.toISOString(),
         categoryId: r.categoryId,
+        canEdit: this.permissions.allows(
+          current,
+          'edit',
+          { kind: 'document', documentId: r.documentId },
+          {
+            id: r.documentId,
+            patientId: r.patientId,
+            categoryId: r.categoryId,
+            state: r.state,
+          },
+        ),
         canView: this.permissions.allows(
           current,
           'view',
@@ -101,6 +118,64 @@ export class DocumentsService {
       }))
       .filter((r) => r.canView || r.canExport);
     return { documents, storageReady: this.objects.ready };
+  }
+  async rename(
+    principal: Principal,
+    patientId: string,
+    documentId: string,
+    input: unknown,
+  ) {
+    if (!isUuid(documentId)) throw new NotFoundException();
+    const target = { kind: 'document' as const, documentId };
+    const actor = await this.permissions.require(
+      principal,
+      patientId,
+      'edit',
+      target,
+    );
+    if (
+      !input ||
+      typeof input !== 'object' ||
+      Array.isArray(input) ||
+      Object.keys(input).length !== 1 ||
+      !Object.hasOwn(input, 'title') ||
+      typeof (input as { title: unknown }).title !== 'string'
+    )
+      throw new BadRequestException();
+    const raw = (input as { title: string }).title;
+    const title = raw.trim();
+    if (
+      !title ||
+      title.length > 200 ||
+      Array.from(raw).some((character) => {
+        const code = character.charCodeAt(0);
+        return code < 32 || (code >= 127 && code <= 159);
+      })
+    )
+      throw new BadRequestException();
+    const authorize = async () => {
+      await this.permissions.require(principal, patientId, 'edit', target);
+    };
+    try {
+      if (
+        !(await this.store.rename(
+          patientId,
+          documentId,
+          title,
+          actor.accountId,
+          authorize,
+        ))
+      )
+        throw new NotFoundException();
+    } catch (e) {
+      if (
+        e instanceof NotFoundException ||
+        e instanceof ServiceUnavailableException
+      )
+        throw e;
+      throw new ServiceUnavailableException();
+    }
+    return { saved: true as const };
   }
   async categories(principal: Principal, patientId: string) {
     const s = await this.permissions.snapshot(principal, patientId);

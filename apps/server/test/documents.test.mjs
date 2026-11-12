@@ -140,12 +140,15 @@ test('authenticated owner intake preserves exact original through begin/content/
     assert.equal(record.canExport, true);
     assert.deepEqual(Object.keys(record).sort(), [
       'bytes',
+      'canEdit',
       'canExport',
       'canView',
       'categoryId',
+      'categoryName',
       'createdAt',
       'id',
       'mimeType',
+      'originalTitle',
       'patientId',
       'title',
     ]);
@@ -204,6 +207,7 @@ test('every document transport operation requires an authenticated account sessi
     for (const [method, suffix, body] of [
       ['GET', 'documents'],
       ['GET', 'categories'],
+      ['PATCH', `documents/${upload.documentId}/title`, { title: 'Changed' }],
       ['GET', `documents/${upload.documentId}/preview`],
       ['GET', `documents/${upload.documentId}/download`],
       ['POST', 'uploads', f.input()],
@@ -547,4 +551,298 @@ test('revocation during object IO blocks HTTP preview and finalization before re
       f.metadata.events.filter(({ kind }) => kind === 'document.viewed').length,
       0,
     );
+  }));
+
+const rename = (f, session, documentId, body, headers, patientId) =>
+  f.request(
+    'PATCH',
+    f.path(`documents/${documentId}/title`, patientId),
+    session,
+    body,
+    headers,
+  );
+
+test('owner display-title edit preserves original declaration, object and upload identity', async () =>
+  documentSetup(async (f) => {
+    const session = await f.login();
+    const declaration = f.input();
+    const upload = await ready(f, session, declaration);
+    const original = globalThis.structuredClone(
+      f.metadata.rows.get(upload.uploadId),
+    );
+    assert.deepEqual(
+      await (
+        await expect(
+          await rename(f, session, upload.documentId, {
+            title: '  Renamed synthetic report  ',
+          }),
+          200,
+        )
+      ).json(),
+      { saved: true },
+    );
+    assert.deepEqual(f.metadata.rows.get(upload.uploadId), {
+      ...original,
+      displayTitle: 'Renamed synthetic report',
+    });
+    assert.equal(
+      (await begin(f, session, declaration)).uploadId,
+      upload.uploadId,
+    );
+    const [listed] = (await json(f, session, 'documents')).documents;
+    assert.equal(listed.title, 'Renamed synthetic report');
+    assert.equal(listed.originalTitle, declaration.title);
+    assert.equal(listed.categoryName, 'Unclassified');
+    assert.equal(listed.canEdit, true);
+    await sameBytes(
+      await f.request(
+        'GET',
+        f.path(`documents/${upload.documentId}/download`),
+        session,
+      ),
+    );
+    assert.deepEqual(
+      f.metadata.events.filter(({ kind }) => kind === 'document.renamed'),
+      [
+        {
+          patientId: ids.patient,
+          documentId: upload.documentId,
+          accountId: ids.owner,
+          kind: 'document.renamed',
+        },
+      ],
+    );
+    const logs = JSON.stringify(f.logs);
+    for (const value of [
+      declaration.title,
+      'Renamed synthetic report',
+      original.objectKey,
+      upload.documentId,
+    ])
+      assert.ok(!logs.includes(value));
+  }));
+
+test('independent edit permission never grants listing or original-byte access and is rechecked after revocation and expiry', async () =>
+  documentSetup(async (f) => {
+    const owner = await f.login();
+    const upload = await ready(f, owner);
+    const grant = f.access.grant({
+      actions: ['edit'],
+      scope: { kind: 'document', documentId: upload.documentId },
+    });
+    const session = await f.login(principals.caregiver.subject);
+    assert.deepEqual((await json(f, session, 'documents')).documents, []);
+    for (const suffix of ['preview', 'download'])
+      await expect(
+        await f.request(
+          'GET',
+          f.path(`documents/${upload.documentId}/${suffix}`),
+          session,
+        ),
+        404,
+      );
+    await expect(
+      await rename(f, session, upload.documentId, { title: 'Edit permitted' }),
+      200,
+    );
+    grant.revokedAt = new Date(f.access.now);
+    await expect(
+      await rename(f, session, upload.documentId, { title: 'Denied revoked' }),
+      404,
+    );
+    grant.revokedAt = null;
+    grant.expiresAt = new Date(f.access.now);
+    await expect(
+      await rename(f, session, upload.documentId, { title: 'Denied expired' }),
+      404,
+    );
+    assert.equal(
+      f.metadata.rows.get(upload.uploadId).displayTitle,
+      'Edit permitted',
+    );
+    grant.expiresAt = null;
+    grant.actions = ['view'];
+    assert.equal(
+      (await json(f, session, 'documents')).documents[0].canEdit,
+      false,
+    );
+    await expect(
+      await rename(f, session, upload.documentId, { title: 'Denied view' }),
+      404,
+    );
+  }));
+
+test('title edit rejects malformed bodies and unsafe titles while accepting trimmed JavaScript length boundaries', async () =>
+  documentSetup(async (f) => {
+    const session = await f.login();
+    const upload = await ready(f, session);
+    for (const body of [
+      null,
+      [],
+      {},
+      { title: 7 },
+      { title: '' },
+      { title: ' \t ' },
+      { title: 'a'.repeat(201) },
+      { title: 'a\u0000b' },
+      { title: 'a\nb' },
+      { title: 'a\u007fb' },
+      { title: 'Valid', categoryId: ids.category },
+      { title: 'Valid', patientId: ids.patient },
+    ]) {
+      await expect(await rename(f, session, upload.documentId, body), 400);
+    }
+    assert.equal(f.metadata.rows.get(upload.uploadId).displayTitle, undefined);
+    await expect(
+      await rename(f, session, upload.documentId, { title: '😀'.repeat(100) }),
+      200,
+    );
+    await expect(
+      await rename(f, session, upload.documentId, { title: '😀'.repeat(101) }),
+      400,
+    );
+    await expect(
+      await rename(f, session, upload.documentId, { title: ' x ' }),
+      200,
+    );
+    assert.equal(f.metadata.rows.get(upload.uploadId).displayTitle, 'x');
+  }));
+
+test('title edit denies cross-patient, missing and non-ready documents without object IO', async () =>
+  documentSetup(async (f) => {
+    const session = await f.login();
+    const original = await ready(f, session);
+    const pending = await begin(f, session);
+    const gets = f.objects.gets.length;
+    const puts = f.objects.puts.length;
+    for (const [documentId, patientId] of [
+      [original.documentId, ids.otherPatient],
+      [original.documentId, ids.unknownPatient],
+      [ids.unknownDocument, ids.patient],
+      [pending.documentId, ids.patient],
+    ]) {
+      await expect(
+        await rename(
+          f,
+          session,
+          documentId,
+          { title: 'Denied' },
+          {},
+          patientId,
+        ),
+        404,
+      );
+    }
+    assert.equal(f.objects.gets.length, gets);
+    assert.equal(f.objects.puts.length, puts);
+    assert.ok(
+      [...f.metadata.rows.values()].every(
+        (row) => row.displayTitle === undefined,
+      ),
+    );
+  }));
+
+test('title edit requires matching CSRF and trusted Origin', async () =>
+  documentSetup(async (f) => {
+    const session = await f.login();
+    const upload = await ready(f, session);
+    for (const headers of [
+      { 'X-CSRF-Token': undefined },
+      { 'X-CSRF-Token': 'x'.repeat(43) },
+      { Origin: undefined },
+      { Origin: 'https://evil.example.test' },
+    ]) {
+      await expect(
+        await rename(
+          f,
+          session,
+          upload.documentId,
+          { title: 'Denied' },
+          headers,
+        ),
+        403,
+      );
+    }
+    assert.equal(f.metadata.rows.get(upload.uploadId).displayTitle, undefined);
+  }));
+
+test('rename and audit failures roll back title and audit together and permit retry', async () =>
+  documentSetup(async (f) => {
+    const session = await f.login();
+    const upload = await ready(f, session);
+    const original = globalThis.structuredClone(
+      f.metadata.rows.get(upload.uploadId),
+    );
+    const events = globalThis.structuredClone(f.metadata.events);
+    for (const failure of ['rename', 'audit']) {
+      f.metadata.fail = failure;
+      const response = await expect(
+        await rename(f, session, upload.documentId, {
+          title: 'Private changed title',
+        }),
+        503,
+      );
+      assert.ok(!(await response.text()).includes('sensitive'));
+      assert.deepEqual(f.metadata.rows.get(upload.uploadId), original);
+      assert.deepEqual(f.metadata.events, events);
+    }
+    f.metadata.fail = null;
+    f.metadata.failCommit = true;
+    await expect(
+      await rename(f, session, upload.documentId, {
+        title: 'Private changed title',
+      }),
+      503,
+    );
+    assert.deepEqual(f.metadata.rows.get(upload.uploadId), original);
+    assert.deepEqual(f.metadata.events, events);
+    await expect(
+      await rename(f, session, upload.documentId, { title: 'Retry succeeded' }),
+      200,
+    );
+    assert.equal(
+      f.metadata.events.filter(({ kind }) => kind === 'document.renamed')
+        .length,
+      1,
+    );
+  }));
+
+test('permission loss at either transactional rename authorization check rolls back metadata and audit', async () =>
+  documentSetup(async (f) => {
+    const owner = await f.login();
+    const upload = await ready(f, owner);
+    const grant = f.access.grant({ actions: ['edit'] });
+    const session = await f.login(principals.caregiver.subject);
+    const originalRename = f.metadata.rename.bind(f.metadata);
+    for (const revokeAt of [1, 2]) {
+      grant.revokedAt = null;
+      let checks = 0;
+      f.metadata.rename = (
+        patientId,
+        documentId,
+        title,
+        accountId,
+        authorize,
+      ) =>
+        originalRename(patientId, documentId, title, accountId, async () => {
+          if (++checks === revokeAt) grant.revokedAt = new Date(f.access.now);
+          await authorize();
+        });
+      await expect(
+        await rename(f, session, upload.documentId, {
+          title: 'Denied during save',
+        }),
+        404,
+      );
+      assert.equal(checks, revokeAt);
+      assert.equal(
+        f.metadata.rows.get(upload.uploadId).displayTitle,
+        undefined,
+      );
+      assert.equal(
+        f.metadata.events.filter(({ kind }) => kind === 'document.renamed')
+          .length,
+        0,
+      );
+    }
   }));

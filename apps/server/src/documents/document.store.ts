@@ -9,7 +9,16 @@ import type { IntakeStore, IntakeMetadata, IntakeRecord } from './intake.js';
 
 export abstract class DocumentStore {
   abstract asActor(accountId: string): IntakeStore;
-  abstract list(patientId: string): Promise<IntakeRecord[]>;
+  abstract list(
+    patientId: string,
+  ): Promise<(IntakeRecord & { displayTitle?: string | null })[]>;
+  abstract rename(
+    patientId: string,
+    documentId: string,
+    title: string,
+    accountId: string,
+    authorize: () => Promise<void>,
+  ): Promise<boolean>;
   abstract categories(): Promise<DocumentCategory[]>;
   abstract audit(
     patientId: string,
@@ -144,10 +153,33 @@ export class PrismaDocumentStore
     };
   }
   async list(patientId: string) {
-    return this.db.$queryRawUnsafe<IntakeRecord[]>(
-      `SELECT ${columns} FROM fmv.documents WHERE patient_id=$1::uuid AND state='ready' ORDER BY created_at DESC,id`,
+    return this.db.$queryRawUnsafe<
+      (IntakeRecord & { displayTitle: string | null })[]
+    >(
+      `SELECT ${columns}, display_title AS "displayTitle" FROM fmv.documents WHERE patient_id=$1::uuid AND state='ready' ORDER BY created_at DESC,id`,
       patientId,
     );
+  }
+  async rename(
+    patientId: string,
+    documentId: string,
+    title: string,
+    accountId: string,
+    authorize: () => Promise<void>,
+  ) {
+    return this.db.$transaction(async (db) => {
+      const rows = await db.$queryRaw<
+        { title: string; displayTitle: string | null }[]
+      >`SELECT title,display_title AS "displayTitle" FROM fmv.documents WHERE patient_id=${patientId}::uuid AND id=${documentId}::uuid AND state='ready' FOR UPDATE`;
+      if (!rows[0]) return false;
+      await authorize();
+      if ((rows[0].displayTitle ?? rows[0].title) !== title) {
+        await db.$executeRaw`UPDATE fmv.documents SET display_title=${title} WHERE patient_id=${patientId}::uuid AND id=${documentId}::uuid AND state='ready'`;
+        await db.$executeRaw`INSERT INTO fmv.document_events(id,patient_id,document_id,actor_account_id,kind) VALUES (${randomUUID()}::uuid,${patientId}::uuid,${documentId}::uuid,${accountId}::uuid,'document.renamed')`;
+      }
+      await authorize();
+      return true;
+    });
   }
   async categories() {
     return this.db.$queryRaw<

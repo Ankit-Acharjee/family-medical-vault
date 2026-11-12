@@ -145,6 +145,7 @@ model Document {
   patientId      String                  @map("patient_id") @db.Uuid
   categoryId     String                  @map("category_id") @db.Uuid
   title          String
+  displayTitle   String?                 @map("display_title")
   mimeType       String                  @map("mime_type")
   bytes          Int
   sha256         String

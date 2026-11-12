@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { FileText, UploadCloud, UserRound } from 'lucide-react';
 import './upload.css';
+import {
+  DocumentBrowserControls,
+  DocumentTitleEditor,
+} from './DocumentBrowserControls';
+import type { BrowseFilters } from './DocumentBrowserControls';
 import { documentMimeTypes, maximumDocumentBytes } from '@fmv/contracts';
 import type {
   AuthBootstrap,
@@ -67,7 +72,11 @@ function documents(
         !Number.isNaN(Date.parse(d.createdAt)) &&
         typeof d.categoryId === 'string' &&
         typeof d.canView === 'boolean' &&
-        typeof d.canExport === 'boolean',
+        typeof d.canExport === 'boolean' &&
+        (d.canEdit === undefined || typeof d.canEdit === 'boolean') &&
+        (d.originalTitle === undefined ||
+          typeof d.originalTitle === 'string') &&
+        (d.categoryName === undefined || typeof d.categoryName === 'string'),
     )
   );
 }
@@ -86,10 +95,16 @@ function uploadResult(value: unknown): value is UploadResult {
 
 export function DocumentsPanel({
   onRequestUpload,
+  refreshRevision = 0,
 }: {
   onRequestUpload?: () => void;
+  refreshRevision?: number;
 }) {
-  const { selectedPatient } = usePatientContext();
+  const { selectedPatient, loading: patientsLoading } = usePatientContext();
+  const retainedPatient = useRef(selectedPatient);
+  if (selectedPatient) retainedPatient.current = selectedPatient;
+  const displayPatient =
+    selectedPatient ?? (patientsLoading ? retainedPatient.current : null);
   const patientId = selectedPatient?.id ?? null;
   const [list, setList] = useState<{
     id: string;
@@ -105,15 +120,58 @@ export function DocumentsPanel({
     mime: string;
   } | null>(null);
   const [actionError, setActionError] = useState('');
+  const [filters, setFilters] = useState<BrowseFilters>({
+    query: '',
+    category: '',
+    from: '',
+    to: '',
+  });
+  const [editing, setEditing] = useState<{
+    patientId: string;
+    documentId: string;
+    title: string;
+  } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState('');
+  const [notice, setNotice] = useState('');
+  const editTrigger = useRef<HTMLButtonElement | null>(null);
+  const panel = useRef<HTMLElement | null>(null);
+  const restoreAfterReload = useRef(false);
+  const editAction = useRef<AbortController | null>(null);
+  const editingBusy = useRef(false);
+  const listPatient = useRef(patientId);
   const active = useRef(patientId);
   active.current = patientId;
   const action = useRef<AbortController | null>(null);
   useEffect(() => {
-    setList(null);
+    if (!list || busy || patientsLoading || !restoreAfterReload.current) return;
+    restoreAfterReload.current = false;
+    (editTrigger.current?.isConnected
+      ? editTrigger.current
+      : (panel.current?.querySelector<HTMLInputElement>(
+          'input[type="search"]',
+        ) ?? panel.current)
+    )?.focus();
+  }, [list, busy, patientsLoading]);
+  useEffect(() => {
+    action.current?.abort();
+    editAction.current?.abort();
+    editingBusy.current = false;
+    setSaving(false);
+    setPreview(null);
+    if (!patientId && patientsLoading) {
+      setBusy(true);
+      return;
+    }
+    if (listPatient.current !== patientId) {
+      setList(null);
+      setEditing(null);
+      setFilters({ query: '', category: '', from: '', to: '' });
+      setNotice('');
+      listPatient.current = patientId;
+    }
     setError('');
     setActionError('');
-    setPreview(null);
-    action.current?.abort();
     if (!patientId) return;
     const controller = new AbortController();
     setBusy(true);
@@ -121,12 +179,24 @@ export function DocumentsPanel({
       .then((r) => r.json() as Promise<unknown>)
       .then((result) => {
         if (!documents(result, patientId)) throw new Error();
-        if (!controller.signal.aborted && active.current === patientId)
+        if (!controller.signal.aborted && active.current === patientId) {
           setList({ id: patientId, value: result });
+          setEditing((previous) =>
+            previous &&
+            result.documents.some(
+              (d) => d.id === previous.documentId && d.canEdit,
+            )
+              ? previous
+              : null,
+          );
+        }
       })
       .catch((e: unknown) => {
-        if (!controller.signal.aborted && active.current === patientId)
+        if (!controller.signal.aborted && active.current === patientId) {
           setError(message(e));
+          setList(null);
+          setEditing(null);
+        }
       })
       .finally(() => {
         if (!controller.signal.aborted && active.current === patientId)
@@ -135,8 +205,9 @@ export function DocumentsPanel({
     return () => {
       controller.abort();
       action.current?.abort();
+      editAction.current?.abort();
     };
-  }, [patientId, version]);
+  }, [patientId, patientsLoading, version, refreshRevision]);
   useEffect(
     () => () => {
       if (preview) URL.revokeObjectURL(preview.url);
@@ -181,11 +252,126 @@ export function DocumentsPanel({
       }
     }
   }
-  if (!selectedPatient) return <p>Select a patient to view documents.</p>;
-  const current = list?.id === patientId ? list.value : null;
+  async function rename() {
+    if (
+      !editing ||
+      !patientId ||
+      busy ||
+      patientsLoading ||
+      editingBusy.current ||
+      editing.patientId !== patientId
+    )
+      return;
+    const title = editing.title.trim();
+    if (
+      !title ||
+      title.length > 200 ||
+      Array.from(editing.title).some((character) => {
+        const code = character.charCodeAt(0);
+        return code < 32 || (code >= 127 && code <= 159);
+      })
+    ) {
+      setEditError(
+        'Enter a title of 1–200 characters without control characters.',
+      );
+      return;
+    }
+    const controller = new AbortController();
+    editAction.current?.abort();
+    editAction.current = controller;
+    editingBusy.current = true;
+    setSaving(true);
+    setEditError('');
+    try {
+      const boot: unknown = await request('/api/auth/bootstrap', {
+        signal: controller.signal,
+      }).then((r) => r.json());
+      if (
+        !object(boot) ||
+        boot.enabled !== true ||
+        typeof boot.csrf !== 'string' ||
+        !/^[A-Za-z0-9_-]{43}$/.test(boot.csrf)
+      )
+        throw new Error();
+      if (controller.signal.aborted || active.current !== patientId) return;
+      const result: unknown = await request(
+        `${base(patientId)}/documents/${encodeURIComponent(editing.documentId)}/title`,
+        {
+          method: 'PATCH',
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': boot.csrf,
+          },
+          body: JSON.stringify({ title }),
+        },
+      ).then((r) => r.json());
+      if (!object(result) || result.saved !== true) throw new Error();
+      if (controller.signal.aborted || active.current !== patientId) return;
+      setEditing(null);
+      setNotice('Document title updated.');
+      restoreAfterReload.current = true;
+      setVersion((n) => n + 1);
+    } catch (e) {
+      if (!controller.signal.aborted && active.current === patientId) {
+        if (e instanceof RequestError && [401, 403, 404].includes(e.status)) {
+          setEditing(null);
+          setList(null);
+          setError(message(e));
+        } else setEditError(message(e));
+      }
+    } finally {
+      if (!controller.signal.aborted && active.current === patientId) {
+        setSaving(false);
+        editingBusy.current = false;
+      }
+    }
+  }
+  if (!displayPatient) return <p>Select a patient to view documents.</p>;
+  const current = list?.id === displayPatient.id ? list.value : null;
+  const dateValid = (date: string) =>
+    !date ||
+    (/^\d{4}-\d{2}-\d{2}$/.test(date) &&
+      !Number.isNaN(Date.parse(date)) &&
+      new Date(date).toISOString().slice(0, 10) === date);
+  const filterError =
+    !dateValid(filters.from) || !dateValid(filters.to)
+      ? 'Enter valid upload dates.'
+      : filters.from && filters.to && filters.from > filters.to
+        ? 'The start date must be on or before the end date.'
+        : '';
+  const query = filters.query.trim().toLowerCase();
+  const filtered = filterError
+    ? []
+    : (current?.documents ?? []).filter((doc) => {
+        const date = new Date(doc.createdAt);
+        const day = `${String(date.getFullYear()).padStart(4, '0')}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        return (
+          (!query ||
+            doc.title.toLowerCase().includes(query) ||
+            (doc.originalTitle ?? doc.title).toLowerCase().includes(query)) &&
+          (!filters.category || doc.categoryId === filters.category) &&
+          (!filters.from || day >= filters.from) &&
+          (!filters.to || day <= filters.to)
+        );
+      });
+  const categories = [
+    ...new Map(
+      (current?.documents ?? []).map((doc) => [
+        doc.categoryId,
+        { id: doc.categoryId, name: doc.categoryName ?? 'Unclassified' },
+      ]),
+    ).values(),
+  ];
   return (
-    <section aria-label={`Documents for ${selectedPatient.displayName}`}>
-      <p>Patient: {selectedPatient.displayName}</p>
+    <section
+      ref={panel}
+      tabIndex={-1}
+      className="space-y-4"
+      aria-label={`Documents for ${displayPatient.displayName}`}
+    >
+      <p>Patient: {displayPatient.displayName}</p>
+      {notice && <p role="status">{notice}</p>}
       {busy && <p role="status">Loading documents…</p>}
       {error && (
         <div role="alert">
@@ -204,7 +390,9 @@ export function DocumentsPanel({
             <Button
               disabled={
                 !current.storageReady ||
-                !selectedPatient.capabilities.some(
+                busy ||
+                patientsLoading ||
+                !displayPatient.capabilities.some(
                   (capability) => capability.action === 'upload',
                 )
               }
@@ -213,14 +401,55 @@ export function DocumentsPanel({
               Upload documents
             </Button>
           )}
-          {current.documents.length ? (
-            <ul>
-              {current.documents.map((doc) => (
-                <li key={doc.id} className="min-w-0 [overflow-wrap:anywhere]">
-                  <span className="block">{doc.title}</span>{' '}
+          <DocumentBrowserControls
+            filters={filters}
+            onChange={setFilters}
+            onReset={() =>
+              setFilters({ query: '', category: '', from: '', to: '' })
+            }
+            categories={categories}
+            count={filtered.length}
+            error={filterError}
+          />
+          <p className="mt-2 text-sm text-muted-foreground">
+            Upload dates use your local time.
+          </p>
+          {filtered.length ? (
+            <ul className="mt-4 grid gap-3">
+              {filtered.map((doc) => (
+                <li
+                  key={doc.id}
+                  className="min-w-0 rounded-2xl border border-border bg-card p-4 [overflow-wrap:anywhere]"
+                >
+                  <span className="block font-medium">{doc.title}</span>
+                  <span className="mb-2 block text-sm text-muted-foreground">
+                    {doc.categoryName ?? 'Unclassified'} · Uploaded{' '}
+                    {new Date(doc.createdAt).toLocaleDateString()}
+                  </span>
+                  {doc.canEdit && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      disabled={busy || patientsLoading}
+                      aria-label={`Edit title ${doc.title}`}
+                      onClick={(event) => {
+                        editTrigger.current = event.currentTarget;
+                        setNotice('');
+                        setEditError('');
+                        setEditing({
+                          patientId: patientId!,
+                          documentId: doc.id,
+                          title: doc.title,
+                        });
+                      }}
+                    >
+                      Edit title
+                    </Button>
+                  )}{' '}
                   {doc.canView && (
                     <Button
                       variant="ghost"
+                      disabled={busy || patientsLoading}
                       aria-label={`Preview ${doc.title}`}
                       onClick={() => void read(doc, false)}
                     >
@@ -230,6 +459,7 @@ export function DocumentsPanel({
                   {doc.canExport && (
                     <Button
                       variant="ghost"
+                      disabled={busy || patientsLoading}
                       aria-label={`Download ${doc.title}`}
                       onClick={() => void read(doc, true)}
                     >
@@ -240,11 +470,64 @@ export function DocumentsPanel({
               ))}
             </ul>
           ) : (
-            <p>No documents are available for this patient.</p>
+            <p className="py-6 text-muted-foreground">
+              {current.documents.length
+                ? 'No documents match these filters. Try another search or clear filters.'
+                : 'No documents are available for this patient.'}
+            </p>
           )}
         </>
       )}
       {actionError && <p role="alert">{actionError}</p>}
+      <Dialog
+        open={!!editing && editing.patientId === displayPatient.id}
+        onOpenChange={(open) => {
+          if (!open) {
+            editAction.current?.abort();
+            editingBusy.current = false;
+            setSaving(false);
+            setEditing(null);
+          }
+        }}
+      >
+        <DialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            if (busy || patientsLoading) {
+              restoreAfterReload.current = true;
+              return;
+            }
+            (editTrigger.current?.isConnected
+              ? editTrigger.current
+              : (panel.current?.querySelector<HTMLInputElement>(
+                  'input[type="search"]',
+                ) ?? panel.current)
+            )?.focus();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Edit document title</DialogTitle>
+            <DialogDescription>
+              Patient: {displayPatient.displayName}. Original file contents are
+              preserved.
+            </DialogDescription>
+          </DialogHeader>
+          {editing && (
+            <DocumentTitleEditor
+              title={editing.title}
+              onTitleChange={(title) =>
+                setEditing((previous) =>
+                  previous ? { ...previous, title } : null,
+                )
+              }
+              onSave={() => void rename()}
+              onCancel={() => setEditing(null)}
+              saving={saving || busy || patientsLoading}
+              error={editError}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={!!preview && preview.id === patientId}
         onOpenChange={(open) => {
