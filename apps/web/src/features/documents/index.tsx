@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FileText, UploadCloud, UserRound } from 'lucide-react';
 import './upload.css';
-import { PdfExtractionDialog } from './PdfExtractionDialog';
-import type { PdfSource } from './PdfExtractionDialog';
+import { DocumentTextDialog } from './DocumentTextDialog';
+import type { DocumentTextSource } from './DocumentTextDialog';
 import { DuplicateUploadNotice } from './DuplicateUploadNotice';
 import {
   DocumentsViewSwitcher,
@@ -170,7 +170,7 @@ export function DocumentsPanel({
     url: string;
     mime: string;
   } | null>(null);
-  const [extraction, setExtraction] = useState<PdfSource | null>(null);
+  const [extraction, setExtraction] = useState<DocumentTextSource | null>(null);
   const extractionTrigger = useRef<HTMLButtonElement | null>(null);
   const extractionRestoreFocus = useRef(false);
   const [actionError, setActionError] = useState('');
@@ -304,7 +304,8 @@ export function DocumentsPanel({
                 (d) =>
                   d.id === previous.documentId &&
                   d.canView &&
-                  d.mimeType === 'application/pdf',
+                  (d.mimeType === 'application/pdf' ||
+                    d.mimeType.startsWith('image/')),
               )
                 ? previous
                 : null,
@@ -768,6 +769,7 @@ export function DocumentsPanel({
                       onClick={(event) => {
                         extractionTrigger.current = event.currentTarget;
                         setExtraction({
+                          kind: 'pdf',
                           patientId: patientId!,
                           documentId: doc.id,
                           title: doc.title,
@@ -778,6 +780,29 @@ export function DocumentsPanel({
                       Extract text
                     </Button>
                   )}
+                  {doc.canView &&
+                    ['image/jpeg', 'image/png', 'image/webp'].includes(
+                      doc.mimeType,
+                    ) && (
+                      <Button
+                        variant="ghost"
+                        disabled={busy || patientsLoading}
+                        aria-label={`Recognize text (OCR) ${doc.title}`}
+                        onClick={(event) => {
+                          extractionTrigger.current = event.currentTarget;
+                          setExtraction({
+                            patientId: patientId!,
+                            documentId: doc.id,
+                            title: doc.title,
+                            bytes: doc.bytes,
+                            kind: 'ocr',
+                            mime: doc.mimeType,
+                          });
+                        }}
+                      >
+                        Recognize text (OCR)
+                      </Button>
+                    )}
                   {doc.canExport && (
                     <Button
                       variant="ghost"
@@ -946,7 +971,7 @@ export function DocumentsPanel({
         </DialogContent>
       </Dialog>
       {extraction && extraction.patientId === displayPatient.id && (
-        <PdfExtractionDialog
+        <DocumentTextDialog
           source={extraction}
           enabled={
             !busy && !patientsLoading && patientId === extraction.patientId

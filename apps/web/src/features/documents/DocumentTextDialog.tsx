@@ -8,31 +8,39 @@ import {
   DialogTitle,
 } from '../../components/ui/dialog';
 import { PdfTextContent } from './PdfTextContent';
+import { OcrTextContent } from './OcrTextContent';
+import { ocrByteLimit } from './ocrTypes';
+import type { OcrState } from './ocrTypes';
 import type { PdfTextState } from './pdfText';
 
-export type PdfSource = {
+export type DocumentTextSource = {
   patientId: string;
   documentId: string;
   title: string;
   bytes: number;
-};
-const limit = 10 * 1024 * 1024;
+} & ({ kind: 'pdf' } | { kind: 'ocr'; mime: string });
+const limit = ocrByteLimit;
 
-export function PdfExtractionDialog({
+export function DocumentTextDialog({
   source,
   enabled,
   onClose,
   onDenied,
   restoreFocus,
 }: {
-  source: PdfSource;
+  source: DocumentTextSource;
   enabled: boolean;
   onClose: () => void;
   onDenied: () => void;
   restoreFocus: () => void;
 }) {
-  const [state, setState] = useState<PdfTextState | null>(null);
-  const [attempt, setAttempt] = useState(0);
+  const imageOcr = source.kind === 'ocr';
+  type State =
+    { mode: 'pdf'; value: PdfTextState } | { mode: 'ocr'; value: OcrState };
+  const [state, setState] = useState<State | null>(
+    imageOcr ? { mode: 'ocr', value: { kind: 'idle' } } : null,
+  );
+  const [attempt, setAttempt] = useState(imageOcr ? 0 : 1);
   const controller = useRef<AbortController | null>(null);
   const title = useRef<HTMLHeadingElement | null>(null);
   const retry = () => {
@@ -48,22 +56,38 @@ export function PdfExtractionDialog({
     }
   }, [enabled]);
   useEffect(() => {
-    if (!allowed.current) return;
+    if (!allowed.current || attempt === 0) return;
     const abort = new AbortController();
     controller.current = abort;
-    setState({ kind: 'loading' });
-    const deadline = window.setTimeout(() => {
-      if (
-        allowed.current &&
-        controller.current === abort &&
-        !abort.signal.aborted
-      )
-        setState({ kind: 'failed', reason: 'timeout' });
-      abort.abort();
-    }, 20_000);
+    const fail = (reason: 'size' | 'timeout' | 'invalid') =>
+      setState(
+        imageOcr
+          ? { mode: 'ocr', value: { kind: 'failed', reason } }
+          : { mode: 'pdf', value: { kind: 'failed', reason } },
+      );
+    setState(
+      imageOcr
+        ? {
+            mode: 'ocr',
+            value: { kind: 'loading', stage: 'loading', progress: 0 },
+          }
+        : { mode: 'pdf', value: { kind: 'loading' } },
+    );
+    const deadline = window.setTimeout(
+      () => {
+        if (
+          allowed.current &&
+          controller.current === abort &&
+          !abort.signal.aborted
+        )
+          fail('timeout');
+        abort.abort();
+      },
+      imageOcr ? 60_000 : 20_000,
+    );
     const run = async () => {
       if (source.bytes > limit) {
-        setState({ kind: 'failed', reason: 'size' });
+        fail('size');
         return;
       }
       const response = await fetch(
@@ -82,7 +106,7 @@ export function PdfExtractionDialog({
       if (!response.ok) throw new Error('Unavailable original');
       if (Number(response.headers.get('content-length')) > limit) {
         void response.body?.cancel();
-        setState({ kind: 'failed', reason: 'size' });
+        fail('size');
         return;
       }
       // Bound the actual response even when length metadata is missing or incorrect.
@@ -98,7 +122,7 @@ export function PdfExtractionDialog({
           size += chunk.value.byteLength;
           if (size > limit) {
             await reader.cancel();
-            setState({ kind: 'failed', reason: 'size' });
+            fail('size');
             return;
           }
           chunks.push(chunk.value);
@@ -113,10 +137,42 @@ export function PdfExtractionDialog({
         offset += chunk.byteLength;
       }
       chunks.length = 0;
-      const { extractPdfText } = await import('./pdfText');
-      abort.signal.throwIfAborted();
-      const result = await extractPdfText(bytes, abort.signal);
-      if (!abort.signal.aborted && allowed.current) setState(result);
+      if (source.kind === 'ocr') {
+        const { recognizeImage } = await import('./imageOcr');
+        abort.signal.throwIfAborted();
+        const result = await recognizeImage(
+          bytes,
+          source.mime,
+          abort.signal,
+          (stage, progress) => {
+            if (
+              !abort.signal.aborted &&
+              allowed.current &&
+              controller.current === abort
+            )
+              setState({
+                mode: 'ocr',
+                value: { kind: 'loading', stage, progress },
+              });
+          },
+        );
+        if (
+          !abort.signal.aborted &&
+          allowed.current &&
+          controller.current === abort
+        )
+          setState({ mode: 'ocr', value: result });
+      } else {
+        const { extractPdfText } = await import('./pdfText');
+        abort.signal.throwIfAborted();
+        const result = await extractPdfText(bytes, abort.signal);
+        if (
+          !abort.signal.aborted &&
+          allowed.current &&
+          controller.current === abort
+        )
+          setState({ mode: 'pdf', value: result });
+      }
     };
     void run()
       .catch(() => {
@@ -125,10 +181,7 @@ export function PdfExtractionDialog({
           controller.current === abort &&
           !abort.signal.aborted
         )
-          setState({
-            kind: 'failed',
-            reason: 'invalid',
-          });
+          fail('invalid');
       })
       .finally(() => window.clearTimeout(deadline));
     return () => {
@@ -137,7 +190,7 @@ export function PdfExtractionDialog({
     };
     // Revalidation pauses and clears results; only explicit Retry starts again.
     // source is a stable document identity owned by the authorized list.
-  }, [source, attempt, onDenied]);
+  }, [source, attempt, onDenied, imageOcr]);
   return (
     <Dialog
       open
@@ -158,7 +211,7 @@ export function PdfExtractionDialog({
       >
         <DialogHeader>
           <DialogTitle ref={title} tabIndex={-1}>
-            Extracted text
+            {imageOcr ? 'Recognized text (OCR)' : 'Extracted text'}
           </DialogTitle>
           <DialogDescription className="break-words">
             {source.title}
@@ -172,11 +225,22 @@ export function PdfExtractionDialog({
                 : 'Text cleared while patient access is checked.'}
             </p>
             <Button disabled={!enabled} onClick={retry}>
-              Retry extraction
+              {imageOcr ? 'Start OCR' : 'Retry extraction'}
             </Button>
           </div>
+        ) : state.mode === 'ocr' ? (
+          <OcrTextContent
+            state={state.value}
+            enabled={enabled}
+            onStart={retry}
+            onCancel={onClose}
+          />
         ) : (
-          <PdfTextContent state={state} onRetry={retry} onCancel={onClose} />
+          <PdfTextContent
+            state={state.value}
+            onRetry={retry}
+            onCancel={onClose}
+          />
         )}
       </DialogContent>
     </Dialog>
