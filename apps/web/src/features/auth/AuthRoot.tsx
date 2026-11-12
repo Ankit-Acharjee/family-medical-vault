@@ -131,6 +131,8 @@ export function AuthRoot({ children }: { children: ReactNode }) {
     return () => {
       active = false;
       window.clearTimeout(timer);
+      // Invalidate the latest async generation; this ref is not a DOM node.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       ++loadVersion.current;
     };
   }, [load]);
@@ -229,8 +231,12 @@ export function AuthRoot({ children }: { children: ReactNode }) {
     }
     return () => {
       active = false;
+      // Invalidate the latest submission, including work started after setup.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       ++personVersion.current;
     };
+    // Refresh by authenticated identity, not by account object allocation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountPage, account?.contextId, account?.email]);
   useEffect(() => {
     if (accountPage && account)

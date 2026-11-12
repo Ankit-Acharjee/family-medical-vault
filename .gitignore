@@ -23,3 +23,9 @@ test-results/
 
 # Generated Prisma runtime; regenerated before build and typecheck.
 apps/server/src/generated/
+# Browser MCP artifacts may contain screen content.
+.playwright-mcp/
+.chrome-devtools-mcp/
+
+# Installed third-party AI skills are local tooling; keep project AGENTS.md tracked.
+/.agents/skills/

@@ -159,6 +159,8 @@ export function PatientProvider({
     window.addEventListener('focus', refresh);
     document.addEventListener('visibilitychange', refresh);
     return () => {
+      // Invalidate the latest refresh generation, not a captured setup value.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       ++generation.current;
       controller.current?.abort();
       window.removeEventListener('focus', refresh);
