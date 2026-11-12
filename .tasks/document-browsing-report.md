@@ -1,6 +1,6 @@
 # Document browsing and display titles — DOC-05 / ACCESS-04/05
 
-Approved 12 November 2026. Base: develop at 84c8cd8. Implementation is local; hosted title migration has not been applied.
+Approved 12 November 2026. Base: develop at 84c8cd8. Implementation was pushed to develop at 35a9f22. The user separately approved the hosted development migration, which was applied and verified on 12 November 2026.
 
 ## Delivered
 - Documents filters the current server-authorized list by display title/original filename, existing category and inclusive local upload dates. Searches stay in component memory, never URL parameters or persistent browser storage. Existing list order is chronological; no OCR/full-text claim is made.
@@ -18,7 +18,7 @@ Approved 12 November 2026. Base: develop at 84c8cd8. Implementation is local; ho
 ## Migration review and target
 `apps/server/prisma/migrations/20261112000100_document_display_titles/migration.sql` adds only nullable `fmv.documents.display_title` (bounded text), grants runtime UPDATE on that new column, and permits the `document.renamed` audit kind. It does not rewrite original metadata or stored files, modify access grants, change provider-managed schemas, or perform R2 operations.
 
-Read-only hosted preflight verified dedicated development project `nyjkrcznezyrgntwvpjj`, matching owner/runtime targets, verify-full TLS, UTC, restricted runtime role and exact checksums of eight existing applied migrations. Exactly this ninth migration is pending. Owner credentials and real metadata remained private. Applying it needs separate target-specific authorization under the approved R2 workflow; restarting the updated server before migration would make document listing fail closed because the new column is absent.
+Read-only hosted preflight verified dedicated development project `nyjkrcznezyrgntwvpjj`, matching owner/runtime targets, verify-full TLS, UTC, restricted runtime role and exact checksums of eight existing applied migrations. Exactly this ninth migration is pending. Owner credentials and real metadata remained private. The user subsequently gave target-specific approval. Applying the ninth migration succeeded; post-verification matched private before/after digests for Person identities/storage namespaces, original document metadata and object-generation manifests. Runtime UPDATE on display_title is enabled while original-title UPDATE and document DELETE remain denied. Existing rows retain null display titles. No R2 operations occurred. The updated server may now be restarted against the migrated development schema.
 
 ## Delegation and limits
 OpenCode `glm-5.3-flash-free` generated the bounded filter/title-form presentation artifact from a synthetic props brief within an OS sandbox denying project/home data. The supervisor reviewed and integrated it, fixed local Button API/focus details, and retained authorization/schema ownership. Native GPT-6.1 Sol independently implemented API/database/browser tests and reviewed the integrated change. No external worker received repository secrets or medical records.
