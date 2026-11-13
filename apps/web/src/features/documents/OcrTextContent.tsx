@@ -7,6 +7,7 @@ type OcrTextContentProps = {
   enabled: boolean;
   onStart: () => void;
   onCancel: () => void;
+  page?: number;
 };
 
 type FailedOcrState = Extract<OcrState, { kind: 'failed' }>;
@@ -20,6 +21,9 @@ const FAILED_COPY: Record<FailedOcrState['reason'], string> = {
   unsupported: 'This source type is not supported for recognition.',
   timeout: 'OCR timed out after 60 seconds and was stopped.',
   unavailable: 'Recognition is temporarily unavailable.',
+  pages: 'This PDF exceeds the 50-page limit. Try a shorter document.',
+  page: 'The selected page is outside this document’s page range.',
+  encrypted: 'Password-protected PDFs are not supported for recognition.',
 };
 
 const STAGE_COPY: Record<LoadingStage, string> = {
@@ -33,6 +37,7 @@ export function OcrTextContent({
   enabled,
   onStart,
   onCancel,
+  page = 1,
 }: OcrTextContentProps) {
   switch (state.kind) {
     case 'idle':
@@ -101,7 +106,7 @@ export function OcrTextContent({
           <PdfTextContent
             state={{
               kind: 'ready',
-              pages: [{ page: 1, text: state.text }],
+              pages: [{ page, text: state.text }],
               partial: state.partial,
               ...(state.partial ? { reason: 'characters' as const } : {}),
             }}

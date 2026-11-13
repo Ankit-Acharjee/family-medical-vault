@@ -16,6 +16,9 @@ export type OcrState =
         | 'invalid'
         | 'unsupported'
         | 'timeout'
+        | 'pages'
+        | 'page'
+        | 'encrypted'
         | 'unavailable';
     };
 export type OcrProgress = (

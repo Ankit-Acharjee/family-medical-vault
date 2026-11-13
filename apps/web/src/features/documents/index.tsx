@@ -781,9 +781,12 @@ export function DocumentsPanel({
                     </Button>
                   )}
                   {doc.canView &&
-                    ['image/jpeg', 'image/png', 'image/webp'].includes(
-                      doc.mimeType,
-                    ) && (
+                    [
+                      'application/pdf',
+                      'image/jpeg',
+                      'image/png',
+                      'image/webp',
+                    ].includes(doc.mimeType) && (
                       <Button
                         variant="ghost"
                         disabled={busy || patientsLoading}

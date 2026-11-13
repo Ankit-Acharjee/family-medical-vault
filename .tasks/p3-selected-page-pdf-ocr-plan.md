@@ -1,6 +1,6 @@
 # Next slice: selected-page scanned-PDF OCR
 
-Status: proposed for approval after image OCR. No application changes authorized by this document alone.
+Status: approved by the user's “go ahead to the next feature” instruction; include Astra in the pipeline.
 Requirements: AI-01/AI-05/AI-06. Preserve DOC-02, SEC-02/SEC-05 and existing approved design/UX flows.
 
 ## Scope
@@ -19,6 +19,7 @@ Requirements: AI-01/AI-05/AI-06. Preserve DOC-02, SEC-02/SEC-05 and existing app
 
 ## Delegation and acceptance
 1. Supervisor owns PDF rendering architecture, bounds, current permission and lifetime integration; first validate the feasibility checkpoint without changing the existing embedded-text helper's guarantees.
+   Native Astra reviews rendering feasibility and security/lifecycle risks before implementation; Sol integrates, bounded workers implement/test, and Astra reviews the resulting boundary before release.
 2. OpenCode GLM handles interface-only page-selection/progress presentation briefs; no confidential source or records sent. Codex agents handle synthetic PDF fixtures/tests/review if available; supervisor verifies independently regardless of quota.
 3. Test actual scanned-page rendering/OCR and page selection; invalid/out-of-range page, encrypted/unsupported PDFs, caps, cancellation at render/init/recognition, late results, lost VIEW/export-only/Trash, no external requests/persistent medical caches, both themes/mobile/keyboard/focus.
 4. Run existing image OCR/PDF/vault regressions and production asset/build/type/lint/security checks. Capture both themes at mobile/desktop and report observed resource/timing results without universal device claims.

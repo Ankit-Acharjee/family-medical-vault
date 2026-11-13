@@ -75,8 +75,8 @@ export function PdfTextContent({
       {state.kind === 'empty' && (
         <div className="border-border bg-muted text-muted-foreground rounded-xl border px-4 py-3">
           <p>
-            No embedded text found. Scanned or image-only pages need OCR, which
-            is unavailable here.
+            No embedded text found. For scanned or image-only pages, close this
+            view and choose Recognize text (OCR) on the document.
           </p>
           <Button type="button" onClick={onRetry} className="mt-3">
             Retry extraction

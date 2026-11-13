@@ -9,8 +9,9 @@ import {
 } from '../../components/ui/dialog';
 import { PdfTextContent } from './PdfTextContent';
 import { OcrTextContent } from './OcrTextContent';
+import { PdfOcrPageField } from './PdfOcrPageField';
 import { ocrByteLimit } from './ocrTypes';
-import type { OcrState } from './ocrTypes';
+import type { OcrState, OcrProgress } from './ocrTypes';
 import type { PdfTextState } from './pdfText';
 
 export type DocumentTextSource = {
@@ -35,6 +36,12 @@ export function DocumentTextDialog({
   restoreFocus: () => void;
 }) {
   const imageOcr = source.kind === 'ocr';
+  const pdfOcr = source.kind === 'ocr' && source.mime === 'application/pdf';
+  const [pageNumber, setPageNumber] = useState('1');
+  const pageValid =
+    /^\d+$/.test(pageNumber) &&
+    Number(pageNumber) >= 1 &&
+    Number(pageNumber) <= 50;
   type State =
     { mode: 'pdf'; value: PdfTextState } | { mode: 'ocr'; value: OcrState };
   const [state, setState] = useState<State | null>(
@@ -44,6 +51,7 @@ export function DocumentTextDialog({
   const controller = useRef<AbortController | null>(null);
   const title = useRef<HTMLHeadingElement | null>(null);
   const retry = () => {
+    if (pdfOcr && !pageValid) return;
     title.current?.focus();
     setAttempt((value) => value + 1);
   };
@@ -138,24 +146,30 @@ export function DocumentTextDialog({
       }
       chunks.length = 0;
       if (source.kind === 'ocr') {
-        const { recognizeImage } = await import('./imageOcr');
-        abort.signal.throwIfAborted();
-        const result = await recognizeImage(
-          bytes,
-          source.mime,
-          abort.signal,
-          (stage, progress) => {
-            if (
-              !abort.signal.aborted &&
-              allowed.current &&
-              controller.current === abort
-            )
-              setState({
-                mode: 'ocr',
-                value: { kind: 'loading', stage, progress },
-              });
-          },
-        );
+        const progress: OcrProgress = (stage, progress) => {
+          if (
+            !abort.signal.aborted &&
+            allowed.current &&
+            controller.current === abort
+          )
+            setState({
+              mode: 'ocr',
+              value: { kind: 'loading', stage, progress },
+            });
+        };
+        const result =
+          source.mime === 'application/pdf'
+            ? await (
+                await import('./pdfOcr')
+              ).recognizePdfPage(
+                bytes,
+                Number(pageNumber),
+                abort.signal,
+                progress,
+              )
+            : await (
+                await import('./imageOcr')
+              ).recognizeImage(bytes, source.mime, abort.signal, progress);
         if (
           !abort.signal.aborted &&
           allowed.current &&
@@ -190,7 +204,7 @@ export function DocumentTextDialog({
     };
     // Revalidation pauses and clears results; only explicit Retry starts again.
     // source is a stable document identity owned by the authorized list.
-  }, [source, attempt, onDenied, imageOcr]);
+  }, [source, attempt, onDenied, imageOcr, pageNumber]);
   return (
     <Dialog
       open
@@ -217,6 +231,21 @@ export function DocumentTextDialog({
             {source.title}
           </DialogDescription>
         </DialogHeader>
+        {pdfOcr && (
+          <PdfOcrPageField
+            value={pageNumber}
+            onChange={(value) => {
+              controller.current?.abort();
+              setPageNumber(value);
+              setAttempt(0);
+              setState({ mode: 'ocr', value: { kind: 'idle' } });
+            }}
+            disabled={!enabled || state?.value.kind === 'loading'}
+            error={
+              pageValid ? undefined : 'Enter a whole page number from 1 to 50.'
+            }
+          />
+        )}
         {!enabled || !state ? (
           <div className="space-y-3">
             <p role="status">
@@ -224,14 +253,18 @@ export function DocumentTextDialog({
                 ? 'Text was cleared during access revalidation. Retry to extract it again.'
                 : 'Text cleared while patient access is checked.'}
             </p>
-            <Button disabled={!enabled} onClick={retry}>
+            <Button
+              disabled={!enabled || (pdfOcr && !pageValid)}
+              onClick={retry}
+            >
               {imageOcr ? 'Start OCR' : 'Retry extraction'}
             </Button>
           </div>
         ) : state.mode === 'ocr' ? (
           <OcrTextContent
             state={state.value}
-            enabled={enabled}
+            enabled={enabled && (!pdfOcr || pageValid)}
+            page={pdfOcr ? Number(pageNumber) : 1}
             onStart={retry}
             onCancel={onClose}
           />

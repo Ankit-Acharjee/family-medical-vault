@@ -305,7 +305,7 @@ test('PDF originals keep their separate embedded-text extraction action', async 
   page,
 }) => {
   await setup(page, { mimeType: 'application/pdf' });
-  await expect(action(page)).toHaveCount(0);
+  await expect(action(page)).toBeVisible();
   await expect(
     page.getByRole('button', {
       name: `Extract text ${sourceTitle}`,
