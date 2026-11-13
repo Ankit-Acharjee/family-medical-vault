@@ -44,6 +44,9 @@ UI delivery must cover the complete interaction lifecycle: native picker open/ca
 - Start Docker only when necessary for final container/database verification; keep sessions short and stop project containers after verification. Preserve development volumes and credentials.
 - Do not start or keep Docker Desktop running proactively during development. Respect the user's decision to close it.
 
+## Context continuity
+- Prefer compaction around 50% usage when the client exposes reliable usage and compaction controls. Otherwise keep a concise task checkpoint and continue through automatic compaction; do not claim that an exact threshold was configured or enforced without those controls.
+
 ## Commit messages
 - Use a clear subject and a brief, precise body for implementation commits: what changed, how it works, resulting behavior changes, and relevant validation or limitations.
 - Direct pushes have no PR description, so include the review context in the commit body. Setup-only commits may be shorter.

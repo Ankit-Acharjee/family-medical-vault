@@ -1,3 +1,4 @@
+import { mockExtractionContext } from './support/extraction-context';
 import { expect, test, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
@@ -108,6 +109,7 @@ async function setup(
       if (Number.isFinite(length)) assetBytes.set(response.url(), length);
     }
   });
+  await mockExtractionContext(page);
   await page.route('**/api/auth/bootstrap', (route) =>
     route.fulfill({ json: { enabled: true, csrf: 'c'.repeat(43) } }),
   );

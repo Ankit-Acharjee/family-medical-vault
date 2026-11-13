@@ -4,11 +4,46 @@ import { randomUUID } from 'node:crypto';
 import { createObjectKey } from './object-key.js';
 import { PrismaClient } from '../generated/prisma/client.js';
 import type { Prisma } from '../generated/prisma/client.js';
-import type { DocumentCategory } from '@fmv/contracts';
+import type {
+  DocumentCategory,
+  DocumentMimeType,
+  ExtractionReadResult,
+  SaveExtraction,
+  SaveExtractionResult,
+  UploadState,
+} from '@fmv/contracts';
 import type { IntakeStore, IntakeMetadata, IntakeRecord } from './intake.js';
+import { readExtraction, saveExtraction } from './extraction.store.js';
+
+export type ExtractionSource = {
+  documentId: string;
+  patientId: string;
+  categoryId: string;
+  mimeType: DocumentMimeType;
+  state: UploadState;
+  deletedAt: Date | null;
+  sha256: string;
+  lifecycleVersion: number;
+};
+export type ExtractionAuthority = { accountId: string; canSave: boolean };
+export type ExtractionAuthorization = (
+  source: ExtractionSource,
+) => Promise<ExtractionAuthority>;
 
 export type TrashChangeResult = 'changed' | 'unchanged' | 'missing' | 'expired';
 export abstract class DocumentStore {
+  abstract readExtraction(
+    patientId: string,
+    documentId: string,
+    authorize: ExtractionAuthorization,
+    includeSnapshot?: boolean,
+  ): Promise<ExtractionReadResult | null>;
+  abstract saveExtraction(
+    patientId: string,
+    documentId: string,
+    input: SaveExtraction,
+    authorize: ExtractionAuthorization,
+  ): Promise<SaveExtractionResult | 'missing' | 'conflict'>;
   abstract asActor(accountId: string): IntakeStore;
   abstract list(
     patientId: string,
@@ -162,6 +197,28 @@ export class PrismaDocumentStore
           { maxWait: 5000, timeout: 60000 },
         ),
     };
+  }
+  readExtraction(
+    patientId: string,
+    documentId: string,
+    authorize: ExtractionAuthorization,
+    includeSnapshot = true,
+  ) {
+    return readExtraction(
+      this.db,
+      patientId,
+      documentId,
+      authorize,
+      includeSnapshot,
+    );
+  }
+  saveExtraction(
+    patientId: string,
+    documentId: string,
+    input: SaveExtraction,
+    authorize: ExtractionAuthorization,
+  ) {
+    return saveExtraction(this.db, patientId, documentId, input, authorize);
   }
   async list(patientId: string) {
     return this.db.$queryRawUnsafe<

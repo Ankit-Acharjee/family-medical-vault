@@ -12,12 +12,19 @@ const fail = () => {
 // PDF.js also warns and skips some malformed images without rejecting. Its
 // pinned warn() uses console.warn; treat all worker diagnostics as unsupported
 // rather than accepting a partial scan. Ignore every diagnostic argument.
-console.log =
-  console.info =
-  console.debug =
-  console.warn =
-  console.error =
-    fail;
+console.log = console.info = console.warn = console.error = fail;
+console.debug = (...args: unknown[]) => {
+  // Vite injects its worker client in development. These exact public transport
+  // messages carry no document data; suppress them without disabling the guard.
+  // Production removes this branch and rejects every worker diagnostic.
+  if (
+    import.meta.env.DEV &&
+    args.length === 1 &&
+    (args[0] === '[vite] connecting...' || args[0] === '[vite] connected.')
+  )
+    return;
+  fail();
+};
 
 globalThis.addEventListener('unhandledrejection', (event) => {
   event.preventDefault();

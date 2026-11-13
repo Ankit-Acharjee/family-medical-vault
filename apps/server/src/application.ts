@@ -32,6 +32,7 @@ export async function createApplication(
     ),
     {
       logger: false,
+      bodyParser: false,
       abortOnError: false,
     },
   );
@@ -42,6 +43,21 @@ export async function createApplication(
         ((event) => process.stdout.write(`${JSON.stringify(event)}\n`)),
     ),
   );
+  app.useBodyParser('json', {
+    limit: '100kb',
+    type: (req) => {
+      // Only this controller consumes bounded JSON after resource authorization.
+      const path = req.url?.split('?')[0] ?? '';
+      const extractionWrite =
+        req.method === 'PUT' &&
+        /^\/api\/patients\/[^/]+\/documents\/[^/]+\/extraction\/?$/.test(path);
+      return (
+        !extractionWrite &&
+        req.headers['content-type']?.split(';')[0]?.trim().toLowerCase() ===
+          'application/json'
+      );
+    },
+  });
   app.useGlobalFilters(new HttpErrorFilter());
   app.useGlobalPipes(
     new ValidationPipe({

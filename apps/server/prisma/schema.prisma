@@ -33,16 +33,17 @@ model AuthRateLimit {
 }
 
 model AppAccount {
-  id                  String             @id @db.Uuid
+  id                  String               @id @db.Uuid
   issuer              String
   subject             String
   person              Person?
-  receivedGrants      AccessGrant[]      @relation("GrantRecipient")
-  issuedGrants        AccessGrant[]      @relation("GrantIssuer")
+  receivedGrants      AccessGrant[]        @relation("GrantRecipient")
+  issuedGrants        AccessGrant[]        @relation("GrantIssuer")
   accessEvents        AccessEvent[]
   documentEvents      DocumentEvent[]
-  issuedInvitations   AccessInvitation[] @relation("InvitationIssuer")
-  receivedInvitations AccessInvitation[] @relation("InvitationRecipient")
+  savedExtractions    DocumentExtraction[]
+  issuedInvitations   AccessInvitation[]   @relation("InvitationIssuer")
+  receivedInvitations AccessInvitation[]   @relation("InvitationRecipient")
 
   @@unique([issuer, subject], map: "app_accounts_provider_key")
   @@map("app_accounts")
@@ -140,26 +141,28 @@ model AccessInvitation {
 }
 
 model Document {
-  id             String                  @id @db.Uuid
-  uploadId       String                  @unique @map("upload_id") @db.Uuid
-  patientId      String                  @map("patient_id") @db.Uuid
-  categoryId     String                  @map("category_id") @db.Uuid
-  title          String
-  displayTitle   String?                 @map("display_title")
-  deletedAt      DateTime?               @map("deleted_at") @db.Timestamptz(3)
-  mimeType       String                  @map("mime_type")
-  bytes          Int
-  sha256         String
-  idempotencyKey String                  @map("idempotency_key")
-  objectKey      String                  @unique @map("object_key")
-  state          String
-  createdAt      DateTime                @default(dbgenerated("statement_timestamp()")) @map("created_at") @db.Timestamptz(3)
-  patient        Person                  @relation(fields: [patientId], references: [id], onDelete: Restrict)
-  category       DocumentCategory        @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  grants         AccessGrant[]
-  events         DocumentEvent[]
-  objects        DocumentObjectAttempt[] @relation("DocumentObjects")
-  currentObject  DocumentObjectAttempt   @relation("CurrentObject", fields: [id, objectKey], references: [documentId, objectKey], onDelete: Restrict)
+  id                  String                  @id @db.Uuid
+  uploadId            String                  @unique @map("upload_id") @db.Uuid
+  patientId           String                  @map("patient_id") @db.Uuid
+  categoryId          String                  @map("category_id") @db.Uuid
+  title               String
+  displayTitle        String?                 @map("display_title")
+  deletedAt           DateTime?               @map("deleted_at") @db.Timestamptz(3)
+  extractionLifecycle Int                     @default(0) @map("extraction_lifecycle")
+  mimeType            String                  @map("mime_type")
+  bytes               Int
+  sha256              String
+  idempotencyKey      String                  @map("idempotency_key")
+  objectKey           String                  @unique @map("object_key")
+  state               String
+  createdAt           DateTime                @default(dbgenerated("statement_timestamp()")) @map("created_at") @db.Timestamptz(3)
+  patient             Person                  @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  category            DocumentCategory        @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  grants              AccessGrant[]
+  events              DocumentEvent[]
+  extraction          DocumentExtraction?
+  objects             DocumentObjectAttempt[] @relation("DocumentObjects")
+  currentObject       DocumentObjectAttempt   @relation("CurrentObject", fields: [id, objectKey], references: [documentId, objectKey], onDelete: Restrict)
 
   @@unique([patientId, idempotencyKey])
   @@unique([patientId, id], map: "documents_patient_identity")
@@ -211,5 +214,24 @@ model AccessEvent {
   grant          AccessGrant? @relation(fields: [grantId], references: [id], onDelete: Restrict)
 
   @@map("access_events")
+  @@schema("fmv")
+}
+
+model DocumentExtraction {
+  documentId       String     @id @map("document_id") @db.Uuid
+  patientId        String     @map("patient_id") @db.Uuid
+  sourceSha256     String     @map("source_sha256")
+  lifecycleVersion Int        @map("lifecycle_version")
+  revision         Int
+  requestId        String     @map("request_id") @db.Uuid
+  payloadHash      String     @map("payload_hash")
+  actorAccountId   String     @map("actor_account_id") @db.Uuid
+  result           Json       @db.JsonB
+  savedAt          DateTime   @default(dbgenerated("clock_timestamp()")) @map("saved_at") @db.Timestamptz(3)
+  document         Document   @relation(fields: [patientId, documentId], references: [patientId, id], onDelete: Cascade)
+  actor            AppAccount @relation(fields: [actorAccountId], references: [id], onDelete: Restrict)
+
+  @@unique([patientId, documentId])
+  @@map("document_extractions")
   @@schema("fmv")
 }

@@ -16,7 +16,10 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import type { BeginUpload } from '@fmv/contracts';
-import { maximumDocumentBytes } from '@fmv/contracts';
+import {
+  maximumDocumentBytes,
+  maximumExtractionRequestBytes,
+} from '@fmv/contracts';
 import { AuthBoundaryGuard, cookie, cookieName } from '../auth/auth.http.js';
 import { AuthService } from '../auth/auth.service.js';
 import { DocumentsService } from './documents.service.js';
@@ -43,6 +46,57 @@ export class DocumentsController {
         throw new HttpException(e.message, e.status);
       throw e;
     }
+  }
+  @Get('documents/:documentId/extraction/context')
+  async extractionContext(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+  ) {
+    const result = await this.documents.extraction.read(
+      await this.principal(req),
+      p,
+      d,
+      false,
+    );
+    return { context: result.context };
+  }
+  @Get('documents/:documentId/extraction')
+  async savedExtraction(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+  ) {
+    return this.documents.extraction.read(await this.principal(req), p, d);
+  }
+  @Put('documents/:documentId/extraction')
+  async saveExtraction(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+  ) {
+    const principal = await this.principal(req);
+    await this.documents.extraction.read(principal, p, d, false, true);
+    if (Number(req.headers['content-length']) > maximumExtractionRequestBytes)
+      throw new HttpException('Too large', 413);
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of req) {
+      const b = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += b.length;
+      if (size > maximumExtractionRequestBytes)
+        throw new HttpException('Too large', 413);
+      chunks.push(b);
+    }
+    let body: unknown;
+    try {
+      body = JSON.parse(
+        new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)),
+      );
+    } catch {
+      throw new BadRequestException();
+    }
+    return this.documents.extraction.save(principal, p, d, body);
   }
   @Get('documents') async list(
     @Req() req: Request,

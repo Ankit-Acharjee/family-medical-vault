@@ -1,0 +1,487 @@
+[
+  {
+    "name": "pdf-text valid basic 2 contiguous pages",
+    "result": {
+      "method": "pdf-text",
+      "engineVersion": "pdfjs-6.5.438",
+      "pages": [
+        {
+          "page": 1,
+          "text": "Hello world"
+        },
+        {
+          "page": 2,
+          "text": "Second page"
+        }
+      ],
+      "partial": false,
+      "partialReason": null,
+      "downsized": false
+    },
+    "valid": true
+  },
+  {
+    "name": "pdf-text valid 50 pages partial reason pages",
+    "result": {
+      "method": "pdf-text",
+      "engineVersion": "pdfjs-6.5.438",
+      "pages": [
+        {
+          "page": 1,
+          "text": "p1"
+        },
+        {
+          "page": 2,
+          "text": "p2"
+        },
+        {
+          "page": 3,
+          "text": "p3"
+        },
+        {
+          "page": 4,
+          "text": "p4"
+        },
+        {
+          "page": 5,
+          "text": "p5"
+        },
+        {
+          "page": 6,
+          "text": "p6"
+        },
+        {
+          "page": 7,
+          "text": "p7"
+        },
+        {
+          "page": 8,
+          "text": "p8"
+        },
+        {
+          "page": 9,
+          "text": "p9"
+        },
+        {
+          "page": 10,
+          "text": "p10"
+        },
+        {
+          "page": 11,
+          "text": "p11"
+        },
+        {
+          "page": 12,
+          "text": "p12"
+        },
+        {
+          "page": 13,
+          "text": "p13"
+        },
+        {
+          "page": 14,
+          "text": "p14"
+        },
+        {
+          "page": 15,
+          "text": "p15"
+        },
+        {
+          "page": 16,
+          "text": "p16"
+        },
+        {
+          "page": 17,
+          "text": "p17"
+        },
+        {
+          "page": 18,
+          "text": "p18"
+        },
+        {
+          "page": 19,
+          "text": "p19"
+        },
+        {
+          "page": 20,
+          "text": "p20"
+        },
+        {
+          "page": 21,
+          "text": "p21"
+        },
+        {
+          "page": 22,
+          "text": "p22"
+        },
+        {
+          "page": 23,
+          "text": "p23"
+        },
+        {
+          "page": 24,
+          "text": "p24"
+        },
+        {
+          "page": 25,
+          "text": "p25"
+        },
+        {
+          "page": 26,
+          "text": "p26"
+        },
+        {
+          "page": 27,
+          "text": "p27"
+        },
+        {
+          "page": 28,
+          "text": "p28"
+        },
+        {
+          "page": 29,
+          "text": "p29"
+        },
+        {
+          "page": 30,
+          "text": "p30"
+        },
+        {
+          "page": 31,
+          "text": "p31"
+        },
+        {
+          "page": 32,
+          "text": "p32"
+        },
+        {
+          "page": 33,
+          "text": "p33"
+        },
+        {
+          "page": 34,
+          "text": "p34"
+        },
+        {
+          "page": 35,
+          "text": "p35"
+        },
+        {
+          "page": 36,
+          "text": "p36"
+        },
+        {
+          "page": 37,
+          "text": "p37"
+        },
+        {
+          "page": 38,
+          "text": "p38"
+        },
+        {
+          "page": 39,
+          "text": "p39"
+        },
+        {
+          "page": 40,
+          "text": "p40"
+        },
+        {
+          "page": 41,
+          "text": "p41"
+        },
+        {
+          "page": 42,
+          "text": "p42"
+        },
+        {
+          "page": 43,
+          "text": "p43"
+        },
+        {
+          "page": 44,
+          "text": "p44"
+        },
+        {
+          "page": 45,
+          "text": "p45"
+        },
+        {
+          "page": 46,
+          "text": "p46"
+        },
+        {
+          "page": 47,
+          "text": "p47"
+        },
+        {
+          "page": 48,
+          "text": "p48"
+        },
+        {
+          "page": 49,
+          "text": "p49"
+        },
+        {
+          "page": 50,
+          "text": "p50"
+        }
+      ],
+      "partial": true,
+      "partialReason": "pages",
+      "downsized": false
+    },
+    "valid": true
+  },
+  {
+    "name": "pdf-text wrong engineVersion patch",
+    "result": {
+      "method": "pdf-text",
+      "engineVersion": "pdfjs-6.5.437",
+      "pages": [
+        {
+          "page": 1,
+          "text": "ok"
+        }
+      ],
+      "partial": false,
+      "partialReason": null,
+      "downsized": false
+    },
+    "valid": false
+  },
+  {
+    "name": "image-ocr engineVersion missing lang tag",
+    "result": {
+      "method": "image-ocr",
+      "engineVersion": "tesseract-7.0.0",
+      "pages": [
+        {
+          "page": 1,
+          "text": "ok"
+        }
+      ],
+      "partial": false,
+      "partialReason": null,
+      "downsized": false
+    },
+    "valid": false
+  },
+  {
+    "name": "pdf-text unknown extra key rejected",
+    "result": {
+      "method": "pdf-text",
+      "engineVersion": "pdfjs-6.5.438",
+      "pages": [
+        {
+          "page": 1,
+          "text": "ok"
+        }
+      ],
+      "partial": false,
+      "partialReason": null,
+      "downsized": false,
+      "confidence": 0.9
+    },
+    "valid": false
+  },
+  {
+    "name": "pdf-text downsized must be false",
+    "result": {
+      "method": "pdf-text",
+      "engineVersion": "pdfjs-6.5.438",
+      "pages": [
+        {
+          "page": 1,
+          "text": "ok"
+        }
+      ],
+      "partial": false,
+      "partialReason": null,
+      "downsized": true
+    },
+    "valid": false
+  },
+  {
+    "name": "pdf-text partial true with null reason",
+    "result": {
+      "method": "pdf-text",
+      "engineVersion": "pdfjs-6.5.438",
+      "pages": [
+        {
+          "page": 1,
+          "text": "ok"
+        }
+      ],
+      "partial": true,
+      "partialReason": null,
+      "downsized": false
+    },
+    "valid": false
+  },
+  {
+    "name": "pdf-text reason pages requires 50 pages",
+    "result": {
+      "method": "pdf-text",
+      "engineVersion": "pdfjs-6.5.438",
+      "pages": [
+        {
+          "page": 1,
+          "text": "a"
+        },
+        {
+          "page": 2,
+          "text": "b"
+        },
+        {
+          "page": 3,
+          "text": "c"
+        }
+      ],
+      "partial": true,
+      "partialReason": "pages",
+      "downsized": false
+    },
+    "valid": false
+  },
+  {
+    "name": "pdf-text pages decreasing and not starting at 1",
+    "result": {
+      "method": "pdf-text",
+      "engineVersion": "pdfjs-6.5.438",
+      "pages": [
+        {
+          "page": 2,
+          "text": "b"
+        },
+        {
+          "page": 1,
+          "text": "a"
+        }
+      ],
+      "partial": false,
+      "partialReason": null,
+      "downsized": false
+    },
+    "valid": false
+  },
+  {
+    "name": "image-ocr valid unicode newline page1",
+    "result": {
+      "method": "image-ocr",
+      "engineVersion": "tesseract-7.0.0+eng-1.0.0",
+      "pages": [
+        {
+          "page": 1,
+          "text": "R\u00e9sult\u00e9 \u2014 \u4e16\u754c\nsecond line"
+        }
+      ],
+      "partial": false,
+      "partialReason": null,
+      "downsized": false
+    },
+    "valid": true
+  },
+  {
+    "name": "image-ocr must be exactly page 1",
+    "result": {
+      "method": "image-ocr",
+      "engineVersion": "tesseract-7.0.0+eng-1.0.0",
+      "pages": [
+        {
+          "page": 2,
+          "text": "ok"
+        }
+      ],
+      "partial": false,
+      "partialReason": null,
+      "downsized": false
+    },
+    "valid": false
+  },
+  {
+    "name": "image-ocr reason selected-page not allowed",
+    "result": {
+      "method": "image-ocr",
+      "engineVersion": "tesseract-7.0.0+eng-1.0.0",
+      "pages": [
+        {
+          "page": 1,
+          "text": "ok"
+        }
+      ],
+      "partial": true,
+      "partialReason": "selected-page",
+      "downsized": false
+    },
+    "valid": false
+  },
+  {
+    "name": "pdf-page-ocr valid single selected page 7",
+    "result": {
+      "method": "pdf-page-ocr",
+      "engineVersion": "pdfjs-6.5.438+tesseract-7.0.0+eng-1.0.0",
+      "pages": [
+        {
+          "page": 7,
+          "text": "caf\u00e9 \u2615 ok"
+        }
+      ],
+      "partial": true,
+      "partialReason": "selected-page",
+      "downsized": false
+    },
+    "valid": true
+  },
+  {
+    "name": "pdf-page-ocr must always be partial",
+    "result": {
+      "method": "pdf-page-ocr",
+      "engineVersion": "pdfjs-6.5.438+tesseract-7.0.0+eng-1.0.0",
+      "pages": [
+        {
+          "page": 3,
+          "text": "ok"
+        }
+      ],
+      "partial": false,
+      "partialReason": null,
+      "downsized": false
+    },
+    "valid": false
+  },
+  {
+    "name": "text with NUL and unpaired surrogate rejected",
+    "result": {
+      "method": "pdf-text",
+      "engineVersion": "pdfjs-6.5.438",
+      "pages": [
+        {
+          "page": 1,
+          "text": "a\u0000b\ud800c"
+        }
+      ],
+      "partial": false,
+      "partialReason": null,
+      "downsized": false
+    },
+    "valid": false
+  },
+  {
+    "name": "all-whitespace text rejected",
+    "result": {
+      "method": "image-ocr",
+      "engineVersion": "tesseract-7.0.0+eng-1.0.0",
+      "pages": [
+        {
+          "page": 1,
+          "text": " \n\t "
+        }
+      ],
+      "partial": false,
+      "partialReason": null,
+      "downsized": false
+    },
+    "valid": false
+  }
+]

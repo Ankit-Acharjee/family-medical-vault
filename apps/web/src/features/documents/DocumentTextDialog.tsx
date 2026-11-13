@@ -11,6 +11,14 @@ import { PdfTextContent } from './PdfTextContent';
 import { OcrTextContent } from './OcrTextContent';
 import { PdfOcrPageField } from './PdfOcrPageField';
 import { ocrByteLimit } from './ocrTypes';
+import { SaveExtractionPanel } from './SaveExtractionPanel';
+import {
+  createSaveExtractionAttempt,
+  readExtractionContext,
+  extractionPath,
+} from './savedExtraction';
+import type { SaveExtractionAttempt } from './savedExtraction';
+import { extractionEngineVersions } from '@fmv/contracts';
 import type { OcrState, OcrProgress } from './ocrTypes';
 import type { PdfTextState } from './pdfText';
 
@@ -48,6 +56,10 @@ export function DocumentTextDialog({
     imageOcr ? { mode: 'ocr', value: { kind: 'idle' } } : null,
   );
   const [attempt, setAttempt] = useState(imageOcr ? 0 : 1);
+  const [persistence, setPersistence] = useState<{
+    attempt: SaveExtractionAttempt | null;
+    canSave: boolean | null;
+  } | null>(null);
   const controller = useRef<AbortController | null>(null);
   const title = useRef<HTMLHeadingElement | null>(null);
   const retry = () => {
@@ -61,11 +73,13 @@ export function DocumentTextDialog({
     if (!enabled) {
       controller.current?.abort();
       setState(null);
+      setPersistence(null);
     }
   }, [enabled]);
   useEffect(() => {
     if (!allowed.current || attempt === 0) return;
     const abort = new AbortController();
+    setPersistence(null);
     controller.current = abort;
     const fail = (reason: 'size' | 'timeout' | 'invalid') =>
       setState(
@@ -98,6 +112,11 @@ export function DocumentTextDialog({
         fail('size');
         return;
       }
+      const context = await readExtractionContext(
+        extractionPath(source.patientId, source.documentId),
+        abort.signal,
+      );
+      abort.signal.throwIfAborted();
       const response = await fetch(
         `/api/patients/${encodeURIComponent(source.patientId)}/documents/${encodeURIComponent(source.documentId)}/preview`,
         {
@@ -174,8 +193,36 @@ export function DocumentTextDialog({
           !abort.signal.aborted &&
           allowed.current &&
           controller.current === abort
-        )
+        ) {
+          if (result.kind === 'ready') {
+            const method =
+              source.mime === 'application/pdf' ? 'pdf-page-ocr' : 'image-ocr';
+            setPersistence({
+              canSave: context?.canSave ?? null,
+              attempt: createSaveExtractionAttempt(context, {
+                method,
+                engineVersion: extractionEngineVersions[method],
+                pages: [
+                  {
+                    page:
+                      source.mime === 'application/pdf'
+                        ? Number(pageNumber)
+                        : 1,
+                    text: result.text,
+                  },
+                ],
+                partial: result.partial || method === 'pdf-page-ocr',
+                partialReason: result.partial
+                  ? 'characters'
+                  : method === 'pdf-page-ocr'
+                    ? 'selected-page'
+                    : null,
+                downsized: result.downsized,
+              }),
+            });
+          }
           setState({ mode: 'ocr', value: result });
+        }
       } else {
         const { extractPdfText } = await import('./pdfText');
         abort.signal.throwIfAborted();
@@ -184,8 +231,21 @@ export function DocumentTextDialog({
           !abort.signal.aborted &&
           allowed.current &&
           controller.current === abort
-        )
+        ) {
+          if (result.kind === 'ready')
+            setPersistence({
+              canSave: context?.canSave ?? null,
+              attempt: createSaveExtractionAttempt(context, {
+                method: 'pdf-text',
+                engineVersion: extractionEngineVersions['pdf-text'],
+                pages: result.pages,
+                partial: result.partial,
+                partialReason: result.reason ?? null,
+                downsized: false,
+              }),
+            });
           setState({ mode: 'pdf', value: result });
+        }
       }
     };
     void run()
@@ -238,6 +298,7 @@ export function DocumentTextDialog({
               controller.current?.abort();
               setPageNumber(value);
               setAttempt(0);
+              setPersistence(null);
               setState({ mode: 'ocr', value: { kind: 'idle' } });
             }}
             disabled={!enabled || state?.value.kind === 'loading'}
@@ -273,6 +334,14 @@ export function DocumentTextDialog({
             state={state.value}
             onRetry={retry}
             onCancel={onClose}
+          />
+        )}
+        {enabled && state?.value.kind === 'ready' && (
+          <SaveExtractionPanel
+            path={extractionPath(source.patientId, source.documentId)}
+            attempt={persistence?.attempt ?? null}
+            canSave={persistence?.canSave ?? null}
+            onDenied={onDenied}
           />
         )}
       </DialogContent>

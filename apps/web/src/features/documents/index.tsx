@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { FileText, UploadCloud, UserRound } from 'lucide-react';
 import './upload.css';
 import { DocumentTextDialog } from './DocumentTextDialog';
+import { SavedExtractionDialog } from './SavedExtractionDialog';
+import type { SavedTextSource } from './SavedExtractionDialog';
 import type { DocumentTextSource } from './DocumentTextDialog';
 import { DuplicateUploadNotice } from './DuplicateUploadNotice';
 import {
@@ -170,7 +172,9 @@ export function DocumentsPanel({
     url: string;
     mime: string;
   } | null>(null);
-  const [extraction, setExtraction] = useState<DocumentTextSource | null>(null);
+  const [extraction, setExtraction] = useState<
+    DocumentTextSource | SavedTextSource | null
+  >(null);
   const extractionTrigger = useRef<HTMLButtonElement | null>(null);
   const extractionRestoreFocus = useRef(false);
   const [actionError, setActionError] = useState('');
@@ -806,6 +810,25 @@ export function DocumentsPanel({
                         Recognize text (OCR)
                       </Button>
                     )}
+                  {doc.canView && (
+                    <Button
+                      variant="ghost"
+                      disabled={busy || patientsLoading}
+                      aria-label={`Saved text ${doc.title}`}
+                      onClick={(event) => {
+                        extractionTrigger.current = event.currentTarget;
+                        setExtraction({
+                          kind: 'saved',
+                          patientId: patientId!,
+                          documentId: doc.id,
+                          title: doc.title,
+                          bytes: doc.bytes,
+                        });
+                      }}
+                    >
+                      Saved text
+                    </Button>
+                  )}
                   {doc.canExport && (
                     <Button
                       variant="ghost"
@@ -973,29 +996,53 @@ export function DocumentsPanel({
           )}
         </DialogContent>
       </Dialog>
-      {extraction && extraction.patientId === displayPatient.id && (
-        <DocumentTextDialog
-          source={extraction}
-          enabled={
-            !busy && !patientsLoading && patientId === extraction.patientId
-          }
-          onClose={() => setExtraction(null)}
-          onDenied={denyExtraction}
-          restoreFocus={() => {
-            if (busy || patientsLoading) {
-              extractionRestoreFocus.current = true;
-              return;
+      {extraction &&
+        extraction.patientId === displayPatient.id &&
+        (extraction.kind === 'saved' ? (
+          <SavedExtractionDialog
+            source={extraction}
+            enabled={
+              !busy && !patientsLoading && patientId === extraction.patientId
             }
-            (extractionTrigger.current?.isConnected &&
-            !extractionTrigger.current.disabled
-              ? extractionTrigger.current
-              : (panel.current?.querySelector<HTMLButtonElement>(
-                  '[aria-label="Document views"] button[aria-pressed="true"]',
-                ) ?? panel.current)
-            )?.focus();
-          }}
-        />
-      )}
+            onClose={() => setExtraction(null)}
+            onDenied={denyExtraction}
+            restoreFocus={() => {
+              if (busy || patientsLoading) {
+                extractionRestoreFocus.current = true;
+                return;
+              }
+              (extractionTrigger.current?.isConnected &&
+              !extractionTrigger.current.disabled
+                ? extractionTrigger.current
+                : (panel.current?.querySelector<HTMLButtonElement>(
+                    '[aria-label="Document views"] button[aria-pressed="true"]',
+                  ) ?? panel.current)
+              )?.focus();
+            }}
+          />
+        ) : (
+          <DocumentTextDialog
+            source={extraction}
+            enabled={
+              !busy && !patientsLoading && patientId === extraction.patientId
+            }
+            onClose={() => setExtraction(null)}
+            onDenied={denyExtraction}
+            restoreFocus={() => {
+              if (busy || patientsLoading) {
+                extractionRestoreFocus.current = true;
+                return;
+              }
+              (extractionTrigger.current?.isConnected &&
+              !extractionTrigger.current.disabled
+                ? extractionTrigger.current
+                : (panel.current?.querySelector<HTMLButtonElement>(
+                    '[aria-label="Document views"] button[aria-pressed="true"]',
+                  ) ?? panel.current)
+              )?.focus();
+            }}
+          />
+        ))}
       <Dialog
         open={!!preview && preview.id === displayPatient.id}
         onOpenChange={(open) => {

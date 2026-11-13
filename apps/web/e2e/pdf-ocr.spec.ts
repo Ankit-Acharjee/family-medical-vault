@@ -1,3 +1,4 @@
+import { mockExtractionContext } from './support/extraction-context';
 import { deflateSync } from 'node:zlib';
 import { expect, test, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
@@ -180,6 +181,7 @@ async function setup(
     )
       external.push(url.href);
   });
+  await mockExtractionContext(page);
   await page.route('**/api/auth/bootstrap', (route) =>
     route.fulfill({ json: { enabled: true, csrf: 'c'.repeat(43) } }),
   );
@@ -521,6 +523,13 @@ for (const phase of ['PDF parser', 'OCR engine'] as const) {
         ? /pdf\.worker[^/]*\.mjs(?:\?.*)?$/
         : '**/ocr-assets/v7/worker.js',
       async (route) => {
+        if (
+          phase === 'PDF parser' &&
+          new URL(route.request().url()).searchParams.has('url')
+        ) {
+          await route.continue();
+          return;
+        }
         requests++;
         if (hold) await gate;
         await route.continue().catch(() => {});
@@ -613,6 +622,10 @@ test('renderer initialization failure cannot fall back to page drawing or start 
   await setup(page);
   let injected = false;
   await page.route(/pdf\.renderer[^/]*\.mjs(?:\?.*)?$/, async (route) => {
+    if (new URL(route.request().url()).searchParams.has('url')) {
+      await route.continue();
+      return;
+    }
     const response = await route.fetch();
     const original = await response.text();
     const marker = 'handler.on("InitializeGraphics", async data => {';
@@ -668,6 +681,10 @@ for (const operation of ['cancel', 'timeout'] as const) {
     await setup(page);
     let rendererRequests = 0;
     await page.route(/pdf\.renderer[^/]*\.mjs(?:\?.*)?$/, async (route) => {
+      if (new URL(route.request().url()).searchParams.has('url')) {
+        await route.continue();
+        return;
+      }
       rendererRequests++;
       const response = await route.fetch();
       const original = await response.text();
@@ -766,7 +783,15 @@ test('missing embedded scan dimensions fail without recognizing an omitted image
   );
   await expect(dialog(page)).not.toContainText(/no text was recognized/i);
   expect(ocrWorkers).toBe(0);
-  expect(api.logs).toEqual([]);
+  const diagnostics = api.logs.join('\n');
+  for (const marker of [
+    sourceTitle,
+    firstText,
+    secondText,
+    'Image dimensions are missing',
+    'Image exceeded maximum allowed size',
+  ])
+    expect(diagnostics).not.toContain(marker);
 });
 
 test('unsupported embedded image decoding fails rather than silently recognizing a blank page', async ({

@@ -20,6 +20,7 @@ import { CaregiverService } from '../../dist/access/caregiver.service.js';
 import { hashInvitationToken } from '../../dist/access/invitation.js';
 import { PrismaDocumentStore } from '../../dist/documents/document.store.js';
 import { DocumentIntake } from '../../dist/documents/intake.js';
+import { ExtractionService } from '../../dist/documents/extraction.service.js';
 import { MemoryObjectStore } from '../../dist/documents/memory-object-store.js';
 import { AuthService } from '../../dist/auth/auth.service.js';
 import { digest } from '../../dist/auth/auth.crypto.js';
@@ -328,15 +329,15 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
         );
         assert.equal(
           result.rowCount,
-          10,
-          'All ten foundation through document trash migrations must exist',
+          11,
+          'All eleven foundation through saved-extraction migrations must exist',
         );
         assert.equal(
           result.rows
             .map((row) => row.migration_name)
             .sort()
             .join(','),
-          '20261105000100_foundation,20261105000300_auth_sessions,20261105000400_person_identity,20261110000100_patient_permissions,20261110000200_document_intake,20261110000300_caregiver_approvals,20261111000100_object_generations,20261111000200_patient_object_layout,20261112000100_document_display_titles,20261112000200_document_trash',
+          '20261105000100_foundation,20261105000300_auth_sessions,20261105000400_person_identity,20261110000100_patient_permissions,20261110000200_document_intake,20261110000300_caregiver_approvals,20261111000100_object_generations,20261111000200_patient_object_layout,20261112000100_document_display_titles,20261112000200_document_trash,20261113000100_saved_extractions',
         );
         assert.ok(result.rows.every((row) => row.finished && row.active));
       }
@@ -432,7 +433,7 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           .map((row) => row.tablename)
           .sort()
           .join(','),
-        'access_events,access_grant_dependencies,access_grants,access_invitations,app_accounts,auth_rate_limits,auth_sessions,document_categories,document_events,document_object_attempts,documents,persons',
+        'access_events,access_grant_dependencies,access_grants,access_invitations,app_accounts,auth_rate_limits,auth_sessions,document_categories,document_events,document_extractions,document_object_attempts,documents,persons',
         'Only reviewed application tables may exist',
       );
       const permissions = await query(
@@ -856,6 +857,7 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           'documents',
           'document_events',
           'document_object_attempts',
+          'document_extractions',
         ];
         const flags = await query(
           runtime,
@@ -2698,6 +2700,400 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           );
         } finally {
           await service.onModuleDestroy();
+        }
+      },
+    );
+
+    await stage(
+      'saved extraction fences versions, replays safely, rolls back and enforces database constraints',
+      async () => {
+        const runtime = await connect(runtimeUrl);
+        const people = new PrismaPersonStore(runtimeUrl.href);
+        const access = new PrismaAccessStore(runtimeUrl.href);
+        const store = new PrismaDocumentStore(runtimeUrl.href);
+        const other = new PrismaDocumentStore(runtimeUrl.href);
+        const principal = {
+          issuer: 'https://saved-extraction.example.test',
+          subject: randomUUID(),
+        };
+        const reader = { issuer: principal.issuer, subject: randomUUID() };
+        try {
+          const patient = await people.create(
+            principal,
+            'Synthetic extraction owner',
+          );
+          const readerPerson = await people.create(
+            reader,
+            'Synthetic extraction reader',
+          );
+          const ownerAccountId = (
+            await query(
+              runtime,
+              'SELECT owner_account_id FROM fmv.persons WHERE id=$1::uuid',
+              [patient.id],
+            )
+          ).rows[0].owner_account_id;
+          const readerAccountId = (
+            await query(
+              runtime,
+              'SELECT owner_account_id FROM fmv.persons WHERE id=$1::uuid',
+              [readerPerson.id],
+            )
+          ).rows[0].owner_account_id;
+          const permissions = new PermissionService(access);
+          const authorize = (p, a, target) =>
+            permissions.require(principal, p, a, target);
+          const bytes = Buffer.from(
+            '%PDF-1.7\nSynthetic saved extraction original\n%%EOF',
+          );
+          const hash = createHash('sha256').update(bytes).digest('hex');
+          const core = new DocumentIntake(
+            store.asActor(ownerAccountId),
+            new MemoryObjectStore(),
+          );
+          const upload = await core.begin(
+            patient.id,
+            {
+              title: 'Synthetic extraction.pdf',
+              mimeType: 'application/pdf',
+              bytes: bytes.length,
+              sha256: hash,
+              idempotencyKey: randomUUID(),
+            },
+            authorize,
+          );
+          await core.content(patient.id, upload.uploadId, bytes, authorize);
+          await core.finalize(patient.id, upload.uploadId, authorize);
+          const id = upload.documentId;
+          const service = new ExtractionService(permissions, store);
+          const make = (
+            context,
+            text = 'Private synthetic extracted text',
+          ) => ({
+            requestId: randomUUID(),
+            expectedRevision: context.revision,
+            lifecycleVersion: context.lifecycleVersion,
+            sourceSha256: context.sourceSha256,
+            result: {
+              method: 'pdf-text',
+              engineVersion: 'pdfjs-6.5.438',
+              pages: [{ page: 1, text }],
+              partial: false,
+              partialReason: null,
+              downsized: false,
+            },
+          });
+          const context = (await service.read(principal, patient.id, id, false))
+            .context;
+          assert.equal(context.canSave, true);
+          assert.equal(context.revision, 0);
+          const input = make(context);
+          assert.deepEqual(
+            await service.save(principal, patient.id, id, input),
+            { saved: true, revision: 1 },
+          );
+          assert.deepEqual(
+            await service.save(principal, patient.id, id, {
+              ...input,
+              result: {
+                ...input.result,
+                pages: [{ text: input.result.pages[0].text, page: 1 }],
+              },
+            }),
+            { saved: true, revision: 1 },
+          );
+          assert.equal(
+            (
+              await query(
+                runtime,
+                "SELECT count(*)::int n FROM fmv.document_events WHERE document_id=$1::uuid AND kind='document.extraction_saved'",
+                [id],
+              )
+            ).rows[0].n,
+            1,
+          );
+          const viewGrant = await insertGrant(
+            runtime,
+            {
+              patientId: patient.id,
+              caregiverAccountId: readerAccountId,
+              ownerAccountId,
+            },
+            { actions: ['view'], scopeKind: 'document', documentId: id },
+          );
+          assert.equal(
+            (await service.read(reader, patient.id, id)).snapshot.pages[0].text,
+            input.result.pages[0].text,
+          );
+          await assert.rejects(
+            () =>
+              service.save(
+                reader,
+                patient.id,
+                id,
+                make({ ...context, revision: 1 }),
+              ),
+            (e) => e.getStatus() === 404,
+          );
+          const editGrant = await insertGrant(
+            runtime,
+            {
+              patientId: patient.id,
+              caregiverAccountId: readerAccountId,
+              ownerAccountId,
+            },
+            { actions: ['edit'], scopeKind: 'document', documentId: id },
+          );
+          const current = (await service.read(reader, patient.id, id, false))
+            .context;
+          assert.equal(current.canSave, true);
+          const attempts = [
+            make(current, 'Synthetic A'),
+            make(current, 'Synthetic B'),
+          ];
+          const callback = async () => ({
+            accountId: ownerAccountId,
+            canSave: true,
+          });
+          const raced = await Promise.all([
+            store.saveExtraction(patient.id, id, attempts[0], callback),
+            other.saveExtraction(patient.id, id, attempts[1], callback),
+          ]);
+          assert.equal(raced.filter((v) => v === 'conflict').length, 1);
+          assert.equal(
+            raced.filter((v) => v.saved === true && v.revision === 2).length,
+            1,
+          );
+          const latest = (await service.read(principal, patient.id, id))
+            .snapshot;
+          const nextContext = (
+            await service.read(principal, patient.id, id, false)
+          ).context;
+          let checks = 0;
+          await assert.rejects(() =>
+            store.saveExtraction(
+              patient.id,
+              id,
+              make(nextContext, 'Must roll back'),
+              async () => {
+                if (++checks === 2)
+                  throw new Error('Synthetic final authorization failure');
+                return callback();
+              },
+            ),
+          );
+          assert.deepEqual(
+            (await service.read(principal, patient.id, id)).snapshot,
+            latest,
+          );
+          assert.equal(
+            (
+              await query(
+                runtime,
+                "SELECT count(*)::int n FROM fmv.document_events WHERE document_id=$1::uuid AND kind='document.extraction_saved'",
+                [id],
+              )
+            ).rows[0].n,
+            2,
+          );
+          const target = { kind: 'document', documentId: id };
+          const edit = () =>
+            permissions.require(principal, patient.id, 'edit', target, true);
+          await store.changeTrash(
+            patient.id,
+            id,
+            'trash',
+            ownerAccountId,
+            edit,
+          );
+          await accessDenied(() => service.read(principal, patient.id, id));
+          await store.changeTrash(
+            patient.id,
+            id,
+            'restore',
+            ownerAccountId,
+            edit,
+          );
+          assert.deepEqual(
+            (await service.read(principal, patient.id, id)).snapshot,
+            latest,
+            'restored saved text survives its original lifecycle',
+          );
+          const after = (await service.read(principal, patient.id, id, false))
+            .context;
+          assert.equal(
+            after.lifecycleVersion,
+            nextContext.lifecycleVersion + 2,
+          );
+          await assert.rejects(
+            () => service.save(principal, patient.id, id, make(nextContext)),
+            (e) => e.getStatus() === 409,
+          );
+          const beforeNoop = after.lifecycleVersion;
+          await store.changeTrash(
+            patient.id,
+            id,
+            'restore',
+            ownerAccountId,
+            edit,
+          );
+          assert.equal(
+            (await service.read(principal, patient.id, id, false)).context
+              .lifecycleVersion,
+            beforeNoop,
+          );
+          await query(
+            runtime,
+            'UPDATE fmv.access_grants SET revoked_at=statement_timestamp() WHERE id=$1::uuid',
+            [editGrant.id],
+          );
+          await assert.rejects(
+            () => service.save(reader, patient.id, id, make(after)),
+            (e) => e.getStatus() === 404,
+          );
+          await query(
+            runtime,
+            'UPDATE fmv.access_grants SET revoked_at=statement_timestamp() WHERE id=$1::uuid',
+            [viewGrant.id],
+          );
+          await accessDenied(() => service.read(reader, patient.id, id));
+          for (const sql of [
+            'DELETE FROM fmv.document_extractions',
+            'UPDATE fmv.documents SET extraction_lifecycle=0',
+            'UPDATE fmv.document_extractions SET saved_at=clock_timestamp()',
+            'UPDATE fmv.document_extractions SET patient_id=patient_id',
+          ]) {
+            await assert.rejects(() => runtime.query(sql));
+          }
+          const validResult = JSON.stringify(input.result);
+          assert.equal(
+            (
+              await query(
+                runtime,
+                'SELECT fmv.extraction_result_valid($1::jsonb) ok',
+                [validResult],
+              )
+            ).rows[0].ok,
+            true,
+          );
+          for (const invalid of [
+            {
+              ...input.result,
+              pages: [{ page: 1, text: '😀'.repeat(250001) }],
+            },
+            { ...input.result, pages: [{ page: 1, text: 'x'.repeat(500001) }] },
+            { ...input.result, pages: [{ page: 2, text: 'Gap' }] },
+            { ...input.result, pages: [{ page: 1, text: '   ' }] },
+            { ...input.result, engineVersion: 'unknown' },
+          ]) {
+            assert.equal(
+              (
+                await query(
+                  runtime,
+                  'SELECT fmv.extraction_result_valid($1::jsonb) ok',
+                  [JSON.stringify(invalid)],
+                )
+              ).rows[0].ok,
+              false,
+            );
+          }
+          const fresh = (await service.read(principal, patient.id, id, false))
+            .context;
+          await service.save(
+            principal,
+            patient.id,
+            id,
+            make(fresh, 'Fresh post-restore text'),
+          );
+          const stable = (await service.read(principal, patient.id, id))
+            .snapshot;
+          for (const changes of [
+            [
+              'result=$1::jsonb,revision=revision+1',
+              [
+                JSON.stringify({
+                  ...input.result,
+                  pages: [{ page: 1, text: 'x'.repeat(500001) }],
+                }),
+              ],
+            ],
+            ['source_sha256=$1,revision=revision+1', ['b'.repeat(64)]],
+            ['lifecycle_version=$1,revision=revision+1', [0]],
+          ]) {
+            const [assignment, values] = changes;
+            await assert.rejects(() =>
+              runtime.query(
+                `UPDATE fmv.document_extractions SET ${assignment} WHERE document_id=$2::uuid`,
+                [...values, id],
+              ),
+            );
+          }
+          assert.deepEqual(
+            (await service.read(principal, patient.id, id)).snapshot,
+            stable,
+          );
+          // A concurrent Trash waits for the same original-row lock; a successful
+          // save can linearize before Trash, but never republish while trashed.
+          const raceContext = (
+            await service.read(principal, patient.id, id, false)
+          ).context;
+          const entered = deferred(),
+            release = deferred();
+          let calls = 0,
+            trashed = false;
+          const saving = store.saveExtraction(
+            patient.id,
+            id,
+            make(raceContext, 'Saved before concurrent Trash'),
+            async () => {
+              if (++calls === 1) {
+                entered.resolve();
+                await release.promise;
+              }
+              return callback();
+            },
+          );
+          await entered.promise;
+          const trashing = other
+            .changeTrash(patient.id, id, 'trash', ownerAccountId, edit)
+            .then((v) => {
+              trashed = true;
+              return v;
+            });
+          await delay(30);
+          assert.equal(trashed, false);
+          release.resolve();
+          assert.equal((await saving).saved, true);
+          assert.equal(await trashing, 'changed');
+          await accessDenied(() => service.read(principal, patient.id, id));
+          await store.changeTrash(
+            patient.id,
+            id,
+            'restore',
+            ownerAccountId,
+            edit,
+          );
+          await assert.rejects(
+            () => service.save(principal, patient.id, id, make(raceContext)),
+            (e) => e.getStatus() === 409,
+          );
+          const invariant = (
+            await query(
+              runtime,
+              'SELECT sha256,bytes,state FROM fmv.documents WHERE id=$1::uuid',
+              [id],
+            )
+          ).rows[0];
+          assert.deepEqual(invariant, {
+            sha256: hash,
+            bytes: bytes.length,
+            state: 'ready',
+          });
+        } finally {
+          await people.onModuleDestroy();
+          await access.onModuleDestroy();
+          await store.onModuleDestroy();
+          await other.onModuleDestroy();
         }
       },
     );

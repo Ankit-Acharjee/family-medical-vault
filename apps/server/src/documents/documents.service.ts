@@ -19,15 +19,19 @@ import type { Principal } from '../identity/person.store.js';
 import { DocumentIntake } from './intake.js';
 import type { IntakeRecord } from './intake.js';
 import { DocumentStore } from './document.store.js';
+import { ExtractionService } from './extraction.service.js';
 import type { ObjectStore } from './object-store.js';
 
 @Injectable()
 export class DocumentsService {
+  readonly extraction: ExtractionService;
   constructor(
     private readonly permissions: PermissionService,
     private readonly store: DocumentStore,
     private readonly objects: ObjectStore,
-  ) {}
+  ) {
+    this.extraction = new ExtractionService(permissions, store);
+  }
   private permitted(s: AccessSnapshot, action?: PermissionAction) {
     return (
       s.patient?.ownerAccountId === s.accountId ||
