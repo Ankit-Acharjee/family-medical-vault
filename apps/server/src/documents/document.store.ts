@@ -11,9 +11,12 @@ import type {
   SaveExtraction,
   SaveExtractionResult,
   UploadState,
+  DocumentSearchInput,
+  DocumentSearchResult,
 } from '@fmv/contracts';
 import type { IntakeStore, IntakeMetadata, IntakeRecord } from './intake.js';
 import { readExtraction, saveExtraction } from './extraction.store.js';
+import { searchExtractions } from './extraction-search.store.js';
 
 export type ExtractionSource = {
   documentId: string;
@@ -30,8 +33,23 @@ export type ExtractionAuthorization = (
   source: ExtractionSource,
 ) => Promise<ExtractionAuthority>;
 
+export type SearchDocument = Pick<
+  ExtractionSource,
+  'documentId' | 'patientId' | 'categoryId' | 'state' | 'deletedAt'
+>;
+export type SearchAuthorization = (
+  sources: SearchDocument[],
+) => Promise<string>;
+
 export type TrashChangeResult = 'changed' | 'unchanged' | 'missing' | 'expired';
 export abstract class DocumentStore {
+  abstract searchExtractions(
+    patientId: string,
+    input: DocumentSearchInput,
+    eligibleIds: string[],
+    authorize: SearchAuthorization,
+  ): Promise<DocumentSearchResult>;
+
   abstract readExtraction(
     patientId: string,
     documentId: string,
@@ -116,6 +134,14 @@ export class PrismaDocumentStore
       }),
       log: [],
     });
+  }
+  searchExtractions(
+    patientId: string,
+    input: DocumentSearchInput,
+    eligibleIds: string[],
+    authorize: SearchAuthorization,
+  ) {
+    return searchExtractions(this.db, patientId, input, eligibleIds, authorize);
   }
   asActor(accountId: string): IntakeStore {
     return {

@@ -98,6 +98,15 @@ export class DocumentsController {
     }
     return this.documents.extraction.save(principal, p, d, body);
   }
+  @Post('documents/search')
+  @HttpCode(200)
+  async search(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Body() body: unknown,
+  ) {
+    return this.documents.search(await this.principal(req), p, body);
+  }
   @Get('documents') async list(
     @Req() req: Request,
     @Param('patientId') p: string,

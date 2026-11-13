@@ -12,7 +12,9 @@ import type {
   PermissionAction,
   UploadResult,
   TrashDocumentsResult,
+  DocumentSearchResult,
 } from '@fmv/contracts';
+import { isDocumentSearchInput } from '@fmv/contracts';
 import { PermissionService, isUuid } from '../access/permission.service.js';
 import type { AccessSnapshot } from '../access/access.store.js';
 import type { Principal } from '../identity/person.store.js';
@@ -84,6 +86,49 @@ export class DocumentsService {
       .map((r) => this.summary(r, current, categories))
       .filter((r) => r.canView || r.canExport);
     return { documents, storageReady: this.objects.ready };
+  }
+  async search(
+    principal: Principal,
+    patientId: string,
+    input: unknown,
+  ): Promise<DocumentSearchResult> {
+    // Reuse metadata eligibility and the existing authoritative action evaluator.
+    // Export may reveal filenames but never text-derived match membership.
+    const listed = await this.list(principal, patientId);
+    if (!isDocumentSearchInput(input)) throw new BadRequestException();
+    const eligibleIds = listed.documents
+      .filter((row) => row.canView)
+      .map((row) => row.id);
+    if (!eligibleIds.length) return { documentIds: [], truncated: false };
+    try {
+      return await this.store.searchExtractions(
+        patientId,
+        { ...input, query: input.query.trim() },
+        eligibleIds,
+        async (rows) => {
+          const current = await this.permissions.snapshot(principal, patientId);
+          if (!this.permitted(current)) throw new NotFoundException();
+          for (const row of rows) {
+            if (
+              row.patientId !== patientId ||
+              row.state !== 'ready' ||
+              row.deletedAt ||
+              !this.permissions.allows(
+                current,
+                'view',
+                { kind: 'document', documentId: row.documentId },
+                { ...row, id: row.documentId },
+              )
+            )
+              throw new NotFoundException();
+          }
+          return current.accountId!;
+        },
+      );
+    } catch (error) {
+      if (error instanceof NotFoundException) throw error;
+      throw new ServiceUnavailableException();
+    }
   }
   private summary(
     r: IntakeRecord & { displayTitle?: string | null },

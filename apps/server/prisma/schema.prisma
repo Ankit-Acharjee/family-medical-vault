@@ -227,11 +227,14 @@ model DocumentExtraction {
   payloadHash      String     @map("payload_hash")
   actorAccountId   String     @map("actor_account_id") @db.Uuid
   result           Json       @db.JsonB
+  /// Stored generated column owned by the reviewed SQL migration. Never write directly.
+  searchTerms      String[]   @default(dbgenerated()) @map("search_terms")
   savedAt          DateTime   @default(dbgenerated("clock_timestamp()")) @map("saved_at") @db.Timestamptz(3)
   document         Document   @relation(fields: [patientId, documentId], references: [patientId, id], onDelete: Cascade)
   actor            AppAccount @relation(fields: [actorAccountId], references: [id], onDelete: Restrict)
 
   @@unique([patientId, documentId])
+  @@index([searchTerms], type: Gin, map: "document_extractions_search_terms_idx")
   @@map("document_extractions")
   @@schema("fmv")
 }

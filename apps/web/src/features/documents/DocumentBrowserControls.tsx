@@ -68,7 +68,7 @@ export function DocumentBrowserControls({
             className="mt-1 w-full min-w-0 border-input focus-visible:outline-ring rounded-xl"
           />
           <p id={`${queryId}-help`} className={helpClass}>
-            Search document titles and original filenames.
+            Search titles, original filenames and saved text you can view.
           </p>
         </div>
 

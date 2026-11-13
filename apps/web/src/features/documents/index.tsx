@@ -16,6 +16,13 @@ import {
   DocumentTitleEditor,
 } from './DocumentBrowserControls';
 import type { BrowseFilters } from './DocumentBrowserControls';
+import { DocumentSearchNotice } from './DocumentSearchNotice';
+import {
+  documentFilterError,
+  matchesDocumentFilters,
+  matchesDocumentTitle,
+  useDocumentSearch,
+} from './useDocumentSearch';
 import { documentMimeTypes, maximumDocumentBytes } from '@fmv/contracts';
 import type {
   AuthBootstrap,
@@ -165,6 +172,11 @@ export function DocumentsPanel({
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [version, setVersion] = useState(0);
+  const [searchRevision, setSearchRevision] = useState(0);
+  const refreshTextSearch = useCallback(
+    () => setSearchRevision((n) => n + 1),
+    [],
+  );
   const [preview, setPreview] = useState<{
     id: string;
     title: string;
@@ -593,43 +605,38 @@ export function DocumentsPanel({
       }
     }
   }
-  if (!displayPatient) return <p>Select a patient to view documents.</p>;
   const current =
-    list?.id === displayPatient.id &&
+    list &&
+    list.id === displayPatient?.id &&
     list.view === 'active' &&
     view === 'active'
       ? list.value
       : null;
   const trash =
-    list?.id === displayPatient.id && list.view === 'trash' && view === 'trash'
+    list &&
+    list.id === displayPatient?.id &&
+    list.view === 'trash' &&
+    view === 'trash'
       ? list.value
       : null;
-  const dateValid = (date: string) =>
-    !date ||
-    (/^\d{4}-\d{2}-\d{2}$/.test(date) &&
-      !Number.isNaN(Date.parse(date)) &&
-      new Date(date).toISOString().slice(0, 10) === date);
-  const filterError =
-    !dateValid(filters.from) || !dateValid(filters.to)
-      ? 'Enter valid upload dates.'
-      : filters.from && filters.to && filters.from > filters.to
-        ? 'The start date must be on or before the end date.'
-        : '';
-  const query = filters.query.trim().toLowerCase();
+  const filterError = documentFilterError(filters);
+  const search = useDocumentSearch({
+    patientId,
+    documents: current?.documents ?? null,
+    filters,
+    suspended: busy || patientsLoading || view !== 'active',
+    revision: `${version}:${refreshRevision}:${searchRevision}`,
+    onDenied: denyExtraction,
+  });
   const filtered = filterError
     ? []
-    : (current?.documents ?? []).filter((doc) => {
-        const date = new Date(doc.createdAt);
-        const day = `${String(date.getFullYear()).padStart(4, '0')}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-        return (
-          (!query ||
-            doc.title.toLowerCase().includes(query) ||
-            (doc.originalTitle ?? doc.title).toLowerCase().includes(query)) &&
-          (!filters.category || doc.categoryId === filters.category) &&
-          (!filters.from || day >= filters.from) &&
-          (!filters.to || day <= filters.to)
-        );
-      });
+    : (current?.documents ?? []).filter(
+        (doc) =>
+          matchesDocumentFilters(doc, filters) &&
+          (matchesDocumentTitle(doc, filters.query) ||
+            (doc.canView && search.documentIds.has(doc.id))),
+      );
+  if (!displayPatient) return <p>Select a patient to view documents.</p>;
   const categories = [
     ...new Map(
       (current?.documents ?? []).map((doc) => [
@@ -702,6 +709,11 @@ export function DocumentsPanel({
           <p className="mt-2 text-sm text-muted-foreground">
             Upload dates use your local time.
           </p>
+          <DocumentSearchNotice
+            status={search.status}
+            truncated={search.truncated}
+            onRetry={search.retry}
+          />
           {filtered.length ? (
             <ul className="mt-4 grid gap-3">
               {filtered.map((doc) => (
@@ -710,6 +722,11 @@ export function DocumentsPanel({
                   className="min-w-0 rounded-2xl border border-border bg-card p-4 [overflow-wrap:anywhere]"
                 >
                   <span className="block font-medium">{doc.title}</span>
+                  {doc.canView && search.documentIds.has(doc.id) ? (
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Saved text match · Unverified
+                    </p>
+                  ) : null}
                   <span className="mb-2 block text-sm text-muted-foreground">
                     {doc.categoryName ?? 'Unclassified'} · Uploaded{' '}
                     {new Date(doc.createdAt).toLocaleDateString()}
@@ -1022,6 +1039,7 @@ export function DocumentsPanel({
           />
         ) : (
           <DocumentTextDialog
+            onSaved={refreshTextSearch}
             source={extraction}
             enabled={
               !busy && !patientsLoading && patientId === extraction.patientId

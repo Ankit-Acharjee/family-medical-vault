@@ -1,0 +1,82 @@
+[
+  {
+    "input": {
+      "query": "!@#$%^&*()_+-=[]{};':\",./<>?\\|`~"
+    },
+    "valid": true
+  },
+  {
+    "input": {
+      "query": "caf\u00e9 \u2615 \u65e5\u672c\u8a9e \ud83d\ude42"
+    },
+    "valid": true
+  },
+  {
+    "input": {
+      "query": "quarterly report",
+      "categoryId": "018f3a2b-7c8d-7e4f-9a1b-2c3d4e5f6a7b",
+      "uploadedFrom": "2024-03-01T00:00:00.000Z",
+      "uploadedBefore": "2024-03-02T12:00:00.000Z"
+    },
+    "valid": true
+  },
+  {
+    "input": {
+      "query": ""
+    },
+    "valid": false
+  },
+  {
+    "input": {
+      "query": null
+    },
+    "valid": false
+  },
+  {
+    "input": {
+      "query": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "valid": false
+  },
+  {
+    "input": {
+      "query": "bad\u0000point"
+    },
+    "valid": false
+  },
+  {
+    "input": {
+      "query": "unpaired \ud83d"
+    },
+    "valid": false
+  },
+  {
+    "input": {
+      "query": "x",
+      "extra": true
+    },
+    "valid": false
+  },
+  {
+    "input": {
+      "query": "x",
+      "categoryId": "550e8400-e29b-c1d4-a716-446655440000"
+    },
+    "valid": false
+  },
+  {
+    "input": {
+      "query": "x",
+      "uploadedFrom": "2024-01-15T10:30:00.000Z",
+      "uploadedBefore": "2024-01-14T10:30:00.000Z"
+    },
+    "valid": false
+  },
+  {
+    "input": {
+      "query": "x",
+      "uploadedFrom": "2024-01-15T10:30:00Z"
+    },
+    "valid": false
+  }
+]

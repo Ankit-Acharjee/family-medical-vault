@@ -109,3 +109,4 @@ export type BeginUpload = {
 };
 
 export * from './extractions.js';
+export * from './document-search.js';

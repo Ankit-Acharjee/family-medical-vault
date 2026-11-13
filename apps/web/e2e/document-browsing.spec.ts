@@ -49,6 +49,9 @@ async function setup(page: Page) {
   let releaseList: (() => void) | undefined;
   const listUrls: string[] = [];
   const saves: unknown[] = [];
+  await page.route('**/api/patients/*/documents/search', (route) =>
+    route.fulfill({ json: { documentIds: [], truncated: false } }),
+  );
   await page.route('**/api/auth/bootstrap', (route) =>
     route.fulfill({ json: { enabled: true, csrf: 'c'.repeat(43) } }),
   );

@@ -8,11 +8,13 @@ export function SaveExtractionPanel({
   attempt,
   canSave,
   onDenied,
+  onSaved,
 }: {
   path: string;
   attempt: SaveExtractionAttempt | null;
   canSave: boolean | null;
   onDenied: () => void;
+  onSaved?: (() => void) | undefined;
 }) {
   const [state, setState] = useState<
     'idle' | 'pending' | 'saved' | 'uncertain' | 'conflict' | 'failed'
@@ -96,7 +98,10 @@ export function SaveExtractionPanel({
       }
       const value: unknown = await response.json();
       if (!isSaveExtractionResult(value)) throw new Error();
-      if (!abort.signal.aborted) setState('saved');
+      if (!abort.signal.aborted) {
+        setState('saved');
+        onSaved?.();
+      }
     } catch {
       if (!abort.signal.aborted || timedOut) setState('uncertain');
     } finally {

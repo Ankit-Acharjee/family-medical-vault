@@ -56,6 +56,9 @@ async function setup(page: Page, initiallyTrashed = false) {
   let release: (() => void) | undefined;
   const writes: string[] = [];
   const reads: string[] = [];
+  await page.route('**/api/patients/*/documents/search', (route) =>
+    route.fulfill({ json: { documentIds: [], truncated: false } }),
+  );
   await page.route('**/api/auth/bootstrap', (route) =>
     route.fulfill({ json: { enabled: true, csrf: 'c'.repeat(43) } }),
   );

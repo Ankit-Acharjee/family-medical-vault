@@ -35,12 +35,14 @@ export function DocumentTextDialog({
   enabled,
   onClose,
   onDenied,
+  onSaved,
   restoreFocus,
 }: {
   source: DocumentTextSource;
   enabled: boolean;
   onClose: () => void;
   onDenied: () => void;
+  onSaved?: () => void;
   restoreFocus: () => void;
 }) {
   const imageOcr = source.kind === 'ocr';
@@ -342,6 +344,7 @@ export function DocumentTextDialog({
             attempt={persistence?.attempt ?? null}
             canSave={persistence?.canSave ?? null}
             onDenied={onDenied}
+            onSaved={onSaved}
           />
         )}
       </DialogContent>
