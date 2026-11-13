@@ -1,6 +1,6 @@
 # P3 — Search saved extraction (DOC-05, AI-01/AI-02/AI-05/AI-06)
 
-Status: implemented, reviewed and locally verified; see `p3-extraction-search-report.md`. Authorized by the standing automated workflow. No routine plan approval needed; hosted migration application remains separately gated.
+Status: implemented, reviewed and locally verified; see `p3-extraction-search-report.md`. Authorized by the standing automated workflow. No routine plan approval needed; the separately approved hosted development migration and read-only postflight are complete.
 
 - Benchmark native PostgreSQL search locally on synthetic normal and adversarial saved results before selecting an index. No Docker, secrets or hosted benchmark.
 - Extend existing active Documents search: union current title/original filename substring matches with server-side saved-text term matches. No new routes/screens, external AI, snippets, invented metadata or clinical verification.
