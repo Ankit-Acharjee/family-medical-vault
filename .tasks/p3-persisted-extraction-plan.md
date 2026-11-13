@@ -1,6 +1,6 @@
 # Next slice: explicitly saved unverified extraction
 
-Status: implementation and local verification complete; see `p3-persisted-extraction-report.md`. Hosted migration application remains separately gated.
+Status: implementation and local verification complete; see `p3-persisted-extraction-report.md`. The user separately approved hosted development application; migration and read-only postflight are complete.
 Requirements: AI-01/AI-02/AI-05/AI-06 and DOC-05 foundations. Read canonical extraction, document, access, security, deletion and backup requirements before implementation.
 
 ## Proposed bounded delivery
