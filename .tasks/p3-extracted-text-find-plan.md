@@ -1,6 +1,6 @@
 # Next slice: Find within current extracted text
 
-Status: queued under the user-approved autonomous roadmap workflow; begin implementation after selected-page PDF OCR is reviewed and pushed.
+Status: implemented and verified under the user-approved autonomous roadmap workflow, after selected-page PDF OCR was reviewed and pushed as 35d97fa.
 Requirements: bounded DOC-05 progress, preserving AI-01/AI-05/AI-06 and current authorization. This is not persisted extraction or vault-wide full-text search; indexing remains an open architecture decision.
 
 ## Scope

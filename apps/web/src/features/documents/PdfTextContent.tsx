@@ -1,5 +1,6 @@
 import { Button } from '../../components/ui/button';
 import type { PdfTextState } from './pdfText';
+import { ExtractedTextResult } from './ExtractedTextResult';
 
 export interface PdfTextContentProps {
   state: PdfTextState;
@@ -50,18 +51,7 @@ export function PdfTextContent({
             Unverified output — source text only, may contain errors. Not
             medical advice.
           </p>
-          <div className="max-h-[50vh] overflow-y-auto rounded-xl border-border bg-muted px-4 py-3">
-            {state.pages.map(({ page, text }) => (
-              <div key={page} className="min-w-0">
-                <h3 className="text-foreground text-sm font-semibold">
-                  Page {page}
-                </h3>
-                <p className="text-foreground/90 mt-1 mb-4 min-w-0 whitespace-pre-wrap break-words">
-                  {text || 'No embedded text on this page.'}
-                </p>
-              </div>
-            ))}
-          </div>
+          <ExtractedTextResult pages={state.pages} />
           {state.partial && (
             <p className="text-muted-foreground mt-2 text-sm">
               Partial result — limited by{' '}
