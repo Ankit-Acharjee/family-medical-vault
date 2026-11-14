@@ -7,6 +7,7 @@ import {
 } from '@fmv/contracts';
 import type {
   MetadataSuggestionsReadResult,
+  MetadataSuggestion,
   SavedExtraction,
 } from '@fmv/contracts';
 import { MetadataCandidateList } from './MetadataCandidateList';
@@ -70,12 +71,14 @@ export function SavedMetadataPanel({
   snapshot,
   onDenied,
   onReloadSource,
+  onShowSource,
 }: {
   patientId: string;
   documentId: string;
   snapshot: SavedExtraction;
   onDenied: () => void;
   onReloadSource: () => void;
+  onShowSource: (suggestion: MetadataSuggestion) => void;
 }) {
   const path = metadataPath(patientId, documentId);
   const sourceRevision = snapshot.revision;
@@ -289,7 +292,12 @@ export function SavedMetadataPanel({
                 ? `${saved.suggestions.length} unverified suggestions saved · Revision ${saved.revision} · ${new Date(saved.savedAt).toLocaleString()} · Rule version ${saved.ruleVersion}`
                 : 'No suggestions have been saved for this text.'}
             </p>
-            {saved && <MetadataCandidateList suggestions={saved.suggestions} />}
+            {saved && (
+              <MetadataCandidateList
+                suggestions={saved.suggestions}
+                onShowSource={onShowSource}
+              />
+            )}
             <p className="text-sm text-muted-foreground">
               Saved suggestions refer to saved text revision {sourceRevision}.
               Saving keeps a separate unverified snapshot; it does not apply

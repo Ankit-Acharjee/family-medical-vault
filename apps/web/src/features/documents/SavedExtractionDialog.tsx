@@ -14,6 +14,7 @@ import {
 } from '../../components/ui/dialog';
 import { PdfTextContent } from './PdfTextContent';
 import { MetadataSuggestions } from './MetadataSuggestions';
+import type { SourceExcerptTarget } from './sourceExcerpt';
 import { extractionPath } from './savedExtraction';
 export type SavedTextSource = {
   kind: 'saved';
@@ -37,6 +38,11 @@ export function SavedExtractionDialog({
   restoreFocus: () => void;
 }) {
   const [attempt, setAttempt] = useState(1);
+  const [sourceSelection, setSourceSelection] = useState<{
+    revision: number;
+    sourceSha256: string;
+    target: SourceExcerptTarget;
+  } | null>(null);
   const [state, setState] = useState<
     ExtractionReadResult | 'loading' | 'failed' | null
   >('loading');
@@ -48,6 +54,7 @@ export function SavedExtractionDialog({
     if (!enabled) {
       controller.current?.abort();
       setState(null);
+      setSourceSelection(null);
     }
   }, [enabled]);
   useEffect(() => {
@@ -55,6 +62,7 @@ export function SavedExtractionDialog({
     const abort = new AbortController();
     controller.current = abort;
     setState('loading');
+    setSourceSelection(null);
     const deadline = window.setTimeout(() => {
       if (!abort.signal.aborted && allowed.current) {
         setState('failed');
@@ -130,6 +138,7 @@ export function SavedExtractionDialog({
   }, [source, attempt, onDenied]);
   const retry = () => {
     title.current?.focus();
+    setSourceSelection(null);
     setAttempt((n) => n + 1);
   };
   const snapshot =
@@ -210,8 +219,25 @@ export function SavedExtractionDialog({
               documentId={source.documentId}
               onDenied={onDenied}
               onReloadSource={retry}
+              onShowSource={(suggestion) =>
+                setSourceSelection({
+                  revision: snapshot.revision,
+                  sourceSha256: snapshot.sourceSha256,
+                  target: {
+                    page: suggestion.page,
+                    excerpt: suggestion.excerpt,
+                    requestId: crypto.randomUUID(),
+                  },
+                })
+              }
             />
             <PdfTextContent
+              sourceTarget={
+                sourceSelection?.revision === snapshot.revision &&
+                sourceSelection.sourceSha256 === snapshot.sourceSha256
+                  ? sourceSelection.target
+                  : undefined
+              }
               state={{
                 kind: 'ready',
                 pages: snapshot.pages,

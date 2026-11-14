@@ -53,6 +53,7 @@ UI delivery must cover the complete interaction lifecycle: native picker open/ca
 
 ## Cost-aware delegation
 - Automate the approved roadmap loop: inspect requirements and dependencies, select the next ready feature, plan, delegate independent work, integrate, independently review, fix/refine, verify, commit and push to develop, then select the next ready feature. Routine per-feature plan approvals are no longer required; this explicit user preference overrides the delegation skill's routine approval gate.
+- Do not end routine work at a completed feature boundary. After pushing, begin the next ready roadmap task during the active session; pause only for a concrete decision, execution blocker or separately gated action. Continue independent authorized work while input is pending.
 - Keep a single integration owner and bounded worker ownership. Parallelize independent implementation, tests and review; serialize dependent changes and Git mutations. Never push with unresolved material review findings or failed required checks.
 - Request input only for missing product decisions, conflicting requirements, scope expansion, or separately gated hosted writes/deployments/destructive actions. Do not infer approval for those actions from the automated development loop.
 - Record actual worker/model use, validation and remaining limitations. If a model is unavailable or quota-limited, use a suitable available reviewer and disclose the substitution. This workflow runs during active agent sessions; it does not imply unattended execution after a session ends.

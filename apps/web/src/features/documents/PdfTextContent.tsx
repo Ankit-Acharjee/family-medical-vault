@@ -1,11 +1,13 @@
 import { Button } from '../../components/ui/button';
 import type { PdfTextState } from './pdfText';
+import type { SourceExcerptTarget } from './sourceExcerpt';
 import { ExtractedTextResult } from './ExtractedTextResult';
 
 export interface PdfTextContentProps {
   state: PdfTextState;
   onRetry: () => void;
   onCancel: () => void;
+  sourceTarget?: SourceExcerptTarget | undefined;
 }
 
 const FAILURE_COPY: Record<
@@ -24,6 +26,7 @@ export function PdfTextContent({
   state,
   onRetry,
   onCancel,
+  sourceTarget,
 }: PdfTextContentProps) {
   return (
     <section aria-label="Extracted text" className="min-w-0">
@@ -51,7 +54,10 @@ export function PdfTextContent({
             Unverified output — source text only, may contain errors. Not
             medical advice.
           </p>
-          <ExtractedTextResult pages={state.pages} />
+          <ExtractedTextResult
+            pages={state.pages}
+            sourceTarget={sourceTarget}
+          />
           {state.partial && (
             <p className="text-muted-foreground mt-2 text-sm">
               Partial result — limited by{' '}

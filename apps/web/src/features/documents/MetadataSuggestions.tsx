@@ -1,4 +1,4 @@
-import type { SavedExtraction } from '@fmv/contracts';
+import type { MetadataSuggestion, SavedExtraction } from '@fmv/contracts';
 import { metadataSuggestionRuleVersion, suggestMetadata } from '@fmv/contracts';
 import { MetadataCandidateList } from './MetadataCandidateList';
 import { SavedMetadataPanel } from './SavedMetadataPanel';
@@ -15,12 +15,14 @@ export function MetadataSuggestions({
   documentId,
   onDenied,
   onReloadSource,
+  onShowSource,
 }: {
   snapshot: SavedExtraction;
   patientId: string;
   documentId: string;
   onDenied: () => void;
   onReloadSource: () => void;
+  onShowSource: (suggestion: MetadataSuggestion) => void;
 }) {
   const suggestions = suggestMetadata(snapshot.pages, {
     truncatedFinalLine: snapshot.partialReason === 'characters',
@@ -60,7 +62,10 @@ export function MetadataSuggestions({
                 Match strength describes the rule, not the accuracy of the
                 source.
               </p>
-              <MetadataCandidateList suggestions={suggestions} />
+              <MetadataCandidateList
+                suggestions={suggestions}
+                onShowSource={onShowSource}
+              />
             </>
           ) : (
             <p className="text-pretty text-sm text-muted-foreground">
@@ -74,6 +79,7 @@ export function MetadataSuggestions({
             snapshot={snapshot}
             onDenied={onDenied}
             onReloadSource={onReloadSource}
+            onShowSource={onShowSource}
           />
         </div>
       </details>

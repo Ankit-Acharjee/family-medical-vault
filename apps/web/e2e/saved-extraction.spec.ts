@@ -842,3 +842,107 @@ for (const theme of ['light', 'dark'])
     await page.keyboard.press('Escape');
     await expect(action(page, 'Saved text')).toBeFocused();
   });
+
+test('metadata source action focuses exact excerpt on its saved page and Find can resume', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    selectedPage: true,
+    metadataText,
+  });
+  const persisted = await openMetadata(page);
+  await expect(persisted).toContainText('No suggestions have been saved');
+  const localList = saved(page)
+    .getByRole('region', { name: 'Suggested metadata', exact: true })
+    .locator('dl')
+    .first();
+  const evidence = localList
+    .locator('details')
+    .filter({ hasText: 'Laboratory: Synthetic North Lab' });
+  await evidence.locator('summary').click();
+  const counts = api.counts();
+  await evidence
+    .getByRole('button', { name: 'Show in source', exact: true })
+    .click();
+  const mark = saved(page).locator('mark[aria-current="true"]');
+  await expect(mark).toHaveText('Laboratory: Synthetic North Lab');
+  await expect(mark).toBeFocused();
+  await expect(mark).toBeInViewport();
+  await expect(
+    saved(page)
+      .getByRole('status')
+      .filter({ hasText: 'Source excerpt on page 7' }),
+  ).toBeVisible();
+  expect(api.counts()).toEqual(counts);
+  expect(api.metadataWrites).toEqual([]);
+  expect(api.external).toEqual([]);
+  await saved(page)
+    .getByRole('button', { name: 'Clear search', exact: true })
+    .click();
+  const find = saved(page).getByLabel('Find in this text', { exact: true });
+  await expect(find).toBeFocused();
+  await expect(saved(page).locator('mark')).toHaveCount(0);
+  await find.fill('report');
+  await expect(saved(page).locator('mark')).toHaveCount(2);
+  api.revoke();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(saved(page)).toHaveCount(0);
+  await expect(page.locator('mark')).toHaveCount(0);
+});
+for (const theme of ['light', 'dark'])
+  test(`${theme} persisted metadata source jump is keyboard accessible and preserves source context`, async ({
+    page,
+  }, info) => {
+    await page.setViewportSize({
+      width: info.project.name === 'mobile' ? 320 : 1440,
+      height: 1000,
+    });
+    await page.addInitScript(
+      (value) => localStorage.setItem('fmv.theme', value),
+      theme,
+    );
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const api = await setup(page, {
+      initial: true,
+      selectedPage: true,
+      metadataText,
+    });
+    const panel = await openMetadata(page);
+    await panel
+      .getByRole('button', { name: 'Save suggestions', exact: true })
+      .click();
+    await expect(panel).toContainText('saved as revision 1');
+    await panel
+      .getByRole('button', { name: 'Reload suggestions', exact: true })
+      .click();
+    await expect(panel).toContainText('5 unverified suggestions saved');
+    const evidence = panel
+      .locator('details')
+      .filter({ hasText: 'Collection date: 03/04/2026' });
+    await evidence.locator('summary').click();
+    const jump = evidence.getByRole('button', {
+      name: 'Show in source',
+      exact: true,
+    });
+    await jump.focus();
+    await page.keyboard.press('Enter');
+    const mark = saved(page).locator('mark[aria-current="true"]');
+    await expect(mark).toHaveText('Collection date: 03/04/2026');
+    await expect(mark).toBeFocused();
+    await expect(mark).toBeInViewport();
+    expect(
+      (await new AxeBuilder({ page }).include('[role="dialog"]').analyze())
+        .violations,
+    ).toEqual([]);
+    expect(
+      await saved(page).evaluate((el) => el.scrollWidth <= el.clientWidth),
+    ).toBe(true);
+    await page.screenshot({
+      path: `../../.local/screenshots/source-navigation-${theme}-${info.project.name}.png`,
+    });
+    expect(api.counts().previews).toBe(0);
+    expect(api.external).toEqual([]);
+    await page.keyboard.press('Escape');
+    await expect(action(page, 'Saved text')).toBeFocused();
+  });

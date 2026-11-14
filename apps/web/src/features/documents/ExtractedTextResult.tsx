@@ -2,6 +2,8 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { resolveSourceExcerpt } from './sourceExcerpt';
+import type { SourceExcerptTarget } from './sourceExcerpt';
 import { cn } from '../../lib/utils';
 import {
   findTextMatches,
@@ -11,18 +13,35 @@ import {
 
 export function ExtractedTextResult({
   pages,
+  sourceTarget,
 }: {
   pages: readonly { page: number; text: string }[];
+  sourceTarget?: SourceExcerptTarget | undefined;
 }) {
   const inputId = useId();
   const helperId = useId();
   const statusId = useId();
   const [query, setQuery] = useState('');
+  const [dismissedSource, setDismissedSource] = useState<string | null>(null);
+  const activeSource =
+    sourceTarget && sourceTarget.requestId !== dismissedSource
+      ? sourceTarget
+      : undefined;
+  const sourceMatch = activeSource
+    ? resolveSourceExcerpt(pages, activeSource)
+    : null;
   const [activeMatch, setActiveMatch] = useState(0);
   const input = useRef<HTMLInputElement | null>(null);
   const viewport = useRef<HTMLDivElement | null>(null);
   const currentMark = useRef<HTMLElement | null>(null);
-  const { matches, capped } = findTextMatches(pages, query);
+  const found = findTextMatches(pages, query);
+  const matches = activeSource
+    ? sourceMatch
+      ? [sourceMatch]
+      : []
+    : found.matches;
+  const capped = !activeSource && found.capped;
+  const selectedIndex = activeSource ? 0 : activeMatch;
   const navigate = (direction: number) => {
     if (matches.length)
       setActiveMatch(
@@ -34,6 +53,11 @@ export function ExtractedTextResult({
     const container = viewport.current;
     const mark = currentMark.current;
     if (!container || !mark) return;
+    if (activeSource) {
+      mark.focus({ preventScroll: true });
+      mark.scrollIntoView({ block: 'center', behavior: 'auto' });
+      return;
+    }
     const bounds = container.getBoundingClientRect();
     const matchBounds = mark.getBoundingClientRect();
     // Scroll only the text viewport, without moving keyboard focus or the page.
@@ -41,13 +65,17 @@ export function ExtractedTextResult({
       container.scrollTop += matchBounds.top - bounds.top - 16;
     else if (matchBounds.bottom > bounds.bottom)
       container.scrollTop += matchBounds.bottom - bounds.bottom + 16;
-  }, [activeMatch, query, pages]);
+  }, [activeMatch, query, pages, activeSource]);
 
-  const status = !query
-    ? 'Enter text to find a match.'
-    : !matches.length
-      ? 'No matches in this extracted text.'
-      : `Match ${activeMatch + 1} of ${matches.length}${capped ? ` shown. More than ${textFindMatchLimit} matches; refine your search.` : '.'}`;
+  const status = activeSource
+    ? sourceMatch
+      ? `Source excerpt on page ${activeSource.page}. Unverified text; check the original before relying on it.`
+      : 'Source excerpt is unavailable in this text. Reload the saved text before reviewing it.'
+    : !query
+      ? 'Enter text to find a match.'
+      : !matches.length
+        ? 'No matches in this extracted text.'
+        : `Match ${activeMatch + 1} of ${matches.length}${capped ? ` shown. More than ${textFindMatchLimit} matches; refine your search.` : '.'}`;
 
   return (
     <div className="min-w-0 space-y-3">
@@ -70,11 +98,16 @@ export function ExtractedTextResult({
             aria-describedby={`${helperId} ${statusId}`}
             className="basis-40 flex-1 text-base"
             onChange={(event) => {
+              setDismissedSource(sourceTarget?.requestId ?? null);
               setQuery(event.target.value.slice(0, textFindQueryLimit));
               setActiveMatch(0);
             }}
             onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+              if (
+                !activeSource &&
+                event.key === 'Enter' &&
+                !event.nativeEvent.isComposing
+              ) {
                 event.preventDefault();
                 navigate(event.shiftKey ? -1 : 1);
               }
@@ -82,8 +115,9 @@ export function ExtractedTextResult({
           />
           <Button
             variant="ghost"
-            disabled={!query}
+            disabled={!query && !activeSource}
             onClick={() => {
+              setDismissedSource(sourceTarget?.requestId ?? null);
               setQuery('');
               setActiveMatch(0);
               input.current?.focus();
@@ -99,14 +133,14 @@ export function ExtractedTextResult({
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Button
             variant="secondary"
-            disabled={!matches.length}
+            disabled={!!activeSource || !matches.length}
             onClick={() => navigate(-1)}
           >
             Previous match
           </Button>
           <Button
             variant="secondary"
-            disabled={!matches.length}
+            disabled={!!activeSource || !matches.length}
             onClick={() => navigate(1)}
           >
             Next match
@@ -137,11 +171,14 @@ export function ExtractedTextResult({
             content.push(
               <mark
                 key={match.start}
-                ref={index === activeMatch ? currentMark : undefined}
-                aria-current={index === activeMatch ? 'true' : undefined}
+                tabIndex={
+                  activeSource && index === selectedIndex ? -1 : undefined
+                }
+                ref={index === selectedIndex ? currentMark : undefined}
+                aria-current={index === selectedIndex ? 'true' : undefined}
                 className={cn(
                   'rounded-sm bg-accent text-accent-foreground underline decoration-primary underline-offset-2',
-                  index === activeMatch &&
+                  index === selectedIndex &&
                     'bg-primary text-primary-foreground no-underline outline outline-1 outline-offset-1 outline-primary',
                 )}
               >

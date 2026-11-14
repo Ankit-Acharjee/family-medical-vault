@@ -1,0 +1,122 @@
+[
+  {
+    "name": "wrong_page_no_fallback",
+    "pages": [
+      {
+        "page": 1,
+        "text": "alpha beta gamma"
+      },
+      {
+        "page": 2,
+        "text": "delta epsilon zeta"
+      }
+    ],
+    "target": {
+      "page": 2,
+      "excerpt": "alpha",
+      "requestId": "req-wrong-page"
+    },
+    "expected": null
+  },
+  {
+    "name": "repeated_phrase_first_occurrence",
+    "pages": [
+      {
+        "page": 7,
+        "text": "xx repeat me yy repeat me zz"
+      }
+    ],
+    "target": {
+      "page": 7,
+      "excerpt": "repeat me",
+      "requestId": "req-repeat"
+    },
+    "expected": {
+      "pageIndex": 0,
+      "start": 3,
+      "end": 12
+    }
+  },
+  {
+    "name": "emoji_surrogate_offsets",
+    "pages": [
+      {
+        "page": 12,
+        "text": "\ud83d\ude80\ud83d\ude80 needle \ud83c\udf0d tail"
+      }
+    ],
+    "target": {
+      "page": 12,
+      "excerpt": "needle",
+      "requestId": "req-emoji"
+    },
+    "expected": {
+      "pageIndex": 0,
+      "start": 5,
+      "end": 11
+    }
+  },
+  {
+    "name": "injection_shaped_literal",
+    "pages": [
+      {
+        "page": 3,
+        "text": "report = \"x'); DROP TABLE pages;-- <script>alert(1)</script> done\""
+      }
+    ],
+    "target": {
+      "page": 3,
+      "excerpt": "'); DROP TABLE pages;--",
+      "requestId": "req-injection"
+    },
+    "expected": {
+      "pageIndex": 0,
+      "start": 11,
+      "end": 34
+    }
+  },
+  {
+    "name": "empty_pages_missing_source",
+    "pages": [],
+    "target": {
+      "page": 1,
+      "excerpt": "needle",
+      "requestId": "req-empty"
+    },
+    "expected": null
+  },
+  {
+    "name": "duplicate_page_numbers",
+    "pages": [
+      {
+        "page": 4,
+        "text": "same needle here"
+      },
+      {
+        "page": 4,
+        "text": "same needle here"
+      }
+    ],
+    "target": {
+      "page": 4,
+      "excerpt": "needle",
+      "requestId": "req-dup"
+    },
+    "expected": null
+  },
+  {
+    "name": "overlong_excerpt",
+    "pages": [
+      {
+        "page": 5,
+        "text": "prefix zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz suffix"
+      }
+    ],
+    "target": {
+      "page": 5,
+      "excerpt": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+      "requestId": "req-overlong"
+    },
+    "expected": null
+  }
+]

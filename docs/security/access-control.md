@@ -58,3 +58,7 @@ The owner or a user with both current scoped **edit** and **view** authority for
 ## Approved saved-metadata policy — 14 November 2026
 
 The owner or users with both current scoped **edit** and **view** may save unverified metadata suggestions; current **view** may read them. Evaluate both save actions against the same authoritative snapshot. Bind suggestions to the saved extraction revision and original source, and follow the document's Trash, restore and deletion lifecycle. This policy does not authorize changing document categories, canonical dates, provider identities or verified clinical facts.
+
+## Approved clinical-verification authority — 14 November 2026
+
+Only the explicit Person owner may verify extracted clinical fields (laboratory values, diagnoses or medication fields). Scoped delegates may review unverified data under current View authority; Edit, View, Manage or their combination does not confer verification authority. Verification is an explicit source-linked action and never follows automatically from saving text or metadata.

@@ -1,4 +1,5 @@
 import type { MetadataSuggestion } from '@fmv/contracts';
+import { Button } from '../../components/ui/button';
 const fieldNames = {
   type: 'Document type',
   date: 'Date',
@@ -8,8 +9,10 @@ const fieldNames = {
 
 export function MetadataCandidateList({
   suggestions,
+  onShowSource,
 }: {
   suggestions: MetadataSuggestion[];
+  onShowSource?: ((suggestion: MetadataSuggestion) => void) | undefined;
 }) {
   return (
     <dl className="flex min-w-0 flex-col gap-3">
@@ -39,6 +42,15 @@ export function MetadataCandidateList({
               <blockquote className="mt-1 whitespace-pre-wrap break-words border-l-2 border-border pl-3 text-foreground">
                 {suggestion.excerpt}
               </blockquote>
+              {onShowSource && (
+                <Button
+                  variant="secondary"
+                  className="mt-2"
+                  onClick={() => onShowSource(suggestion)}
+                >
+                  Show in source
+                </Button>
+              )}
             </details>
           </dd>
         </div>
