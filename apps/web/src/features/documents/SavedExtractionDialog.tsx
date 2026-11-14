@@ -204,7 +204,13 @@ export function SavedExtractionDialog({
                 {snapshot.downsized ? ' The source was downsized.' : ''}
               </p>
             )}
-            <MetadataSuggestions snapshot={snapshot} />
+            <MetadataSuggestions
+              snapshot={snapshot}
+              patientId={source.patientId}
+              documentId={source.documentId}
+              onDenied={onDenied}
+              onReloadSource={retry}
+            />
             <PdfTextContent
               state={{
                 kind: 'ready',

@@ -16,6 +16,12 @@ import type {
 } from '@fmv/contracts';
 import type { IntakeStore, IntakeMetadata, IntakeRecord } from './intake.js';
 import { readExtraction, saveExtraction } from './extraction.store.js';
+import type {
+  MetadataSuggestionsReadResult,
+  SaveMetadataSuggestions,
+  SaveMetadataSuggestionsResult,
+} from '@fmv/contracts';
+import { readMetadata, saveMetadata } from './metadata.store.js';
 import { searchExtractions } from './extraction-search.store.js';
 
 export type ExtractionSource = {
@@ -43,6 +49,17 @@ export type SearchAuthorization = (
 
 export type TrashChangeResult = 'changed' | 'unchanged' | 'missing' | 'expired';
 export abstract class DocumentStore {
+  abstract readMetadata(
+    patientId: string,
+    documentId: string,
+    authorize: ExtractionAuthorization,
+  ): Promise<MetadataSuggestionsReadResult | null>;
+  abstract saveMetadata(
+    patientId: string,
+    documentId: string,
+    input: SaveMetadataSuggestions,
+    authorize: ExtractionAuthorization,
+  ): Promise<SaveMetadataSuggestionsResult | 'missing' | 'conflict'>;
   abstract searchExtractions(
     patientId: string,
     input: DocumentSearchInput,
@@ -134,6 +151,17 @@ export class PrismaDocumentStore
       }),
       log: [],
     });
+  }
+  readMetadata(p: string, d: string, authorize: ExtractionAuthorization) {
+    return readMetadata(this.db, p, d, authorize);
+  }
+  saveMetadata(
+    p: string,
+    d: string,
+    input: SaveMetadataSuggestions,
+    authorize: ExtractionAuthorization,
+  ) {
+    return saveMetadata(this.db, p, d, input, authorize);
   }
   searchExtractions(
     patientId: string,

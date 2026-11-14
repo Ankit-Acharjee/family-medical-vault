@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { suggestMetadata } from '@fmv/contracts';
 const patient = {
   id: 'saved-patient',
   displayName: 'Saved Fixture Patient',
@@ -68,6 +69,9 @@ async function setup(
     contexts = 0,
     reads = 0,
     previews = 0;
+  const metadataWrites: string[] = [];
+  let metadataRevision = 0,
+    metadataSnapshot: Record<string, unknown> | null = null;
   const writes: string[] = [],
     external: string[] = [];
   let snapshot: Record<string, unknown> | null = options.initial
@@ -185,6 +189,66 @@ async function setup(
         .catch(() => {});
     },
   );
+  await page.route(
+    '**/api/patients/*/documents/*/metadata-suggestions',
+    async (route) => {
+      const request = route.request();
+      const currentSourceRevision = Number(snapshot?.revision ?? 0);
+      const metadataContext = () => ({
+        sourceRevision: currentSourceRevision,
+        sourceSha256: 'a'.repeat(64),
+        lifecycleVersion: 0,
+        revision: metadataRevision,
+        canSave,
+      });
+      if (mode === 'metadata-denied') return route.fulfill({ status: 403 });
+      if (mode === 'metadata-unavailable')
+        return route.fulfill({ status: 503 });
+      if (mode === 'metadata-malformed')
+        return route.fulfill({
+          json: { context: metadataContext(), snapshot: { unverified: false } },
+        });
+      if (request.method() === 'PUT') {
+        const body = request.postData()!;
+        metadataWrites.push(body);
+        if (mode === 'metadata-conflict') return route.fulfill({ status: 409 });
+        const input = JSON.parse(body);
+        if (input.sourceRevision !== currentSourceRevision)
+          return route.fulfill({ status: 409 });
+        if (metadataRevision === 0) {
+          metadataRevision = 1;
+          metadataSnapshot = {
+            revision: 1,
+            sourceRevision: currentSourceRevision,
+            sourceSha256: 'a'.repeat(64),
+            ruleVersion: 'explicit-lines-v1',
+            suggestions: suggestMetadata(
+              snapshot!.pages as { page: number; text: string }[],
+              { truncatedFinalLine: snapshot!.partialReason === 'characters' },
+            ),
+            savedAt: '2026-11-14T00:00:00.000Z',
+            unverified: true,
+          };
+        }
+        if (mode === 'metadata-uncertain' && metadataWrites.length === 1)
+          return route.abort('failed');
+        return route.fulfill({
+          json: { saved: true, revision: metadataRevision },
+        });
+      }
+      const ctx = metadataContext();
+      if (mode === 'metadata-stale') ctx.sourceRevision++;
+      return route.fulfill({
+        json: {
+          context: ctx,
+          snapshot:
+            metadataSnapshot?.sourceRevision === ctx.sourceRevision
+              ? metadataSnapshot
+              : null,
+        },
+      });
+    },
+  );
   await page.goto('/#documents');
   await page
     .getByRole('button', { name: 'Select patient: No patient selected' })
@@ -195,6 +259,7 @@ async function setup(
   await expect(action(page, 'Download')).toBeVisible();
   return {
     writes,
+    metadataWrites,
     external,
     counts: () => ({ contexts, reads, previews }),
     mode: (next: string) => {
@@ -455,7 +520,9 @@ test('saved metadata stays source-linked, unverified, local and read-only, then 
   await expect(panel).toContainText('Synthetic North Lab');
   await expect(panel).toContainText('Saved text revision 1');
   await expect(panel).toContainText('partial text');
-  await expect(panel).toContainText('not separately saved or applied');
+  await expect(panel).toContainText(
+    'No document fields are applied or verified',
+  );
   await expect(panel).not.toContainText('2001-01-01');
   await expect(
     panel.getByRole('button', { name: /^(Apply|Save|Verify)/ }),
@@ -599,4 +666,179 @@ for (const selectedPage of [false, true])
     await expect(panel).not.toContainText('Truncated');
     await expect(panel).not.toContainText('Document date');
     await expect(saved(page)).toContainText('Provider: Truncated');
+  });
+
+async function openMetadata(page: Page) {
+  await action(page, 'Saved text').click();
+  const panel = saved(page).getByRole('region', {
+    name: 'Suggested metadata',
+    exact: true,
+  });
+  await panel.locator('summary').first().click();
+  return panel.getByRole('region', { name: 'Saved metadata', exact: true });
+}
+test('metadata saves only immutable source references, reopens server snapshot and preserves source Find', async ({
+  page,
+}) => {
+  const api = await setup(page, { initial: true, metadataText });
+  const panel = await openMetadata(page);
+  await expect(panel).toContainText('No suggestions have been saved');
+  await panel
+    .getByRole('button', { name: 'Save suggestions', exact: true })
+    .click();
+  await expect(panel).toContainText('saved as revision 1');
+  expect(api.metadataWrites).toHaveLength(1);
+  const payload = JSON.parse(api.metadataWrites[0]!);
+  expect(Object.keys(payload).sort()).toEqual(
+    [
+      'expectedRevision',
+      'lifecycleVersion',
+      'requestId',
+      'ruleVersion',
+      'sourceRevision',
+      'sourceSha256',
+    ].sort(),
+  );
+  expect(payload.sourceRevision).toBe(1);
+  expect(payload.expectedRevision).toBe(0);
+  expect(api.metadataWrites[0]).not.toContain('Synthetic North Lab');
+  await panel
+    .getByRole('button', { name: 'Reload suggestions', exact: true })
+    .click();
+  await expect(panel).toContainText('5 unverified suggestions saved');
+  await expect(panel).toContainText('Synthetic North Lab');
+  await expect(panel).toContainText('Report date');
+  await expect(panel).toContainText('Collection date');
+  await page.keyboard.press('Escape');
+  const reopened = await openMetadata(page);
+  await expect(reopened).toContainText('5 unverified suggestions saved');
+  await expect(reopened).toContainText('Synthetic North Lab');
+  expect(api.writes).toEqual([]);
+  expect(api.counts().previews).toBe(0);
+  expect(api.external).toEqual([]);
+});
+test('uncertain metadata save retries identical request and rejects conflicting saves without rebasing', async ({
+  page,
+}) => {
+  const api = await setup(page, { initial: true, metadataText });
+  const panel = await openMetadata(page);
+  api.mode('metadata-uncertain');
+  await panel
+    .getByRole('button', { name: 'Save suggestions', exact: true })
+    .click();
+  await expect(panel).toContainText('Save could not be confirmed');
+  await panel
+    .getByRole('button', { name: 'Retry save suggestions', exact: true })
+    .click();
+  await expect(panel).toContainText('saved as revision 1');
+  expect(api.metadataWrites).toHaveLength(2);
+  expect(api.metadataWrites[0]).toBe(api.metadataWrites[1]);
+  api.mode('normal');
+  await panel
+    .getByRole('button', { name: 'Reload suggestions', exact: true })
+    .click();
+  api.mode('metadata-conflict');
+  await panel
+    .getByRole('button', { name: 'Save suggestions', exact: true })
+    .click();
+  await expect(panel).toContainText('Reload saved text');
+  await expect(
+    panel.getByRole('button', { name: 'Save suggestions', exact: true }),
+  ).toHaveCount(0);
+});
+test('metadata read failures and malformed responses keep local text usable with explicit retry', async ({
+  page,
+}) => {
+  const api = await setup(page, { initial: true, metadataText });
+  api.mode('metadata-unavailable');
+  const panel = await openMetadata(page);
+  await expect(panel).toContainText('could not be loaded');
+  await saved(page)
+    .getByLabel('Find in this text', { exact: true })
+    .fill('Synthetic North');
+  await expect(saved(page).locator('mark')).toHaveCount(1);
+  api.mode('metadata-malformed');
+  await panel.getByRole('button', { name: 'Retry saved suggestions' }).click();
+  await expect(panel).toContainText('could not be loaded');
+  api.mode('normal');
+  await panel.getByRole('button', { name: 'Retry saved suggestions' }).click();
+  await expect(
+    panel.getByRole('button', { name: 'Save suggestions', exact: true }),
+  ).toBeEnabled();
+  expect(api.metadataWrites).toEqual([]);
+});
+test('metadata source mismatch requires source reload and denied writes clear all protected text', async ({
+  page,
+}) => {
+  const api = await setup(page, { initial: true, metadataText });
+  api.mode('metadata-stale');
+  const panel = await openMetadata(page);
+  await expect(panel).toContainText('Reload saved text');
+  expect(api.metadataWrites).toEqual([]);
+  api.mode('normal');
+  await panel.getByRole('button', { name: 'Reload saved text' }).click();
+  const fresh = saved(page).getByRole('region', {
+    name: 'Saved metadata',
+    exact: true,
+  });
+  // Reloading source replaces the disclosure with its collapsed initial state.
+  const outer = saved(page).getByRole('region', {
+    name: 'Suggested metadata',
+    exact: true,
+  });
+  await outer.locator('summary').first().click();
+  await expect(
+    fresh.getByRole('button', { name: 'Save suggestions', exact: true }),
+  ).toBeEnabled();
+  api.mode('metadata-denied');
+  await fresh
+    .getByRole('button', { name: 'Save suggestions', exact: true })
+    .click();
+  await expect(saved(page)).toHaveCount(0);
+  await expect(action(page, 'Saved text')).toHaveCount(0);
+});
+for (const theme of ['light', 'dark'])
+  test(`${theme} persisted metadata is accessible and readable on both layouts`, async ({
+    page,
+  }, info) => {
+    await page.setViewportSize({
+      width: info.project.name === 'mobile' ? 320 : 1440,
+      height: 1000,
+    });
+    await page.addInitScript(
+      (value) => localStorage.setItem('fmv.theme', value),
+      theme,
+    );
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const diagnostics: string[] = [];
+    page.on('pageerror', (e) => diagnostics.push(e.message));
+    const api = await setup(page, { initial: true, metadataText });
+    const panel = await openMetadata(page);
+    await panel
+      .getByRole('button', { name: 'Save suggestions', exact: true })
+      .click();
+    await expect(panel).toContainText('saved as revision 1');
+    await panel
+      .getByRole('button', { name: 'Reload suggestions', exact: true })
+      .click();
+    await expect(panel).toContainText('5 unverified suggestions saved');
+    const summary = panel.locator('summary').first();
+    await summary.focus();
+    await page.keyboard.press('Enter');
+    await expect(panel.locator('blockquote').first()).toBeVisible();
+    expect(
+      (await new AxeBuilder({ page }).include('[role="dialog"]').analyze())
+        .violations,
+    ).toEqual([]);
+    expect(
+      await saved(page).evaluate((el) => el.scrollWidth <= el.clientWidth),
+    ).toBe(true);
+    await panel.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `../../.local/screenshots/saved-metadata-${theme}-${info.project.name}.png`,
+    });
+    expect(diagnostics).toEqual([]);
+    expect(api.external).toEqual([]);
+    await page.keyboard.press('Escape');
+    await expect(action(page, 'Saved text')).toBeFocused();
   });

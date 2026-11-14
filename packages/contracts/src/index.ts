@@ -110,3 +110,5 @@ export type BeginUpload = {
 
 export * from './extractions.js';
 export * from './document-search.js';
+export * from './metadata-rules.js';
+export * from './metadata.js';

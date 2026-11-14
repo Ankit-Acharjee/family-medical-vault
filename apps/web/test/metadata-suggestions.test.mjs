@@ -7,10 +7,7 @@ import test from 'node:test';
 import ts from 'typescript';
 
 const source = await readFile(
-  new URL(
-    '../src/features/documents/metadataSuggestionRules.ts',
-    import.meta.url,
-  ),
+  new URL('../../../packages/contracts/src/metadata-rules.ts', import.meta.url),
   'utf8',
 );
 const compiled = ts.transpileModule(source, {

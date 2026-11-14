@@ -54,3 +54,7 @@ Owner authority or a current scoped **edit** grant permits moving an exact docum
 ## Approved saved-extraction policy — 13 November 2026
 
 The owner or a user with both current scoped **edit** and **view** authority for the exact document may save extracted text. Current **view** authority permits reading saved text; view alone permits local extraction but no shared persistence. Evaluate edit and view together against the same authoritative snapshot. Keep only the latest successful result; failures before a save do not replace it. Saved text follows the original document's Trash, restore and deletion lifecycle and never grants independent access. Browser-submitted text remains explicitly unverified; attaching the server's source hash does not attest transcription accuracy or verify clinical facts. No external AI processing is authorized by this policy.
+
+## Approved saved-metadata policy — 14 November 2026
+
+The owner or users with both current scoped **edit** and **view** may save unverified metadata suggestions; current **view** may read them. Evaluate both save actions against the same authoritative snapshot. Bind suggestions to the saved extraction revision and original source, and follow the document's Trash, restore and deletion lifecycle. This policy does not authorize changing document categories, canonical dates, provider identities or verified clinical facts.

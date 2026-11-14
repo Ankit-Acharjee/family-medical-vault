@@ -31,6 +31,12 @@ class DisabledDocumentStore extends DocumentStore {
   searchExtractions(): never {
     throw new ServiceUnavailableException();
   }
+  async readMetadata(): Promise<never> {
+    throw new ServiceUnavailableException();
+  }
+  async saveMetadata(): Promise<never> {
+    throw new ServiceUnavailableException();
+  }
   async readExtraction(): Promise<never> {
     throw new ServiceUnavailableException();
   }

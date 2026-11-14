@@ -19,7 +19,8 @@ export class ExtractionService {
     private readonly store: DocumentStore,
   ) {}
 
-  private authorize(
+  // Shared source policy for text and separately saved unverified metadata.
+  authorize(
     principal: Principal,
     patientId: string,
     documentId: string,

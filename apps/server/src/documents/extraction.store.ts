@@ -23,7 +23,7 @@ type Row = {
   savedAt: Date;
 };
 const transactionOptions = { maxWait: 5000, timeout: 15000 };
-async function source(
+export async function extractionSource(
   db: Prisma.TransactionClient,
   patientId: string,
   documentId: string,
@@ -33,7 +33,10 @@ async function source(
   >`SELECT id AS "documentId",patient_id AS "patientId",category_id AS "categoryId",mime_type AS "mimeType",state,deleted_at AS "deletedAt",sha256,extraction_lifecycle AS "lifecycleVersion" FROM fmv.documents WHERE patient_id=${patientId}::uuid AND id=${documentId}::uuid AND state='ready' AND deleted_at IS NULL FOR NO KEY UPDATE`;
   return rows[0] ?? null;
 }
-async function latest(db: Prisma.TransactionClient, documentId: string) {
+export async function latestExtraction(
+  db: Prisma.TransactionClient,
+  documentId: string,
+) {
   const rows = await db.$queryRaw<
     Row[]
   >`SELECT revision,source_sha256 AS "sourceSha256",lifecycle_version AS "lifecycleVersion",request_id AS "requestId",payload_hash AS "payloadHash",actor_account_id AS "actorAccountId",result,saved_at AS "savedAt" FROM fmv.document_extractions WHERE document_id=${documentId}::uuid`;
@@ -68,11 +71,13 @@ export async function readExtraction(
   includeSnapshot = true,
 ): Promise<ExtractionReadResult | null> {
   return client.$transaction(async (db) => {
-    const original = await source(db, patientId, documentId);
+    const original = await extractionSource(db, patientId, documentId);
     if (!original) return null;
     const actor = await authorize(original);
     // Metadata acquisition never requires loading the saved clinical text.
-    const saved = includeSnapshot ? await latest(db, documentId) : null;
+    const saved = includeSnapshot
+      ? await latestExtraction(db, documentId)
+      : null;
     const revisions = includeSnapshot
       ? []
       : await db.$queryRaw<
@@ -117,11 +122,11 @@ export async function saveExtraction(
   authorize: ExtractionAuthorization,
 ): Promise<SaveExtractionResult | 'missing' | 'conflict'> {
   return client.$transaction(async (db) => {
-    const original = await source(db, patientId, documentId);
+    const original = await extractionSource(db, patientId, documentId);
     if (!original) return 'missing';
     const actor = await authorize(original);
     if (!actor.canSave) throw new Error('Unavailable extraction');
-    const saved = await latest(db, documentId);
+    const saved = await latestExtraction(db, documentId);
     if (
       original.sha256 !== input.sourceSha256 ||
       original.lifecycleVersion !== input.lifecycleVersion
