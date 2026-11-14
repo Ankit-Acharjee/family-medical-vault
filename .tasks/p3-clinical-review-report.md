@@ -27,6 +27,6 @@ Sandboxed OpenCode `opencode/glm-5.3-flash-free` produced a generic standalone p
 
 Results and hosted approval status are finalized in the active progress checkpoint. Native PostgreSQL tests use a disposable local Postgres.app cluster, stopped and removed afterward; Docker is not used. Synthetic browser APIs are intercepted before navigation. Actual light/dark screenshots are local ignored artifacts at `.local/screenshots/clinical-review-{light,dark}-{desktop,mobile}.png`.
 
-## Remaining boundary
+## Hosted verification and remaining boundary
 
-Hosted development still has 13 applied migrations. Read-only verified-TLS/UTC/role/ledger preflight passed with matching checksums and no clinical table. Migration 14 requires the separate hosted-write approval mandated by repository AGENTS.md. This feature does not complete generalized clinical extraction or normalized laboratory observations.
+The user separately approved migration 14 on 14 November 2026; it was applied to the dedicated development project. Read-only postflight passed: all 14 migration checksums, verified TLS/UTC, restricted runtime role, clinical FORCE RLS, immutable SELECT/INSERT-only grants, active source trigger, deletion cascade and synthetic validators. No patient rows were read for verification. This feature does not complete generalized clinical extraction or normalized laboratory observations.
