@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '../../components/ui/dialog';
 import { PdfTextContent } from './PdfTextContent';
+import { MetadataSuggestions } from './MetadataSuggestions';
 import { extractionPath } from './savedExtraction';
 export type SavedTextSource = {
   kind: 'saved';
@@ -203,6 +204,7 @@ export function SavedExtractionDialog({
                 {snapshot.downsized ? ' The source was downsized.' : ''}
               </p>
             )}
+            <MetadataSuggestions snapshot={snapshot} />
             <PdfTextContent
               state={{
                 kind: 'ready',
