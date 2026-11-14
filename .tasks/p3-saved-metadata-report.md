@@ -32,6 +32,6 @@ Root also fixed heading order found by axe; the final tested UI uses a stable fo
 
 ## Hosted gate and limits
 
-Read-only TLS/UTC/runtime-role/12-migration checksum preflight passed for dedicated development project `nyjkrcznezyrgntwvpjj`; metadata table is absent as expected. Migration 13 is pending separate approval. Before application, optional metadata UI falls back locally on unavailable persistence; do not claim hosted saving is active. No production deployment.
+The user separately approved migration `20261114000100_saved_metadata` on 14 November 2026. Verified-TLS/UTC/runtime-role/12-migration checksum preflight passed for dedicated development project `nyjkrcznezyrgntwvpjj`; the migration was applied successfully. Read-only postflight verified all 13 migration checksums, metadata FORCE RLS, narrow runtime privileges, source guard, document-deletion cascade and synthetic runtime-validator behavior. The schema is active in development; authenticated hosted save/reopen end-to-end remains unverified. No production deployment.
 
 Still outside this slice: accepted/corrected metadata fields, taxonomy, canonical date precedence/provider identities, related-document inference, clinical review/verification and external processing. The supported English line grammar remains deliberately conservative.
