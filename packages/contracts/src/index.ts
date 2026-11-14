@@ -112,3 +112,6 @@ export * from './extractions.js';
 export * from './document-search.js';
 export * from './metadata-rules.js';
 export * from './metadata.js';
+
+export * from './lab-fields.js';
+export * from './clinical-review.js';

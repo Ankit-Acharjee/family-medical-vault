@@ -142,6 +142,13 @@ async function setup(page: Page, exportOnly = false) {
       },
     }),
   );
+  await page.route(
+    '**/api/patients/*/documents/*/metadata-suggestions',
+    (route) => route.fulfill({ status: 503 }),
+  );
+  await page.route('**/api/patients/*/documents/*/clinical-review', (route) =>
+    route.fulfill({ status: 503 }),
+  );
   await page.goto('/#documents');
   await page
     .getByRole('button', { name: 'Select patient: No patient selected' })

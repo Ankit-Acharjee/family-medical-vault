@@ -1,3 +1,4 @@
+import { ClinicalReviewService } from './clinical-review.service.js';
 import {
   Injectable,
   BadRequestException,
@@ -29,11 +30,13 @@ import type { ObjectStore } from './object-store.js';
 export class DocumentsService {
   readonly extraction: ExtractionService;
   readonly metadata: MetadataSuggestionsService;
+  readonly clinical: ClinicalReviewService;
   constructor(
     private readonly permissions: PermissionService,
     private readonly store: DocumentStore,
     private readonly objects: ObjectStore,
   ) {
+    this.clinical = new ClinicalReviewService(permissions, store);
     this.extraction = new ExtractionService(permissions, store);
     this.metadata = new MetadataSuggestionsService(this.extraction, store);
   }

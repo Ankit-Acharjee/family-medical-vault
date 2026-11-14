@@ -47,6 +47,23 @@ export class DocumentsController {
       throw e;
     }
   }
+  @Get('documents/:documentId/clinical-review')
+  async clinicalReview(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+  ) {
+    return this.documents.clinical.read(await this.principal(req), p, d);
+  }
+  @Put('documents/:documentId/clinical-review')
+  async verifyClinicalReview(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+    @Body() body: unknown,
+  ) {
+    return this.documents.clinical.save(await this.principal(req), p, d, body);
+  }
   @Get('documents/:documentId/metadata-suggestions')
   async savedMetadata(
     @Req() req: Request,

@@ -28,6 +28,12 @@ import { CaregiverController } from '../access/caregiver.controller.js';
 import { CaregiverService } from '../access/caregiver.service.js';
 
 class DisabledDocumentStore extends DocumentStore {
+  async readClinicalReview(): Promise<never> {
+    throw new ServiceUnavailableException();
+  }
+  async saveClinicalReview(): Promise<never> {
+    throw new ServiceUnavailableException();
+  }
   searchExtractions(): never {
     throw new ServiceUnavailableException();
   }

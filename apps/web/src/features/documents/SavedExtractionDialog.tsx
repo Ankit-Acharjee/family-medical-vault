@@ -13,11 +13,14 @@ import {
   DialogTitle,
 } from '../../components/ui/dialog';
 import { PdfTextContent } from './PdfTextContent';
+import { ClinicalReviewPanel } from './ClinicalReviewPanel';
+import type { ClinicalDraft } from './clinicalReviewDraft';
 import { MetadataSuggestions } from './MetadataSuggestions';
 import type { SourceExcerptTarget } from './sourceExcerpt';
 import { extractionPath } from './savedExtraction';
 export type SavedTextSource = {
   kind: 'saved';
+  patientName: string;
   patientId: string;
   documentId: string;
   title: string;
@@ -47,6 +50,7 @@ export function SavedExtractionDialog({
     ExtractionReadResult | 'loading' | 'failed' | null
   >('loading');
   const controller = useRef<AbortController | null>(null);
+  const clinicalDraft = useRef<ClinicalDraft | null>(null);
   const title = useRef<HTMLHeadingElement | null>(null);
   const allowed = useRef(enabled);
   allowed.current = enabled;
@@ -76,7 +80,10 @@ export function SavedExtractionDialog({
       );
       abort.signal.throwIfAborted();
       if ([401, 403, 404].includes(response.status)) {
-        if (allowed.current) onDenied();
+        if (allowed.current) {
+          clinicalDraft.current = null;
+          onDenied();
+        }
         return;
       }
       if (
@@ -228,6 +235,22 @@ export function SavedExtractionDialog({
                     excerpt: suggestion.excerpt,
                     requestId: crypto.randomUUID(),
                   },
+                })
+              }
+            />
+            <ClinicalReviewPanel
+              draft={clinicalDraft}
+              patientId={source.patientId}
+              patientName={source.patientName}
+              documentId={source.documentId}
+              snapshot={snapshot}
+              onDenied={onDenied}
+              onReloadSource={retry}
+              onShowSource={(evidence) =>
+                setSourceSelection({
+                  revision: snapshot.revision,
+                  sourceSha256: snapshot.sourceSha256,
+                  target: { ...evidence, requestId: crypto.randomUUID() },
                 })
               }
             />

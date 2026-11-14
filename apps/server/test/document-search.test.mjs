@@ -337,7 +337,11 @@ test('HTTP preserves the bounded ordered result and only authorized matches can 
           documentId: `30000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
         }).documentId,
     );
-    const sentinel = seed({ categoryId: ids.otherCategory });
+    // Keep the authorized sentinel after all 200 equally dated fixture rows.
+    const sentinel = seed({
+      categoryId: ids.otherCategory,
+      documentId: 'f0000000-0000-4000-8000-000000000001',
+    });
     const session = await f.login(principals.caregiver.subject);
     f.access.grant({ scope: { kind: 'category', categoryId: ids.category } });
     assert.deepEqual(await result(f, session), {

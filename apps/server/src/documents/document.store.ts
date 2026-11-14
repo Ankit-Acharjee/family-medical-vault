@@ -1,3 +1,9 @@
+import type { ClinicalReviewResult, SaveClinicalReview } from '@fmv/contracts';
+import {
+  readClinicalReview,
+  saveClinicalReview,
+} from './clinical-review.store.js';
+import type { ClinicalAuthorization } from './clinical-review.store.js';
 import type { OnModuleDestroy } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { randomUUID } from 'node:crypto';
@@ -49,6 +55,18 @@ export type SearchAuthorization = (
 
 export type TrashChangeResult = 'changed' | 'unchanged' | 'missing' | 'expired';
 export abstract class DocumentStore {
+  abstract readClinicalReview(
+    p: string,
+    d: string,
+    authorize: ClinicalAuthorization,
+  ): Promise<ClinicalReviewResult | null>;
+  abstract saveClinicalReview(
+    p: string,
+    d: string,
+    input: SaveClinicalReview,
+    authorize: ClinicalAuthorization,
+  ): Promise<{ saved: true; revision: number } | 'missing' | 'conflict'>;
+
   abstract readMetadata(
     patientId: string,
     documentId: string,
@@ -151,6 +169,17 @@ export class PrismaDocumentStore
       }),
       log: [],
     });
+  }
+  readClinicalReview(p: string, d: string, authorize: ClinicalAuthorization) {
+    return readClinicalReview(this.db, p, d, authorize);
+  }
+  saveClinicalReview(
+    p: string,
+    d: string,
+    input: SaveClinicalReview,
+    authorize: ClinicalAuthorization,
+  ) {
+    return saveClinicalReview(this.db, p, d, input, authorize);
   }
   readMetadata(p: string, d: string, authorize: ExtractionAuthorization) {
     return readMetadata(this.db, p, d, authorize);

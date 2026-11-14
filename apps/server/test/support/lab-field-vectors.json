@@ -1,0 +1,104 @@
+[
+  {
+    "name": "missing-result",
+    "pages": [
+      {
+        "page": 1,
+        "text": "Test: Hemoglobin\nUnits: g/dL\nSpecimen: whole blood\n"
+      }
+    ],
+    "options": {},
+    "expectedCount": 0,
+    "concern": "Block without a Result line is ignored even though optional fields parsed"
+  },
+  {
+    "name": "duplicate-result",
+    "pages": [
+      {
+        "page": 1,
+        "text": "Test: Glucose\nResult: 5.4 mmol/L\nResult: 5.9 mmol/L\n"
+      }
+    ],
+    "options": {},
+    "expectedCount": 0,
+    "concern": "A second Result in the same block aborts the whole block"
+  },
+  {
+    "name": "cross-page-block",
+    "pages": [
+      {
+        "page": 1,
+        "text": "Test: Hemoglobin\nUnits: g/dL\n"
+      },
+      {
+        "page": 2,
+        "text": "Result: 13.5\n"
+      }
+    ],
+    "options": {},
+    "expectedCount": 0,
+    "concern": "A block split across pages never merges; an orphan Result outside any block is ignored"
+  },
+  {
+    "name": "wrong-clinical-labels",
+    "pages": [
+      {
+        "page": 1,
+        "text": "Test: Lipid panel\nResult: LDL 3.4 mmol/L\nDiagnosis: dyslipidaemia\n"
+      }
+    ],
+    "options": {},
+    "expectedCount": 0,
+    "concern": "Unknown clinical label such as Diagnosis aborts the block; no interpretation is produced"
+  },
+  {
+    "name": "qualitative-unicode",
+    "pages": [
+      {
+        "page": 1,
+        "text": "Analyte: SARS-CoV-2 RNA\nResult: detected \u2265 1.0 \u00d710\u00b3 copies/mL\nUnits: copies/mL\n"
+      }
+    ],
+    "options": {},
+    "expectedCount": 1,
+    "concern": "Qualitative result and Unicode comparators are preserved verbatim, never interpreted"
+  },
+  {
+    "name": "truncated-final-line",
+    "pages": [
+      {
+        "page": 1,
+        "text": "Test: TSH\nResult: 1.2 mIU/L\nTest: Free T4\nResult: 1"
+      }
+    ],
+    "options": {
+      "truncatedFinalLine": true
+    },
+    "expectedCount": 1,
+    "concern": "Character-truncated final physical line is dropped so an incomplete Result cannot become a candidate"
+  },
+  {
+    "name": "ambiguous-literal-date",
+    "pages": [
+      {
+        "page": 1,
+        "text": "Test: HbA1c\nResult: 5.9 %\nCollection date: 03/04/2024\n"
+      }
+    ],
+    "options": {},
+    "expectedCount": 1,
+    "concern": "Ambiguous date literal is kept verbatim in the date evidence, never parsed or normalized"
+  },
+  {
+    "name": "multiple-block-offsets",
+    "pages": [
+      {
+        "page": 1,
+        "text": "Test: Sodium\nResult: 139 mmol/L\n\nTest: Potassium\nResult: 4.2 mmol/L\n"
+      }
+    ],
+    "options": {},
+    "expectedCount": 2,
+    "concern": "Two blocks on one page yield stable IDs from the exact UTF-16 offset of each block-start line"
+  }
+]

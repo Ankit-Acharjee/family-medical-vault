@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import { suggestMetadata } from '@fmv/contracts';
+import { extractLabFields, suggestMetadata } from '@fmv/contracts';
 const patient = {
   id: 'saved-patient',
   displayName: 'Saved Fixture Patient',
@@ -60,6 +60,7 @@ async function setup(
     selectedPage?: boolean;
     metadataText?: string;
     characterTruncated?: boolean;
+    canVerify?: boolean;
   } = {},
 ) {
   const canSave = options.canSave ?? true;
@@ -69,6 +70,11 @@ async function setup(
     contexts = 0,
     reads = 0,
     previews = 0;
+  const clinicalWrites: string[] = [];
+  let clinicalLastRequest = '',
+    clinicalLastBody = '';
+  let clinicalRevision = 0,
+    clinicalSnapshot: Record<string, unknown> | null = null;
   const metadataWrites: string[] = [];
   let metadataRevision = 0,
     metadataSnapshot: Record<string, unknown> | null = null;
@@ -249,6 +255,84 @@ async function setup(
       });
     },
   );
+  await page.route(
+    '**/api/patients/*/documents/*/clinical-review',
+    async (route) => {
+      const currentRevision = Number(snapshot?.revision ?? 0);
+      const canVerify = options.canVerify ?? canSave;
+      const candidates = extractLabFields(
+        (snapshot?.pages ?? []) as { page: number; text: string }[],
+        { truncatedFinalLine: snapshot?.partialReason === 'characters' },
+      );
+      const context = {
+        sourceRevision: currentRevision,
+        sourceSha256: 'a'.repeat(64),
+        lifecycleVersion: 0,
+        revision: clinicalRevision,
+        canVerify,
+      };
+      if (mode === 'clinical-denied') return route.fulfill({ status: 403 });
+      if (mode === 'clinical-unavailable')
+        return route.fulfill({ status: 503 });
+      if (mode === 'clinical-stale') context.sourceRevision++;
+      if (route.request().method() === 'PUT') {
+        clinicalWrites.push(route.request().postData()!);
+        if (!canVerify) return route.fulfill({ status: 403 });
+        if (mode === 'clinical-uncommitted') return route.abort('failed');
+        if (mode === 'clinical-conflict') return route.fulfill({ status: 409 });
+        const input = JSON.parse(clinicalWrites.at(-1)!);
+        if (input.sourceRevision !== currentRevision)
+          return route.fulfill({ status: 409 });
+        if (clinicalLastRequest !== input.requestId) {
+          if (input.expectedRevision !== clinicalRevision)
+            return route.fulfill({ status: 409 });
+          const previous =
+            clinicalSnapshot?.sourceRevision === currentRevision
+              ? (clinicalSnapshot.items as {
+                  source: { id: string };
+                  fields: unknown;
+                }[])
+              : [];
+          const merged = new Map(
+            previous.map((item) => [item.source.id, item]),
+          );
+          for (const selection of input.selections)
+            merged.set(selection.candidateId, {
+              source: candidates.find((c) => c.id === selection.candidateId)!,
+              fields: selection.fields,
+            });
+          clinicalRevision++;
+          clinicalLastRequest = input.requestId;
+          clinicalLastBody = route.request().postData()!;
+          clinicalSnapshot = {
+            revision: clinicalRevision,
+            sourceRevision: currentRevision,
+            sourceSha256: 'a'.repeat(64),
+            verifiedAt: '2026-11-14T00:00:00.000Z',
+            ruleVersion: 'labeled-lab-blocks-v1',
+            extraction: {
+              method: snapshot!.method,
+              engineVersion: snapshot!.engineVersion,
+              partial: snapshot!.partial,
+              partialReason: snapshot!.partialReason,
+              downsized: snapshot!.downsized,
+            },
+            items: [...merged.values()],
+            verified: true,
+          };
+        } else if (clinicalLastBody !== route.request().postData())
+          return route.fulfill({ status: 409 });
+        if (mode === 'clinical-uncertain' && clinicalWrites.length === 1)
+          return route.abort('failed');
+        return route.fulfill({
+          json: { saved: true, revision: clinicalRevision },
+        });
+      }
+      return route.fulfill({
+        json: { context, candidates, snapshot: clinicalSnapshot },
+      });
+    },
+  );
   await page.goto('/#documents');
   await page
     .getByRole('button', { name: 'Select patient: No patient selected' })
@@ -260,6 +344,7 @@ async function setup(
   return {
     writes,
     metadataWrites,
+    clinicalWrites,
     external,
     counts: () => ({ contexts, reads, previews }),
     mode: (next: string) => {
@@ -271,6 +356,12 @@ async function setup(
     release: () => {
       hold = false;
       release();
+    },
+    advanceSource: () => {
+      if (snapshot) {
+        revision++;
+        snapshot.revision = revision;
+      }
     },
     revoke: () => {
       canView = false;
@@ -946,3 +1037,342 @@ for (const theme of ['light', 'dark'])
     await page.keyboard.press('Escape');
     await expect(action(page, 'Saved text')).toBeFocused();
   });
+
+const labText =
+  'Test: Synthetic analyte\nResult: <5.4\nUnit: synthetic/unit\nReference range: 1–9\nCollection date: 03/04/2026';
+async function openClinical(page: Page) {
+  await action(page, 'Saved text').click();
+  const panel = saved(page).getByRole('region', {
+    name: 'Clinical lab review',
+    exact: true,
+  });
+  await panel.locator('summary').first().click();
+  return panel;
+}
+test('owner explicitly corrects and verifies selected lab fields; original provenance and no automatic promotion', async ({
+  page,
+}) => {
+  const api = await setup(page, { initial: true, metadataText: labText });
+  const panel = await openClinical(page);
+  await expect(panel).toContainText('Patient: Saved Fixture Patient');
+  await expect(panel).toContainText('Unverified');
+  expect(api.clinicalWrites).toEqual([]);
+  await panel
+    .getByRole('button', { name: 'Verify selected lab fields', exact: true })
+    .click();
+  await expect(panel.getByRole('alert')).toContainText('Select at least one');
+  expect(api.clinicalWrites).toEqual([]);
+  const candidate = panel.getByRole('region', { name: 'Lab candidate 1' });
+  await candidate.getByRole('checkbox').check();
+  await candidate
+    .getByRole('textbox', { name: 'Result as written', exact: true })
+    .fill('<5.40');
+  await panel
+    .getByRole('checkbox', {
+      name: 'I checked all selected values and units against the original document.',
+    })
+    .check();
+  await panel
+    .getByRole('button', { name: 'Verify selected lab fields', exact: true })
+    .click();
+  await expect(panel).toContainText('Selected fields verified');
+  expect(api.clinicalWrites).toHaveLength(1);
+  const body = JSON.parse(api.clinicalWrites[0]!);
+  expect(body.confirmed).toBe(true);
+  expect(body.sourceRevision).toBe(1);
+  expect(body.selections[0].fields.result).toBe('<5.40');
+  expect(body.selections[0]).not.toHaveProperty('source');
+  await panel.getByRole('button', { name: 'Reload clinical review' }).click();
+  const verified = panel.getByRole('region', {
+    name: 'Owner-confirmed lab fields',
+  });
+  await expect(verified).toContainText('<5.40');
+  await expect(
+    panel
+      .getByRole('region', { name: 'Lab candidate 1' })
+      .getByRole('textbox', { name: 'Result as written', exact: true }),
+  ).toHaveValue('<5.40');
+  await verified.locator('summary').first().click();
+  await expect(verified).toContainText('Result: <5.4');
+  await expect(verified).toContainText('Corrected during owner review');
+  expect(
+    (await new AxeBuilder({ page }).include('[role="dialog"]').analyze())
+      .violations,
+  ).toEqual([]);
+  expect(api.writes).toEqual([]);
+  expect(api.metadataWrites).toEqual([]);
+  expect(api.counts().previews).toBe(0);
+  expect(api.external).toEqual([]);
+});
+test('delegates with Edit and View may review unverified lab fields but cannot verify', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    metadataText: labText,
+    canSave: true,
+    canVerify: false,
+  });
+  const panel = await openClinical(page);
+  await expect(panel).toContainText('Only the profile owner');
+  await expect(panel.getByRole('textbox')).toHaveCount(0);
+  await expect(
+    panel.getByRole('button', {
+      name: 'Verify selected lab fields',
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  expect(api.clinicalWrites).toEqual([]);
+  await expect(action(page, 'Saved text')).toBeFocused();
+});
+test('clinical optional failure preserves source and exact uncertain retries do not change payload', async ({
+  page,
+}) => {
+  const api = await setup(page, { initial: true, metadataText: labText });
+  api.mode('clinical-unavailable');
+  const panel = await openClinical(page);
+  await expect(panel).toContainText('could not be loaded');
+  await saved(page)
+    .getByLabel('Find in this text', { exact: true })
+    .fill('Synthetic analyte');
+  await expect(saved(page).locator('mark')).toHaveCount(1);
+  api.mode('normal');
+  await panel.getByRole('button', { name: 'Retry clinical review' }).click();
+  await panel.getByRole('button', { name: 'Select all entries' }).click();
+  await panel
+    .getByRole('checkbox', {
+      name: 'I checked all selected values and units against the original document.',
+    })
+    .check();
+  api.mode('clinical-uncertain');
+  await panel
+    .getByRole('button', { name: 'Verify selected lab fields', exact: true })
+    .click();
+  await expect(panel).toContainText('Verification could not be confirmed');
+  await panel
+    .getByRole('button', { name: 'Retry verification', exact: true })
+    .click();
+  await expect(panel).toContainText('Selected fields verified');
+  expect(api.clinicalWrites).toHaveLength(2);
+  expect(api.clinicalWrites[0]).toBe(api.clinicalWrites[1]);
+});
+test('clinical source conflicts and denied verification clear protected context without rebasing', async ({
+  page,
+}) => {
+  const api = await setup(page, { initial: true, metadataText: labText });
+  api.mode('clinical-stale');
+  const panel = await openClinical(page);
+  await expect(panel).toContainText('Reload saved text');
+  api.mode('normal');
+  await panel.getByRole('button', { name: 'Reload saved text' }).click();
+  const fresh = saved(page).getByRole('region', {
+    name: 'Clinical lab review',
+    exact: true,
+  });
+  await fresh.locator('summary').first().click();
+  await fresh.getByRole('button', { name: 'Select all entries' }).click();
+  await fresh
+    .getByRole('checkbox', {
+      name: 'I checked all selected values and units against the original document.',
+    })
+    .check();
+  api.mode('clinical-denied');
+  await fresh
+    .getByRole('button', { name: 'Verify selected lab fields', exact: true })
+    .click();
+  await expect(saved(page)).toHaveCount(0);
+  await expect(action(page, 'Saved text')).toHaveCount(0);
+});
+for (const theme of ['light', 'dark'])
+  test(`${theme} clinical lab review reflows accessibly and preserves evidence navigation`, async ({
+    page,
+  }, info) => {
+    await page.setViewportSize({
+      width: info.project.name === 'mobile' ? 320 : 1440,
+      height: 1000,
+    });
+    await page.addInitScript(
+      (value) => localStorage.setItem('fmv.theme', value),
+      theme,
+    );
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const diagnostics: string[] = [];
+    page.on('pageerror', (e) => diagnostics.push(e.message));
+    await setup(page, { initial: true, metadataText: labText });
+    const panel = await openClinical(page);
+    await expect(
+      panel.getByRole('textbox', { name: 'Result as written', exact: true }),
+    ).toHaveValue('<5.4');
+    expect(
+      (await new AxeBuilder({ page }).include('[role="dialog"]').analyze())
+        .violations,
+    ).toEqual([]);
+    expect(
+      await saved(page).evaluate((el) => el.scrollWidth <= el.clientWidth),
+    ).toBe(true);
+    await panel.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `../../.local/screenshots/clinical-review-${theme}-${info.project.name}.png`,
+    });
+    const evidence = panel
+      .getByRole('region', { name: 'Lab candidate 1' })
+      .locator('details')
+      .filter({ hasText: 'Result: <5.4' });
+    await evidence.locator('summary').click();
+    await evidence
+      .getByRole('button', { name: 'Show in source', exact: true })
+      .click();
+    await expect(saved(page).locator('mark[aria-current="true"]')).toHaveText(
+      'Result: <5.4',
+    );
+    await expect(
+      saved(page).locator('mark[aria-current="true"]'),
+    ).toBeFocused();
+    expect(diagnostics).toEqual([]);
+    await page.keyboard.press('Escape');
+    await expect(action(page, 'Saved text')).toBeFocused();
+  });
+
+test('later targeted confirmation preserves an earlier entry from the same source without requiring reselection', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    metadataText:
+      'Test: First synthetic entry\nResult: 1.0\n\nTest: Second synthetic entry\nResult: 2.0',
+  });
+  const panel = await openClinical(page);
+  await panel
+    .getByRole('region', { name: 'Lab candidate 1' })
+    .getByRole('checkbox')
+    .check();
+  const attest = () =>
+    panel
+      .getByRole('checkbox', {
+        name: 'I checked all selected values and units against the original document.',
+      })
+      .check();
+  await attest();
+  await panel
+    .getByRole('button', { name: 'Verify selected lab fields', exact: true })
+    .click();
+  await expect(panel).toContainText('Selected fields verified');
+  await panel.getByRole('button', { name: 'Reload clinical review' }).click();
+  await expect(
+    panel.getByRole('region', { name: 'Owner-confirmed lab fields' }),
+  ).toContainText('First synthetic entry');
+  await panel
+    .getByRole('region', { name: 'Lab candidate 2' })
+    .getByRole('checkbox')
+    .check();
+  await attest();
+  await panel
+    .getByRole('button', { name: 'Verify selected lab fields', exact: true })
+    .click();
+  await expect(panel).toContainText('Selected fields verified');
+  await panel.getByRole('button', { name: 'Reload clinical review' }).click();
+  const confirmed = panel.getByRole('region', {
+    name: 'Owner-confirmed lab fields',
+  });
+  await expect(confirmed).toContainText('First synthetic entry');
+  await expect(confirmed).toContainText('Second synthetic entry');
+  expect(api.clinicalWrites).toHaveLength(2);
+  expect(JSON.parse(api.clinicalWrites[1]!).selections).toHaveLength(1);
+});
+
+test('clinical draft survives same-context focus revalidation and clears on access loss', async ({
+  page,
+}) => {
+  const api = await setup(page, { initial: true, metadataText: labText });
+  const panel = await openClinical(page);
+  const candidate = panel.getByRole('region', { name: 'Lab candidate 1' });
+  await candidate.getByRole('checkbox').check();
+  await candidate
+    .getByRole('textbox', { name: 'Result as written', exact: true })
+    .fill('<5.40');
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(saved(page)).toContainText(
+    'Saved text cleared while access is checked',
+  );
+  await expect(
+    saved(page).getByRole('textbox', {
+      name: 'Result as written',
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    saved(page).getByRole('button', { name: 'Retry saved text' }),
+  ).toBeEnabled();
+  await saved(page).getByRole('button', { name: 'Retry saved text' }).click();
+  await panel.locator('summary').first().click();
+  await expect(
+    candidate.getByRole('textbox', { name: 'Result as written', exact: true }),
+  ).toHaveValue('<5.40');
+  await expect(candidate.getByRole('checkbox')).toBeChecked();
+  expect(api.clinicalWrites).toEqual([]);
+  api.revoke();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(saved(page)).toHaveCount(0);
+  await expect(
+    page.getByRole('textbox', { name: 'Result as written', exact: true }),
+  ).toHaveCount(0);
+});
+
+test('clinical drafts are discarded after saved source revision changes', async ({
+  page,
+}) => {
+  const api = await setup(page, { initial: true, metadataText: labText });
+  const panel = await openClinical(page);
+  const candidate = panel.getByRole('region', { name: 'Lab candidate 1' });
+  await candidate.getByRole('checkbox').check();
+  await candidate
+    .getByRole('textbox', { name: 'Result as written', exact: true })
+    .fill('<5.40');
+  api.advanceSource();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(
+    saved(page).getByRole('button', { name: 'Retry saved text' }),
+  ).toBeEnabled();
+  await saved(page).getByRole('button', { name: 'Retry saved text' }).click();
+  await panel.locator('summary').first().click();
+  await expect(
+    candidate.getByRole('textbox', { name: 'Result as written', exact: true }),
+  ).toHaveValue('<5.4');
+  await expect(candidate.getByRole('checkbox')).not.toBeChecked();
+  expect(api.clinicalWrites).toEqual([]);
+});
+
+test('clinical uncertain request survives focus with the identical payload and nonce', async ({
+  page,
+}) => {
+  const api = await setup(page, { initial: true, metadataText: labText });
+  const panel = await openClinical(page);
+  await panel.getByRole('button', { name: 'Select all entries' }).click();
+  await panel
+    .getByRole('checkbox', {
+      name: 'I checked all selected values and units against the original document.',
+    })
+    .check();
+  api.mode('clinical-uncommitted');
+  await panel
+    .getByRole('button', { name: 'Verify selected lab fields', exact: true })
+    .click();
+  await expect(panel).toContainText('Verification could not be confirmed');
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(
+    saved(page).getByRole('button', { name: 'Retry saved text' }),
+  ).toBeEnabled();
+  api.mode('normal');
+  await saved(page).getByRole('button', { name: 'Retry saved text' }).click();
+  await panel.locator('summary').first().click();
+  await expect(
+    panel.getByRole('textbox', { name: 'Result as written', exact: true }),
+  ).toBeDisabled();
+  await panel
+    .getByRole('button', { name: 'Retry verification', exact: true })
+    .click();
+  await expect(panel).toContainText('Selected fields verified');
+  expect(api.clinicalWrites).toHaveLength(2);
+  expect(api.clinicalWrites[0]).toBe(api.clinicalWrites[1]);
+});
