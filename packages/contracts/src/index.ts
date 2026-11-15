@@ -116,3 +116,4 @@ export * from './metadata.js';
 export * from './lab-fields.js';
 export * from './clinical-review.js';
 export * from './clinical-history.js';
+export * from './diagnosis-fields.js';

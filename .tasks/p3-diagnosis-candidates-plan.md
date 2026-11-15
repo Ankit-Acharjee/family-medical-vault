@@ -1,6 +1,6 @@
 # Next P3 slice: explicit diagnosis source candidates
 
-Status: requirements/design preparation begun while clinical-withdrawal hosted-write approval is pending. No diagnosis implementation or hosted schema change yet.
+Status: requirements/design preparation begun while clinical-withdrawal hosted-write approval is pending. Parser and read-only source UI implemented; verification/delivery evidence in `.tasks/p3-diagnosis-candidates-report.md`. No hosted schema change.
 
 - AI-02/AI-03/AI-05, roadmap P3 work package4: extend source-linked review coverage beyond the existing labeled lab subset. Start with conservative explicit English `Diagnosis:` source lines, not semantic diagnosis inference or code mapping.
 - First bounded delivery: shared deterministic provisional-candidate parser and synthetic negative/accuracy corpus. Preserve exact page/UTF-16 evidence and original wording, including uncertainty/negation. Never infer current disease status or assert clinical truth; candidates remain unrated/unverified. No clinical record is stored or promoted by parsing.
@@ -8,3 +8,5 @@ Status: requirements/design preparation begun while clinical-withdrawal hosted-w
 - Root specifies/contracts and integrates. Approved sandboxed GLM may review generic source-free parser cases; native Astra/Sol only after quota genuinely becomes available. Independent code/security review remains root-owned.
 - Follow-up review/persistence must reuse existing authorized source/lifecycle guards, explicit owner-only verification and retained withdrawal history policy. Design its separate immutable schema only after source-candidate behavior is tested. No P4 timeline, medication list, summaries or trends in this slice.
 - Before implementation: compare parser limits/provenance with `lab-fields.ts`, the synthetic safety corpus and canonical extraction/security/UX documents. Avoid duplicating unrelated infrastructure or widening existing lab parsing. Verify contract tests, synthetic no-inference fixtures and types; no new dependency.
+
+Presentation slice: add one collapsed read-only diagnosis-text section inside the existing saved-text dialog, following existing metadata/review patterns. Display literal qualifiers and exact evidence, source-page navigation, empty/partial/capped states; no verification/persistence controls. Existing protected dialog lifecycle clears content on authority/context change. Verify source navigation, denied access, malformed/truncated source, no writes, mobile/desktop, both themes and axe.

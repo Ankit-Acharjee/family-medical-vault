@@ -2610,3 +2610,122 @@ test('partial confirmation never resurrects an unselected withdrawn entry and hi
   expect(api.clinicalWrites).toHaveLength(1);
   expect(api.external).toEqual([]);
 });
+
+const diagnoses = (page: Page) =>
+  saved(page).getByRole('region', {
+    name: 'Diagnosis source text',
+    exact: true,
+  });
+const diagnosisText =
+  'Diagnosis: No SYNTHETIC condition\nDiagnosis: Possible SYNTHETIC condition?\nDiagnosis: History of SYNTHETIC condition\nDiagnosis: <script>SYNTHETIC</script>';
+test('diagnosis source excerpts stay literal, unverified and read-only with exact page navigation', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    canSave: false,
+    canVerify: false,
+    metadataText: diagnosisText,
+    selectedPage: true,
+  });
+  await action(page, 'Saved text').click();
+  await diagnoses(page)
+    .getByText('Diagnosis text · Unverified', { exact: true })
+    .click();
+  await expect(diagnoses(page).getByRole('listitem')).toHaveCount(4);
+  await expect(diagnoses(page)).toContainText('not confirmed diagnoses');
+  await expect(diagnoses(page).getByRole('listitem').first()).toContainText(
+    'No SYNTHETIC condition',
+  );
+  await expect(diagnoses(page)).toContainText('Based on partial text');
+  await expect(diagnoses(page).locator('script')).toHaveCount(0);
+  await diagnoses(page)
+    .getByRole('button', { name: 'Show in source', exact: true })
+    .nth(1)
+    .click();
+  await expect(saved(page).locator('mark')).toContainText([
+    'Diagnosis: Possible SYNTHETIC condition?',
+  ]);
+  await expect(saved(page)).toContainText('Page 7');
+  expect(api.writes).toEqual([]);
+  expect(api.clinicalWrites).toEqual([]);
+  expect(api.metadataWrites).toEqual([]);
+  expect(api.external).toEqual([]);
+  await page.keyboard.press('Escape');
+  await expect(action(page, 'Saved text')).toBeFocused();
+});
+test('diagnosis source handles missing labels and omits a character-truncated final statement', async ({
+  page,
+}) => {
+  await setup(page, {
+    initial: true,
+    metadataText: 'SYNTHETIC condition\nDiagnosis: SYNTHETIC truncated\n',
+    characterTruncated: true,
+  });
+  await action(page, 'Saved text').click();
+  await diagnoses(page)
+    .getByText('Diagnosis text · Unverified', { exact: true })
+    .click();
+  await expect(diagnoses(page)).toContainText(
+    'No explicitly labeled diagnosis text found',
+  );
+  await expect(diagnoses(page).getByRole('button')).toHaveCount(0);
+  await expect(diagnoses(page)).toContainText('Based on partial text');
+});
+test('diagnosis source text disappears on fresh access denial', async ({
+  page,
+}) => {
+  const api = await setup(page, { initial: true, metadataText: diagnosisText });
+  await action(page, 'Saved text').click();
+  await diagnoses(page)
+    .getByText('Diagnosis text · Unverified', { exact: true })
+    .click();
+  await expect(diagnoses(page)).toContainText('Possible SYNTHETIC condition?');
+  api.revoke();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(saved(page)).toHaveCount(0);
+  await expect(
+    page.getByText('Possible SYNTHETIC condition?', { exact: true }),
+  ).toHaveCount(0);
+  expect(api.writes).toEqual([]);
+  expect(api.clinicalWrites).toEqual([]);
+});
+for (const theme of ['light', 'dark'] as const)
+  test(`${theme} diagnosis source text fits and remains accessible`, async ({
+    page,
+  }, testInfo) => {
+    const mobile = testInfo.project.name === 'mobile';
+    await page.setViewportSize({ width: mobile ? 320 : 1440, height: 1000 });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.addInitScript(
+      (value) => localStorage.setItem('fmv.theme', value),
+      theme,
+    );
+    await setup(page, {
+      initial: true,
+      canSave: false,
+      metadataText: `Diagnosis: ${'SYNTHETIC'.repeat(13)}\n${diagnosisText}`,
+    });
+    await action(page, 'Saved text').click();
+    await diagnoses(page)
+      .getByText('Diagnosis text · Unverified', { exact: true })
+      .click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    await expect(diagnoses(page).getByRole('listitem')).toHaveCount(5);
+    expect(
+      await saved(page).evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+    ).toBe(true);
+    const violations = (
+      await new AxeBuilder({ page }).include('[role="dialog"]').analyze()
+    ).violations;
+    expect(violations).toEqual([]);
+    await diagnoses(page)
+      .getByRole('button', { name: 'Show in source', exact: true })
+      .first()
+      .focus();
+    await expect(diagnoses(page).getByRole('button').first()).toBeFocused();
+    await diagnoses(page).scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `../../.local/screenshots/diagnosis-source-${theme}-${mobile ? 'mobile' : 'desktop'}.png`,
+    });
+  });

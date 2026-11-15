@@ -1,0 +1,85 @@
+import { extractDiagnosisFields } from '@fmv/contracts';
+import type { SavedExtraction } from '@fmv/contracts';
+import { Button } from '../../components/ui/button';
+
+/** Read-only source assistance; this component cannot verify or persist facts. */
+export function DiagnosisCandidates({
+  snapshot,
+  onShowSource,
+}: {
+  snapshot: SavedExtraction;
+  onShowSource: (target: { page: number; excerpt: string }) => void;
+}) {
+  const candidates = extractDiagnosisFields(snapshot.pages, {
+    truncatedFinalLine: snapshot.partialReason === 'characters',
+  });
+  return (
+    <section
+      aria-label="Diagnosis source text"
+      className="min-w-0 rounded-xl border border-border px-4 py-1"
+    >
+      <details className="min-w-0">
+        <summary className="min-h-11 cursor-pointer content-center rounded-sm text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+          Diagnosis text · Unverified
+        </summary>
+        <div className="min-w-0 space-y-3 pb-3 pt-2">
+          <p className="text-pretty text-sm text-muted-foreground">
+            Explicitly labeled source text, not confirmed diagnoses. Wording may
+            describe uncertainty, negation, history or another person. Check the
+            full original document.
+          </p>
+          {snapshot.partial && (
+            <p className="text-pretty text-sm text-muted-foreground">
+              Based on partial text; other pages or statements may be missing.
+            </p>
+          )}
+          {candidates.length === 20 && (
+            <p className="text-pretty text-sm text-muted-foreground">
+              Up to 20 excerpts are shown. Check the complete source for other
+              statements.
+            </p>
+          )}
+          {!candidates.length ? (
+            <p
+              role="status"
+              className="text-pretty text-sm text-muted-foreground"
+            >
+              No explicitly labeled diagnosis text found. The original and saved
+              text remain available.
+            </p>
+          ) : (
+            <ul className="min-w-0 divide-y divide-border">
+              {candidates.map((candidate) => (
+                <li
+                  key={candidate.id}
+                  className="min-w-0 space-y-2 py-3 first:pt-0"
+                >
+                  <p className="whitespace-pre-wrap break-words text-sm font-medium [overflow-wrap:anywhere]">
+                    {candidate.field.value}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Unverified · Page {candidate.page}
+                  </p>
+                  <blockquote className="whitespace-pre-wrap break-words border-l-2 border-border pl-3 text-sm text-muted-foreground [overflow-wrap:anywhere]">
+                    {candidate.field.excerpt}
+                  </blockquote>
+                  <Button
+                    variant="secondary"
+                    onClick={() =>
+                      onShowSource({
+                        page: candidate.page,
+                        excerpt: candidate.field.excerpt,
+                      })
+                    }
+                  >
+                    Show in source
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </details>
+    </section>
+  );
+}

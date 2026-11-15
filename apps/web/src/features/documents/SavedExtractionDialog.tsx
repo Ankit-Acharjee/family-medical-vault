@@ -17,6 +17,7 @@ import { OriginalComparison } from './OriginalComparison';
 import { ClinicalReviewPanel } from './ClinicalReviewPanel';
 import type { ClinicalDraft } from './clinicalReviewDraft';
 import { MetadataSuggestions } from './MetadataSuggestions';
+import { DiagnosisCandidates } from './DiagnosisCandidates';
 import type { SourceExcerptTarget } from './sourceExcerpt';
 import { extractionPath } from './savedExtraction';
 export type SavedTextSource = {
@@ -254,6 +255,16 @@ export function SavedExtractionDialog({
                     excerpt: suggestion.excerpt,
                     requestId: crypto.randomUUID(),
                   },
+                })
+              }
+            />
+            <DiagnosisCandidates
+              snapshot={snapshot}
+              onShowSource={(evidence) =>
+                setSourceSelection({
+                  revision: snapshot.revision,
+                  sourceSha256: snapshot.sourceSha256,
+                  target: { ...evidence, requestId: crypto.randomUUID() },
                 })
               }
             />
