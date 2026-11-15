@@ -1,5 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { isSaveClinicalReview, labFieldKeys } from '@fmv/contracts';
+import {
+  isSaveClinicalReview,
+  isWithdrawClinicalReview,
+  labFieldKeys,
+} from '@fmv/contracts';
 import type {
   ClinicalReviewResult,
   LabFieldKey,
@@ -7,6 +11,7 @@ import type {
   SavedExtraction,
 } from '@fmv/contracts';
 import { Button } from '../../components/ui/button';
+import { ClinicalWithdrawal } from './ClinicalWithdrawal';
 import { ClinicalHistory } from './ClinicalHistory';
 import { ClinicalLabFields } from './ClinicalLabFields';
 import { useClinicalReview } from './useClinicalReview';
@@ -14,6 +19,7 @@ import {
   clinicalDraftKey,
   type ClinicalDraftRef,
   type ClinicalSaveState,
+  type ClinicalOperation,
 } from './clinicalReviewDraft';
 function ReviewForm({
   data,
@@ -28,7 +34,7 @@ function ReviewForm({
   saveState: ClinicalSaveState;
   draft: ClinicalDraftRef;
   contextKey: string;
-  onSave: (body: string) => void;
+  onSave: (body: string, operation: ClinicalOperation) => void;
   onReload: () => void;
   onShowSource: (t: { page: number; excerpt: string }) => void;
 }) {
@@ -60,6 +66,19 @@ function ReviewForm({
   const body = useRef<string | null>(
     draft.current?.key === contextKey ? draft.current.body : null,
   );
+  const operation = useRef<ClinicalOperation>(
+    draft.current?.key === contextKey
+      ? (draft.current.operation ?? 'confirmation')
+      : 'confirmation',
+  );
+  const [withdrawIds, setWithdrawIds] = useState<string[]>(
+    draft.current?.key === contextKey ? (draft.current.withdrawIds ?? []) : [],
+  );
+  const [withdrawConfirmed, setWithdrawConfirmed] = useState(
+    draft.current?.key === contextKey
+      ? (draft.current.withdrawConfirmed ?? false)
+      : false,
+  );
   useEffect(() => {
     if (data.context.canVerify)
       draft.current = {
@@ -67,9 +86,21 @@ function ReviewForm({
         entries: drafts,
         confirmed,
         body: body.current,
+        operation: operation.current,
+        withdrawIds,
+        withdrawConfirmed,
         saveState,
       };
-  }, [draft, contextKey, data.context.canVerify, drafts, confirmed, saveState]);
+  }, [
+    draft,
+    contextKey,
+    data.context.canVerify,
+    drafts,
+    confirmed,
+    saveState,
+    withdrawIds,
+    withdrawConfirmed,
+  ]);
   const locked = saveState !== 'idle';
   const change = (i: number, k: LabFieldKey, v: string) =>
     setDrafts((all) =>
@@ -85,9 +116,25 @@ function ReviewForm({
           : d,
       ),
     );
-  const submit = () => {
+  const submit = (requestedOperation: ClinicalOperation = 'confirmation') => {
     if (body.current) {
-      if (saveState === 'uncertain') onSave(body.current);
+      if (saveState === 'uncertain' && operation.current === requestedOperation)
+        onSave(body.current, operation.current);
+      return;
+    }
+    if (requestedOperation === 'withdrawal') {
+      const payload = {
+        requestId: crypto.randomUUID(),
+        expectedRevision: data.context.revision,
+        sourceSha256: data.context.sourceSha256,
+        lifecycleVersion: data.context.lifecycleVersion,
+        confirmed: withdrawConfirmed,
+        candidateIds: withdrawIds,
+      };
+      if (!isWithdrawClinicalReview(payload)) return;
+      operation.current = 'withdrawal';
+      body.current = JSON.stringify(payload);
+      onSave(body.current, 'withdrawal');
       return;
     }
     const payload = {
@@ -105,9 +152,10 @@ function ReviewForm({
       setInvalid(true);
       return;
     }
+    operation.current = 'confirmation';
     body.current = JSON.stringify(payload);
     setInvalid(false);
-    onSave(body.current);
+    onSave(body.current, 'confirmation');
   };
   return (
     <div className="min-w-0 space-y-4">
@@ -116,7 +164,22 @@ function ReviewForm({
           aria-label="Owner-confirmed lab fields"
           className="space-y-3 border-b border-border pb-3"
         >
-          <h4 className="text-sm font-semibold">Verified by profile owner</h4>
+          <h4 className="text-sm font-semibold">
+            {data.snapshot.action === 'withdrawal'
+              ? 'Withdrawal recorded by profile owner'
+              : 'Verified by profile owner'}
+          </h4>
+          {data.snapshot.action === 'withdrawal' && (
+            <p role="status" className="text-sm text-muted-foreground">
+              Withdrawn entries are not current confirmed facts. Original
+              evidence and earlier confirmations remain in history.
+            </p>
+          )}
+          {!data.snapshot.items.length && (
+            <p role="status" className="text-sm text-muted-foreground">
+              No active confirmed lab fields.
+            </p>
+          )}
           <p className="text-sm text-muted-foreground">
             Set revision {data.snapshot.revision} · Updated{' '}
             {new Date(data.snapshot.verifiedAt).toLocaleString()} · saved text
@@ -155,6 +218,61 @@ function ReviewForm({
               />
             </details>
           ))}
+          {data.snapshot.withdrawnItems.length > 0 && (
+            <section
+              aria-label="Withdrawn lab confirmations"
+              className="space-y-2"
+            >
+              <h4 className="text-sm font-semibold">Withdrawn confirmations</h4>
+              {data.snapshot.withdrawnItems.map((item) => (
+                <details key={item.source.id}>
+                  <summary className="min-h-11 cursor-pointer content-center break-words text-sm focus-visible:outline-2 focus-visible:outline-ring">
+                    Withdrawn: {item.fields.analyte} · {item.fields.result}
+                  </summary>
+                  <ClinicalLabFields
+                    candidate={item.source}
+                    fields={item.fields}
+                    editable={false}
+                    verified
+                    sourceAvailable={false}
+                    onChange={() => {}}
+                    onShowSource={() => {}}
+                  />
+                </details>
+              ))}
+            </section>
+          )}
+          {data.context.canVerify && (
+            <ClinicalWithdrawal
+              items={data.snapshot.items}
+              selected={withdrawIds}
+              confirmed={withdrawConfirmed}
+              saveState={saveState}
+              operation={operation.current}
+              onSelection={setWithdrawIds}
+              onConfirmation={setWithdrawConfirmed}
+              onSubmit={() => submit('withdrawal')}
+            />
+          )}
+          {operation.current === 'withdrawal' &&
+            ['pending', 'uncertain', 'saved', 'failed'].includes(saveState) && (
+              <div className="space-y-2">
+                <p role="status" className="text-sm text-muted-foreground">
+                  {saveState === 'pending'
+                    ? 'Recording withdrawal…'
+                    : saveState === 'uncertain'
+                      ? 'Withdrawal could not be confirmed. Retry the same request or reload the current review.'
+                      : saveState === 'saved'
+                        ? 'Selected confirmations withdrawn. History is preserved.'
+                        : 'Withdrawal failed. Reload review before trying again.'}
+                </p>
+                {['uncertain', 'saved', 'failed'].includes(saveState) && (
+                  <Button variant="secondary" onClick={onReload}>
+                    Reload clinical review
+                  </Button>
+                )}
+              </div>
+            )}
         </section>
       )}
       <p className="text-sm text-muted-foreground">
@@ -273,34 +391,45 @@ function ReviewForm({
                   characters.
                 </p>
               )}
-              <p role="status" className="text-sm text-muted-foreground">
-                {saveState === 'saved'
-                  ? 'Selected fields verified. Reload review to see the confirmed set.'
-                  : saveState === 'uncertain'
-                    ? 'Verification could not be confirmed. Retry the same request or reload the current review.'
-                    : saveState === 'conflict'
-                      ? 'The document, source or review changed. Reload saved text before verifying.'
-                      : saveState === 'failed'
-                        ? 'Verification failed. Reload review before trying again.'
-                        : 'You can close this view and review later; nothing is verified until you explicitly confirm.'}
-              </p>
+              {operation.current === 'confirmation' && (
+                <p role="status" className="text-sm text-muted-foreground">
+                  {saveState === 'saved'
+                    ? 'Selected fields verified. Reload review to see the confirmed set.'
+                    : saveState === 'uncertain'
+                      ? 'Verification could not be confirmed. Retry the same request or reload the current review.'
+                      : saveState === 'conflict'
+                        ? 'The document, source or review changed. Reload saved text before verifying.'
+                        : saveState === 'failed'
+                          ? 'Verification failed. Reload review before trying again.'
+                          : 'You can close this view and review later; nothing is verified until you explicitly confirm.'}
+                </p>
+              )}
               <Button
-                disabled={!['idle', 'uncertain'].includes(saveState)}
-                onClick={submit}
+                disabled={
+                  saveState !== 'idle' &&
+                  !(
+                    saveState === 'uncertain' &&
+                    operation.current === 'confirmation'
+                  )
+                }
+                onClick={() => submit()}
               >
-                {saveState === 'pending'
+                {saveState === 'pending' && operation.current === 'confirmation'
                   ? 'Verifying…'
-                  : saveState === 'uncertain'
+                  : saveState === 'uncertain' &&
+                      operation.current === 'confirmation'
                     ? 'Retry verification'
-                    : saveState === 'saved'
+                    : saveState === 'saved' &&
+                        operation.current === 'confirmation'
                       ? 'Verified'
                       : 'Verify selected lab fields'}
               </Button>
-              {['saved', 'uncertain', 'failed'].includes(saveState) && (
-                <Button variant="secondary" onClick={onReload}>
-                  Reload clinical review
-                </Button>
-              )}
+              {operation.current === 'confirmation' &&
+                ['saved', 'uncertain', 'failed'].includes(saveState) && (
+                  <Button variant="secondary" onClick={onReload}>
+                    Reload clinical review
+                  </Button>
+                )}
             </>
           )}
         </>
@@ -334,6 +463,7 @@ export function ClinicalReviewPanel({
     onDenied,
     draft,
   );
+  const [notice, setNotice] = useState('');
   const heading = useRef<HTMLHeadingElement | null>(null);
   useEffect(() => {
     if (saveState === 'saved') heading.current?.focus();
@@ -359,6 +489,11 @@ export function ClinicalReviewPanel({
           >
             Patient: {patientName}
           </h3>
+          {notice && (
+            <p role="status" className="text-sm text-muted-foreground">
+              {notice}
+            </p>
+          )}
           {snapshot.partial && (
             <p className="text-sm text-muted-foreground">
               Partial extraction: pages or values may be missing. Confirming
@@ -401,7 +536,17 @@ export function ClinicalReviewPanel({
                 draft={draft}
                 contextKey={clinicalDraftKey(patientId, documentId, state)}
                 saveState={saveState}
-                onSave={(body) => void save(body)}
+                onSave={(body, operation) => {
+                  setNotice('');
+                  void save(body, operation).then((saved) => {
+                    if (saved && operation === 'withdrawal') {
+                      setNotice(
+                        'Selected confirmations withdrawn. History is preserved. Review selections have been reset.',
+                      );
+                      refresh();
+                    }
+                  });
+                }}
                 onReload={refresh}
                 onShowSource={onShowSource}
               />

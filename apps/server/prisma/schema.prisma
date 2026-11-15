@@ -265,6 +265,8 @@ model DocumentMetadataSnapshot {
 }
 
 model DocumentClinicalReview {
+  action           String     @default("confirmation")
+  withdrawnItems   Json       @default("[]") @map("withdrawn_items") @db.JsonB
   id               String     @id @db.Uuid
   documentId       String     @map("document_id") @db.Uuid
   patientId        String     @map("patient_id") @db.Uuid

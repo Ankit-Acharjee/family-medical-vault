@@ -1,0 +1,10 @@
+# Next P3 slice: explicit diagnosis source candidates
+
+Status: requirements/design preparation begun while clinical-withdrawal hosted-write approval is pending. No diagnosis implementation or hosted schema change yet.
+
+- AI-02/AI-03/AI-05, roadmap P3 work package4: extend source-linked review coverage beyond the existing labeled lab subset. Start with conservative explicit English `Diagnosis:` source lines, not semantic diagnosis inference or code mapping.
+- First bounded delivery: shared deterministic provisional-candidate parser and synthetic negative/accuracy corpus. Preserve exact page/UTF-16 evidence and original wording, including uncertainty/negation. Never infer current disease status or assert clinical truth; candidates remain unrated/unverified. No clinical record is stored or promoted by parsing.
+- Reject malformed Unicode, NUL, excessive/duplicate/nonascending pages and out-of-bound text before parsing; bounded values/excerpts/candidate count; skip truncated final lines. Treat document instructions/markup as inert untrusted text. Do not classify handwritten prescriptions or medication doses, remove qualifying wording, or normalize terminology.
+- Root specifies/contracts and integrates. Approved sandboxed GLM may review generic source-free parser cases; native Astra/Sol only after quota genuinely becomes available. Independent code/security review remains root-owned.
+- Follow-up review/persistence must reuse existing authorized source/lifecycle guards, explicit owner-only verification and retained withdrawal history policy. Design its separate immutable schema only after source-candidate behavior is tested. No P4 timeline, medication list, summaries or trends in this slice.
+- Before implementation: compare parser limits/provenance with `lab-fields.ts`, the synthetic safety corpus and canonical extraction/security/UX documents. Avoid duplicating unrelated infrastructure or widening existing lab parsing. Verify contract tests, synthetic no-inference fixtures and types; no new dependency.

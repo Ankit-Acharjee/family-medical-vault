@@ -413,6 +413,257 @@ export async function verifyClinicalReview(runtimeUrl, owner, insertGrant) {
       merged.map((i) => i.fields.analyte),
       ['First synthetic entry', 'Second synthetic entry'],
     );
+    const withdraw = (input, actor = principal) =>
+      service.clinical.withdraw(actor, patient.id, id, input);
+    const makeWithdrawal = (r) => ({
+      requestId: randomUUID(),
+      expectedRevision: r.context.revision,
+      sourceSha256: r.context.sourceSha256,
+      lifecycleVersion: r.context.lifecycleVersion,
+      confirmed: true,
+      candidateIds: r.snapshot.items.map((item) => item.source.id),
+    });
+    const beforeWithdrawal = await read(),
+      firstId = beforeWithdrawal.snapshot.items[0].source.id;
+    const firstWithdrawal = makeWithdrawal(beforeWithdrawal);
+    firstWithdrawal.candidateIds = [firstId];
+    for (let i = 0; i < 2; i++)
+      assert.deepEqual(await withdraw(firstWithdrawal), {
+        saved: true,
+        revision: 8,
+      });
+    let result = await read();
+    assert.equal(result.snapshot.action, 'withdrawal');
+    assert.equal(result.snapshot.items.length, 1);
+    assert.equal(result.snapshot.verified, true);
+    assert.deepEqual(result.snapshot.withdrawnItems, [
+      beforeWithdrawal.snapshot.items[0],
+    ]);
+    assert.equal((await history(8)).snapshot.items.length, 2);
+    assert.equal((await history(9)).snapshot.action, 'withdrawal');
+    const unrelated = make(result);
+    unrelated.selections = unrelated.selections.filter(
+      (item) => item.candidateId !== firstId,
+    );
+    assert.deepEqual(await save(unrelated), { saved: true, revision: 9 });
+    result = await read();
+    assert.equal(result.snapshot.items.length, 1);
+    assert.notEqual(result.snapshot.items[0].source.id, firstId);
+    assert.deepEqual(await withdraw(makeWithdrawal(result)), {
+      saved: true,
+      revision: 10,
+    });
+    result = await read();
+    assert.equal(result.snapshot.items.length, 0);
+    assert.equal(result.snapshot.verified, false);
+    assert.equal(result.snapshot.withdrawnItems.length, 1);
+    assert.equal((await history(11)).snapshot.verified, false);
+    const reinstate = make(result);
+    reinstate.selections = reinstate.selections.filter(
+      (item) => item.candidateId === firstId,
+    );
+    assert.deepEqual(await save(reinstate), { saved: true, revision: 11 });
+    assert.equal((await read()).snapshot.items[0].source.id, firstId);
+    for (const patch of [
+      { confirmed: false },
+      { candidateIds: [] },
+      { candidateIds: [firstId, firstId] },
+      { actorAccountId: ownerAccountId },
+      { fields: { result: 'forged' } },
+      { verifiedAt: '2026-11-15T00:00:00Z' },
+    ])
+      await assert.rejects(
+        withdraw({ ...makeWithdrawal(await read()), ...patch }),
+        status(400),
+      );
+    await assert.rejects(
+      withdraw({
+        ...makeWithdrawal(await read()),
+        candidateIds: ['page-1-block-999999'],
+      }),
+      status(409),
+    );
+    await assert.rejects(
+      withdraw({ ...makeWithdrawal(await read()), expectedRevision: 10 }),
+      status(409),
+    );
+    const delegateGrant = await insertGrant(
+      runtime,
+      {
+        patientId: patient.id,
+        caregiverAccountId: readerAccountId,
+        ownerAccountId,
+      },
+      {
+        actions: ['view', 'edit', 'manage', 'export', 'upload'],
+        scopeKind: 'document',
+        documentId: id,
+      },
+    );
+    await assert.rejects(
+      withdraw(makeWithdrawal(await read()), reader),
+      status(404),
+    );
+    await assert.rejects(withdraw({ confirmed: false }, reader), status(404));
+    await owner.query(
+      'UPDATE fmv.access_grants SET revoked_at=clock_timestamp() WHERE id=$1::uuid',
+      [delegateGrant.id ?? delegateGrant],
+    );
+    await extraction('Test: New synthetic source\nResult: 9');
+    const oldSource = await read();
+    assert.equal(oldSource.snapshot.sourceRevision, 3);
+    assert.equal(oldSource.context.sourceRevision, 4);
+    assert.deepEqual(await withdraw(makeWithdrawal(oldSource)), {
+      saved: true,
+      revision: 12,
+    });
+    assert.equal((await read()).snapshot.sourceRevision, 3);
+    assert.deepEqual(await save(make(await read())), {
+      saved: true,
+      revision: 13,
+    });
+    const staleWithdrawal = makeWithdrawal(await read());
+    await service.changeTrash(principal, patient.id, id, 'trash', {});
+    await assert.rejects(withdraw(staleWithdrawal), status(404));
+    await service.changeTrash(principal, patient.id, id, 'restore', {});
+    await assert.rejects(withdraw(staleWithdrawal), status(409));
+    assert.deepEqual(await withdraw(makeWithdrawal(await read())), {
+      saved: true,
+      revision: 14,
+    });
+    assert.equal((await history(14)).snapshot.items.length, 1);
+    await assert.rejects(
+      withdraw({
+        ...makeWithdrawal(await read()),
+        requestId: firstWithdrawal.requestId,
+        candidateIds: [firstId],
+      }),
+      status(409),
+    );
+    assert.deepEqual(await save(make(await read())), {
+      saved: true,
+      revision: 15,
+    });
+    const pendingWithdrawal = makeWithdrawal(await read());
+    const withdrawalsCount = async () =>
+      (
+        await runtime.query(
+          "SELECT count(*)::int n FROM fmv.document_events WHERE document_id=$1::uuid AND kind='document.clinical_withdrawn'",
+          [id],
+        )
+      ).rows[0].n;
+    const eventsBefore = await withdrawalsCount();
+    let withdrawalChecks = 0;
+    await assert.rejects(
+      store.withdrawClinicalReview(
+        patient.id,
+        id,
+        pendingWithdrawal,
+        async () => {
+          if (++withdrawalChecks === 2)
+            throw Error('synthetic withdrawal revocation');
+          return { accountId: ownerAccountId, canVerify: true };
+        },
+      ),
+    );
+    assert.equal(await count(), 15);
+    assert.equal(await withdrawalsCount(), eventsBefore);
+    await owner.query(
+      "CREATE FUNCTION fmv.fail_withdrawal_probe() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.kind='document.clinical_withdrawn' THEN RAISE EXCEPTION 'synthetic withdrawal audit failure'; END IF; RETURN NEW; END $$",
+    );
+    await owner.query(
+      'CREATE TRIGGER fail_withdrawal_probe BEFORE INSERT ON fmv.document_events FOR EACH ROW EXECUTE FUNCTION fmv.fail_withdrawal_probe()',
+    );
+    try {
+      await assert.rejects(withdraw(pendingWithdrawal), status(503));
+      assert.equal(await count(), 15);
+    } finally {
+      await owner.query(
+        'DROP TRIGGER fail_withdrawal_probe ON fmv.document_events',
+      );
+      await owner.query('DROP FUNCTION fmv.fail_withdrawal_probe()');
+    }
+    assert.deepEqual(await withdraw(pendingWithdrawal), {
+      saved: true,
+      revision: 16,
+    });
+    assert.equal(await withdrawalsCount(), eventsBefore + 1);
+    assert.deepEqual(await save(make(await read())), {
+      saved: true,
+      revision: 17,
+    });
+    const raceView = await read();
+    const mutationRace = await Promise.allSettled([
+      withdraw(makeWithdrawal(raceView)),
+      otherService.clinical.save(principal, patient.id, id, make(raceView)),
+    ]);
+    assert.equal(
+      mutationRace.filter((x) => x.status === 'fulfilled').length,
+      1,
+    );
+    assert.equal(
+      mutationRace.filter(
+        (x) => x.status === 'rejected' && x.reason.getStatus?.() === 409,
+      ).length,
+      1,
+    );
+    assert.equal(await count(), 18);
+    result = await read();
+    assert.equal(
+      result.snapshot.action,
+      mutationRace[0].status === 'fulfilled' ? 'withdrawal' : 'confirmation',
+    );
+    if (!result.snapshot.items.length) {
+      await save(make(result));
+      result = await read();
+    }
+    const activeItem = result.snapshot.items[0],
+      forgedItem = globalThis.structuredClone(activeItem);
+    forgedItem.fields.result = 'Synthetic tampering';
+    const badPartition = () =>
+      runtime.query(
+        `INSERT INTO fmv.document_clinical_reviews(id,document_id,patient_id,revision,source_revision,source_sha256,lifecycle_version,request_id,payload_hash,actor_account_id,source_context,items,action,withdrawn_items) VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8::uuid,$9,$10::uuid,$11::jsonb,'[]'::jsonb,'withdrawal',$12::jsonb)`,
+        [
+          randomUUID(),
+          id,
+          patient.id,
+          result.context.revision + 1,
+          result.snapshot.sourceRevision,
+          sha256,
+          result.context.lifecycleVersion,
+          randomUUID(),
+          'a'.repeat(64),
+          ownerAccountId,
+          JSON.stringify(result.snapshot.extraction),
+          JSON.stringify([forgedItem]),
+        ],
+      );
+    await assert.rejects(badPartition(), (e) => e.code === '23514');
+    const setValidation = (
+      await runtime.query(
+        'SELECT fmv.clinical_set_valid($1::jsonb,$2::jsonb,$3) confirmation_empty,fmv.clinical_set_valid($1::jsonb,$4::jsonb,$5) withdrawal_last,fmv.clinical_set_valid($4::jsonb,$4::jsonb,$5) duplicate,fmv.clinical_set_valid($1::jsonb,$4::jsonb,NULL) null_action',
+        [
+          '[]',
+          '[]',
+          'confirmation',
+          JSON.stringify([activeItem]),
+          'withdrawal',
+        ],
+      )
+    ).rows[0];
+    assert.deepEqual(setValidation, {
+      confirmation_empty: false,
+      withdrawal_last: true,
+      duplicate: false,
+      null_action: false,
+    });
+    const privileges = (
+      await runtime.query(
+        "SELECT has_column_privilege(current_user,'fmv.document_clinical_reviews','action','UPDATE') action,has_column_privilege(current_user,'fmv.document_clinical_reviews','withdrawn_items','UPDATE') withdrawn",
+      )
+    ).rows[0];
+    assert.deepEqual(privileges, { action: false, withdrawn: false });
+    assert.deepEqual(await immutable(), original);
     assert.deepEqual(
       (await intake.read(patient.id, id, 'view', authorize)).bytes,
       bytes,

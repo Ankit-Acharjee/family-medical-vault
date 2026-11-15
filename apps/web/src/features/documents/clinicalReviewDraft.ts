@@ -1,5 +1,6 @@
 import type { ClinicalReviewResult, ReviewedLabFields } from '@fmv/contracts';
 
+export type ClinicalOperation = 'confirmation' | 'withdrawal';
 export type ClinicalSaveState =
   'idle' | 'pending' | 'uncertain' | 'failed' | 'conflict' | 'saved';
 // Dialog-local memory only. Reuse requires a fresh source and authority check.
@@ -12,6 +13,9 @@ export type ClinicalDraft = {
   }[];
   confirmed: boolean;
   body: string | null;
+  operation: ClinicalOperation;
+  withdrawIds: string[];
+  withdrawConfirmed: boolean;
   saveState: ClinicalSaveState;
 };
 export type ClinicalDraftRef = { current: ClinicalDraft | null };

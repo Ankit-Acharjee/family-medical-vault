@@ -11,6 +11,7 @@ import {
 import type {
   ClinicalReviewResult,
   ClinicalHistoryResult,
+  WithdrawClinicalReview,
   SaveClinicalReview,
   LabFieldCandidate,
   ReviewedLabFields,
@@ -24,6 +25,8 @@ export type ClinicalAuthorization = (
 ) => Promise<ClinicalAuthority>;
 const options = { maxWait: 5000, timeout: 15000 };
 type Row = {
+  action: 'confirmation' | 'withdrawal';
+  withdrawnItems: unknown;
   revision: number;
   sourceRevision: number;
   sourceSha256: string;
@@ -39,7 +42,7 @@ type Row = {
 async function latest(db: Prisma.TransactionClient, d: string) {
   const rows = await db.$queryRaw<
     Row[]
-  >`SELECT revision,source_revision AS "sourceRevision",source_sha256 AS "sourceSha256",request_id AS "requestId",payload_hash AS "payloadHash",actor_account_id AS "actorAccountId",lifecycle_version AS "lifecycleVersion",items,source_context AS "extraction",rule_version AS "ruleVersion",verified_at AS "verifiedAt" FROM fmv.document_clinical_reviews WHERE document_id=${d}::uuid ORDER BY revision DESC LIMIT 1`;
+  >`SELECT revision,source_revision AS "sourceRevision",source_sha256 AS "sourceSha256",request_id AS "requestId",payload_hash AS "payloadHash",actor_account_id AS "actorAccountId",lifecycle_version AS "lifecycleVersion",action,withdrawn_items AS "withdrawnItems",items,source_context AS "extraction",rule_version AS "ruleVersion",verified_at AS "verifiedAt" FROM fmv.document_clinical_reviews WHERE document_id=${d}::uuid ORDER BY revision DESC LIMIT 1`;
   return rows[0] ?? null;
 }
 function fingerprint(i: SaveClinicalReview) {
@@ -97,13 +100,15 @@ export async function readClinicalReview(
       snapshot: row
         ? {
             revision: row.revision,
+            action: row.action,
+            withdrawnItems: row.withdrawnItems,
             sourceRevision: row.sourceRevision,
             sourceSha256: row.sourceSha256,
             verifiedAt: row.verifiedAt.toISOString(),
             ruleVersion: row.ruleVersion,
             items: row.items,
             extraction: row.extraction,
-            verified: true,
+            verified: Array.isArray(row.items) && row.items.length > 0,
           }
         : null,
     };
@@ -231,7 +236,7 @@ export async function readClinicalHistory(
     const current = await latest(db, d);
     const rows = await db.$queryRaw<
       Row[]
-    >`SELECT revision,source_revision AS "sourceRevision",source_sha256 AS "sourceSha256",source_context AS "extraction",items,rule_version AS "ruleVersion",verified_at AS "verifiedAt" FROM fmv.document_clinical_reviews WHERE document_id=${d}::uuid AND revision<${before} ORDER BY revision DESC LIMIT 1`;
+    >`SELECT revision,source_revision AS "sourceRevision",source_sha256 AS "sourceSha256",source_context AS "extraction",action,withdrawn_items AS "withdrawnItems",items,rule_version AS "ruleVersion",verified_at AS "verifiedAt" FROM fmv.document_clinical_reviews WHERE document_id=${d}::uuid AND revision<${before} ORDER BY revision DESC LIMIT 1`;
     const row = rows[0];
     const older = row
       ? await db.$queryRaw<
@@ -249,13 +254,15 @@ export async function readClinicalHistory(
       snapshot: row
         ? {
             revision: row.revision,
+            action: row.action,
+            withdrawnItems: row.withdrawnItems,
             sourceRevision: row.sourceRevision,
             sourceSha256: row.sourceSha256,
             extraction: row.extraction,
             items: row.items,
             ruleVersion: row.ruleVersion,
             verifiedAt: row.verifiedAt.toISOString(),
-            verified: true,
+            verified: Array.isArray(row.items) && row.items.length > 0,
           }
         : null,
       nextBefore: older[0]?.present && row ? row.revision : null,
@@ -271,5 +278,91 @@ export async function readClinicalHistory(
       ...result,
       context: { ...result.context, canVerify: finalActor.canVerify },
     };
+  }, options);
+}
+
+export async function withdrawClinicalReview(
+  client: PrismaClient,
+  p: string,
+  d: string,
+  input: WithdrawClinicalReview,
+  authorize: ClinicalAuthorization,
+): Promise<{ saved: true; revision: number } | 'missing' | 'conflict'> {
+  return client.$transaction(async (db) => {
+    const original = await extractionSource(db, p, d);
+    if (!original) return 'missing';
+    const actor = await authorize(original);
+    if (!actor.canVerify) throw Error('Unavailable clinical withdrawal');
+    if (
+      original.sha256 !== input.sourceSha256 ||
+      original.lifecycleVersion !== input.lifecycleVersion
+    )
+      return 'conflict';
+    const row = await latest(db, d);
+    const hash = createHash('sha256')
+      .update(
+        JSON.stringify({
+          action: 'withdrawal',
+          requestId: input.requestId.toLowerCase(),
+          expectedRevision: input.expectedRevision,
+          sourceSha256: input.sourceSha256,
+          lifecycleVersion: input.lifecycleVersion,
+          confirmed: true,
+          candidateIds: [...input.candidateIds].sort(),
+        }),
+      )
+      .digest('hex');
+    if (row?.requestId === input.requestId.toLowerCase()) {
+      if (
+        row.action !== 'withdrawal' ||
+        row.payloadHash !== hash ||
+        row.actorAccountId !== actor.accountId ||
+        row.lifecycleVersion !== original.lifecycleVersion
+      )
+        return 'conflict';
+      const current = await authorize(original);
+      if (!current.canVerify || current.accountId !== actor.accountId)
+        throw Error('Unavailable clinical withdrawal');
+      return { saved: true, revision: row.revision };
+    }
+    if (
+      !row ||
+      row.revision !== input.expectedRevision ||
+      row.revision === 2147483647
+    )
+      return 'conflict';
+    const prior = await db.$queryRaw<
+      { present: boolean }[]
+    >`SELECT EXISTS(SELECT 1 FROM fmv.document_clinical_reviews WHERE document_id=${d}::uuid AND request_id=${input.requestId}::uuid) AS present`;
+    if (prior[0]?.present) return 'conflict';
+    if (
+      !Array.isArray(row.items) ||
+      !row.items.every(
+        (item) =>
+          item &&
+          typeof item === 'object' &&
+          'source' in item &&
+          'fields' in item &&
+          isLabFieldCandidate(item.source) &&
+          isReviewedLabFields(item.fields),
+      )
+    )
+      throw Error('Unavailable clinical withdrawal');
+    const active = row.items as {
+      source: LabFieldCandidate;
+      fields: ReviewedLabFields;
+    }[];
+    const ids = new Set(input.candidateIds);
+    if ([...ids].some((id) => !active.some((item) => item.source.id === id)))
+      return 'conflict';
+    const items = active.filter((item) => !ids.has(item.source.id)),
+      withdrawnItems = active.filter((item) => ids.has(item.source.id));
+    const revision = row.revision + 1;
+    await db.$executeRaw`INSERT INTO fmv.document_clinical_reviews(id,document_id,patient_id,revision,source_revision,source_sha256,lifecycle_version,request_id,payload_hash,actor_account_id,source_context,items,action,withdrawn_items) VALUES (${randomUUID()}::uuid,${d}::uuid,${p}::uuid,${revision},${row.sourceRevision},${original.sha256},${original.lifecycleVersion},${input.requestId}::uuid,${hash},${actor.accountId}::uuid,${JSON.stringify(row.extraction)}::jsonb,${JSON.stringify(items)}::jsonb,'withdrawal',${JSON.stringify(withdrawnItems)}::jsonb)`;
+    await db.$executeRaw`INSERT INTO fmv.document_events(id,patient_id,document_id,actor_account_id,kind) VALUES (${randomUUID()}::uuid,${p}::uuid,${d}::uuid,${actor.accountId}::uuid,'document.clinical_withdrawn')`;
+    const current = await authorize(original);
+    if (!current.canVerify || current.accountId !== actor.accountId)
+      throw Error('Unavailable clinical withdrawal');
+    return { saved: true, revision };
   }, options);
 }

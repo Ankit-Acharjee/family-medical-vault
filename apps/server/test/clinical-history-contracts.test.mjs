@@ -16,6 +16,8 @@ const context = {
   canVerify: false,
 };
 const snapshot = {
+  action: 'confirmation',
+  withdrawnItems: [],
   revision: 2,
   sourceRevision: 1,
   sourceSha256: context.sourceSha256,

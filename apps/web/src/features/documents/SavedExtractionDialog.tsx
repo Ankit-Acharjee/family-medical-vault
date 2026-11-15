@@ -150,6 +150,10 @@ export function SavedExtractionDialog({
     setSourceSelection(null);
     setAttempt((n) => n + 1);
   };
+  const reloadSource = () => {
+    clinicalDraft.current = null;
+    retry();
+  };
   const snapshot =
     enabled && state && typeof state === 'object' ? state.snapshot : null;
   return (
@@ -233,14 +237,14 @@ export function SavedExtractionDialog({
                 sha256: snapshot.sourceSha256,
               }}
               onDenied={onDenied}
-              onReloadSource={retry}
+              onReloadSource={reloadSource}
             />
             <MetadataSuggestions
               snapshot={snapshot}
               patientId={source.patientId}
               documentId={source.documentId}
               onDenied={onDenied}
-              onReloadSource={retry}
+              onReloadSource={reloadSource}
               onShowSource={(suggestion) =>
                 setSourceSelection({
                   revision: snapshot.revision,
@@ -260,7 +264,7 @@ export function SavedExtractionDialog({
               documentId={source.documentId}
               snapshot={snapshot}
               onDenied={onDenied}
-              onReloadSource={retry}
+              onReloadSource={reloadSource}
               onShowSource={(evidence) =>
                 setSourceSelection({
                   revision: snapshot.revision,

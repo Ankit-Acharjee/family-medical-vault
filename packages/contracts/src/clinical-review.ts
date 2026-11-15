@@ -35,15 +35,30 @@ export type SaveClinicalReview = {
   confirmed: true;
   selections: ClinicalSelection[];
 };
+export type ClinicalReviewedItem = {
+  source: LabFieldCandidate;
+  fields: ReviewedLabFields;
+};
+export type WithdrawClinicalReview = {
+  requestId: string;
+  expectedRevision: number;
+  sourceSha256: string;
+  lifecycleVersion: number;
+  confirmed: true;
+  candidateIds: string[];
+};
 export type ClinicalReviewSnapshot = {
+  action: 'confirmation' | 'withdrawal';
+  withdrawnItems: ClinicalReviewedItem[];
   extraction: Omit<ExtractionResult, 'pages'>;
   revision: number;
   sourceRevision: number;
   sourceSha256: string;
   verifiedAt: string;
   ruleVersion: 'labeled-lab-blocks-v1';
-  items: { source: LabFieldCandidate; fields: ReviewedLabFields }[];
-  verified: true;
+  items: ClinicalReviewedItem[];
+  /** True only when this set contains active confirmed entries. */
+  verified: boolean;
 };
 export type ClinicalReviewResult = {
   context: {
@@ -154,6 +169,38 @@ export function isSaveClinicalReview(v: unknown): v is SaveClinicalReview {
     return true;
   });
 }
+export function isWithdrawClinicalReview(
+  v: unknown,
+): v is WithdrawClinicalReview {
+  if (
+    !record(v) ||
+    !exact(v, [
+      'requestId',
+      'expectedRevision',
+      'sourceSha256',
+      'lifecycleVersion',
+      'confirmed',
+      'candidateIds',
+    ]) ||
+    typeof v.requestId !== 'string' ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      v.requestId,
+    ) ||
+    !int(v.expectedRevision, 1) ||
+    !sha(v.sourceSha256) ||
+    !int(v.lifecycleVersion) ||
+    v.confirmed !== true ||
+    !Array.isArray(v.candidateIds) ||
+    v.candidateIds.length < 1 ||
+    v.candidateIds.length > 20
+  )
+    return false;
+  return (
+    v.candidateIds.every(
+      (id) => text(id, 80) && /^page-[1-9][0-9]?-block-[0-9]{1,6}$/.test(id),
+    ) && new Set(v.candidateIds).size === v.candidateIds.length
+  );
+}
 export function isClinicalReviewResult(v: unknown): v is ClinicalReviewResult {
   if (
     !record(v) ||
@@ -190,6 +237,8 @@ export function isClinicalReviewResult(v: unknown): v is ClinicalReviewResult {
       'items',
       'verified',
       'extraction',
+      'action',
+      'withdrawnItems',
     ]) ||
     !int(s.revision, 1) ||
     s.revision !== v.context.revision ||
@@ -197,14 +246,17 @@ export function isClinicalReviewResult(v: unknown): v is ClinicalReviewResult {
     s.sourceRevision > v.context.sourceRevision ||
     s.sourceSha256 !== v.context.sourceSha256 ||
     s.ruleVersion !== 'labeled-lab-blocks-v1' ||
-    s.verified !== true ||
+    s.verified !== (Array.isArray(s.items) && s.items.length > 0) ||
     typeof s.verifiedAt !== 'string' ||
     !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(s.verifiedAt) ||
     !Number.isFinite(Date.parse(s.verifiedAt)) ||
     new Date(s.verifiedAt).toISOString() !== s.verifiedAt ||
     !Array.isArray(s.items) ||
-    s.items.length < 1 ||
-    s.items.length > 20
+    !Array.isArray(s.withdrawnItems) ||
+    s.items.length + s.withdrawnItems.length > 20 ||
+    !(s.action === 'confirmation'
+      ? s.items.length >= 1 && s.withdrawnItems.length === 0
+      : s.action === 'withdrawal' && s.withdrawnItems.length >= 1)
   )
     return false;
   if (
@@ -225,14 +277,18 @@ export function isClinicalReviewResult(v: unknown): v is ClinicalReviewResult {
   if (!isExtractionResult({ ...s.extraction, pages: provenancePages }))
     return false;
   return (
-    s.items.every(
+    [...s.items, ...s.withdrawnItems].every(
       (i) =>
         record(i) &&
         exact(i, ['source', 'fields']) &&
         isLabFieldCandidate(i.source) &&
         isReviewedLabFields(i.fields),
     ) &&
-    new Set(s.items.map((i) => (i as { source: LabFieldCandidate }).source.id))
-      .size === s.items.length
+    new Set(
+      [...s.items, ...s.withdrawnItems].map(
+        (i) => (i as { source: LabFieldCandidate }).source.id,
+      ),
+    ).size ===
+      s.items.length + s.withdrawnItems.length
   );
 }

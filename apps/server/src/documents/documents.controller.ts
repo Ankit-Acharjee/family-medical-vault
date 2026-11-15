@@ -48,6 +48,21 @@ export class DocumentsController {
       throw e;
     }
   }
+  @Post('documents/:documentId/clinical-review/withdraw')
+  @HttpCode(200)
+  async withdrawClinical(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+    @Body() input: unknown,
+  ) {
+    return this.documents.clinical.withdraw(
+      await this.principal(req),
+      p,
+      d,
+      input,
+    );
+  }
   @Get('documents/:documentId/clinical-review/history')
   async clinicalHistory(
     @Req() req: Request,

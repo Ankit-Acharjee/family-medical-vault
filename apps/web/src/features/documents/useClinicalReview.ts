@@ -5,6 +5,7 @@ import {
   clinicalDraftKey,
   type ClinicalDraftRef,
   type ClinicalSaveState,
+  type ClinicalOperation,
 } from './clinicalReviewDraft';
 export async function readClinicalJson(
   response: Response,
@@ -122,7 +123,10 @@ export function useClinicalReview(
     setState('loading');
     setAttempt((n) => n + 1);
   };
-  const save = async (body: string) => {
+  const save = async (
+    body: string,
+    operation: ClinicalOperation = 'confirmation',
+  ) => {
     if (
       typeof state !== 'object' ||
       !state.context.canVerify ||
@@ -163,17 +167,20 @@ export function useClinicalReview(
       )
         throw Error();
       abort.signal.throwIfAborted();
-      const response = await fetch(path, {
-        method: 'PUT',
-        signal: abort.signal,
-        credentials: 'same-origin',
-        cache: 'no-store',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-Token': value.csrf,
+      const response = await fetch(
+        operation === 'withdrawal' ? `${path}/withdraw` : path,
+        {
+          method: operation === 'withdrawal' ? 'POST' : 'PUT',
+          signal: abort.signal,
+          credentials: 'same-origin',
+          cache: 'no-store',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': value.csrf,
+          },
+          body,
         },
-        body,
-      });
+      );
       abort.signal.throwIfAborted();
       if ([401, 403, 404].includes(response.status)) {
         denied.current();
@@ -196,6 +203,7 @@ export function useClinicalReview(
         throw Error();
       abort.signal.throwIfAborted();
       setSaveState('saved');
+      return true;
     } catch {
       if (!abort.signal.aborted || timedOut) setSaveState('uncertain');
     } finally {

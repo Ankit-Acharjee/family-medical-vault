@@ -4,7 +4,11 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { clinicalHistoryCursor, isSaveClinicalReview } from '@fmv/contracts';
+import {
+  clinicalHistoryCursor,
+  isSaveClinicalReview,
+  isWithdrawClinicalReview,
+} from '@fmv/contracts';
 import { PermissionService, isUuid } from '../access/permission.service.js';
 import type { Principal } from '../identity/person.store.js';
 import type { DocumentStore } from './document.store.js';
@@ -84,6 +88,24 @@ export class ClinicalReviewService {
       );
       if (!r) throw new NotFoundException();
       return r;
+    } catch (e) {
+      this.failure(e);
+    }
+  }
+  async withdraw(principal: Principal, p: string, d: string, input: unknown) {
+    this.ids(p, d);
+    await this.read(principal, p, d, true);
+    if (!isWithdrawClinicalReview(input)) throw new BadRequestException();
+    try {
+      const result = await this.store.withdrawClinicalReview(
+        p,
+        d,
+        input,
+        this.authorize(principal, p, d, true),
+      );
+      if (result === 'missing') throw new NotFoundException();
+      if (result === 'conflict') throw new ConflictException();
+      return result;
     } catch (e) {
       this.failure(e);
     }

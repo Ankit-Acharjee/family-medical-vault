@@ -115,7 +115,10 @@ export function ClinicalHistory({
         (value.snapshot ? (
           <>
             <p className="text-sm text-muted-foreground">
-              Confirmed set revision {value.snapshot.revision} ·{' '}
+              {value.snapshot.action === 'withdrawal'
+                ? 'Withdrawal set'
+                : 'Confirmed set'}{' '}
+              revision {value.snapshot.revision} ·{' '}
               {new Date(value.snapshot.verifiedAt).toLocaleString()} · saved
               text revision {value.snapshot.sourceRevision} ·{' '}
               {value.snapshot.extraction.method === 'pdf-text'
@@ -129,6 +132,35 @@ export function ClinicalHistory({
                 This confirmation used an earlier saved extraction; its evidence
                 is preserved below.
               </p>
+            )}
+            {!value.snapshot.items.length && (
+              <p className="text-sm text-muted-foreground">
+                No active confirmed fields remained in this set.
+              </p>
+            )}
+            {value.snapshot.withdrawnItems.length > 0 && (
+              <section
+                aria-label="Historical withdrawn lab confirmations"
+                className="space-y-2"
+              >
+                <h4 className="text-sm font-semibold">Withdrawn in this set</h4>
+                {value.snapshot.withdrawnItems.map((item) => (
+                  <details key={item.source.id}>
+                    <summary className="min-h-11 cursor-pointer content-center break-words text-sm focus-visible:outline-2 focus-visible:outline-ring">
+                      Withdrawn: {item.fields.analyte} · {item.fields.result}
+                    </summary>
+                    <ClinicalLabFields
+                      candidate={item.source}
+                      fields={item.fields}
+                      editable={false}
+                      verified
+                      sourceAvailable={false}
+                      onChange={() => {}}
+                      onShowSource={() => {}}
+                    />
+                  </details>
+                ))}
+              </section>
             )}
             {value.snapshot.items.map((item) => (
               <details key={item.source.id}>

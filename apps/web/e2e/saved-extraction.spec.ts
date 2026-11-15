@@ -134,6 +134,10 @@ async function setup(
     reads = 0,
     previews = 0;
   const clinicalWrites: string[] = [];
+  const withdrawWrites: string[] = [];
+  let withdrawLastRequest = '',
+    withdrawLastBody = '',
+    withdrawUncertainUsed = false;
   const ocrAssets: string[] = [];
   let clinicalLastRequest = '',
     clinicalLastBody = '';
@@ -190,6 +194,8 @@ async function setup(
         sourceSha256: sourceSha,
         verifiedAt: '2026-11-15T00:00:00.000Z',
         ruleVersion: 'labeled-lab-blocks-v1',
+        action: 'confirmation',
+        withdrawnItems: [],
         verified: true,
         extraction: {
           method: snapshot.method,
@@ -439,6 +445,8 @@ async function setup(
             sourceSha256: sourceSha,
             verifiedAt: '2026-11-14T00:00:00.000Z',
             ruleVersion: 'labeled-lab-blocks-v1',
+            action: 'confirmation',
+            withdrawnItems: [],
             extraction: {
               method: snapshot!.method,
               engineVersion: snapshot!.engineVersion,
@@ -449,6 +457,7 @@ async function setup(
             items: [...merged.values()],
             verified: true,
           };
+          clinicalSets.set(clinicalRevision, clinicalSnapshot);
         } else if (clinicalLastBody !== route.request().postData())
           return route.fulfill({ status: 409 });
         if (mode === 'clinical-uncertain' && clinicalWrites.length === 1)
@@ -459,6 +468,66 @@ async function setup(
       }
       return route.fulfill({
         json: { context, candidates, snapshot: clinicalSnapshot },
+      });
+    },
+  );
+  await page.route(
+    '**/api/patients/*/documents/*/clinical-review/withdraw',
+    async (route) => {
+      withdrawWrites.push(route.request().postData()!);
+      if (mode === 'withdraw-denied' || !(options.canVerify ?? canSave))
+        return route.fulfill({ status: 403 });
+      if (mode === 'withdraw-conflict') return route.fulfill({ status: 409 });
+      if (mode === 'withdraw-uncommitted') return route.abort('failed');
+      const value = JSON.parse(withdrawWrites.at(-1)!);
+      if (withdrawLastRequest === value.requestId) {
+        if (withdrawLastBody !== route.request().postData())
+          return route.fulfill({ status: 409 });
+      } else {
+        if (
+          !clinicalSnapshot ||
+          value.expectedRevision !== clinicalRevision ||
+          value.sourceSha256 !== sourceSha ||
+          value.lifecycleVersion !== 0
+        )
+          return route.fulfill({ status: 409 });
+        const active = clinicalSnapshot.items as {
+          source: { id: string };
+          fields: unknown;
+        }[];
+        if (
+          !value.candidateIds.length ||
+          value.candidateIds.some(
+            (id: string) => !active.some((item) => item.source.id === id),
+          )
+        )
+          return route.fulfill({ status: 409 });
+        const items = active.filter(
+          (item) => !value.candidateIds.includes(item.source.id),
+        );
+        const withdrawnItems = active.filter((item) =>
+          value.candidateIds.includes(item.source.id),
+        );
+        clinicalRevision++;
+        clinicalSnapshot = {
+          ...clinicalSnapshot,
+          revision: clinicalRevision,
+          action: 'withdrawal',
+          withdrawnItems,
+          items,
+          verified: items.length > 0,
+          verifiedAt: '2026-11-15T00:00:00.000Z',
+        };
+        clinicalSets.set(clinicalRevision, clinicalSnapshot);
+        withdrawLastRequest = value.requestId;
+        withdrawLastBody = route.request().postData()!;
+      }
+      if (mode === 'withdraw-uncertain' && !withdrawUncertainUsed) {
+        withdrawUncertainUsed = true;
+        return route.abort('failed');
+      }
+      return route.fulfill({
+        json: { saved: true, revision: clinicalRevision },
       });
     },
   );
@@ -506,6 +575,7 @@ async function setup(
     writes,
     metadataWrites,
     clinicalWrites,
+    withdrawWrites,
     ocrAssets,
     external,
     counts: () => ({ contexts, reads, previews }),
@@ -532,7 +602,8 @@ async function setup(
 }
 async function extract(page: Page) {
   await action(page, 'Extract text').click();
-  await expect(local(page)).toContainText(text);
+  // Cold development worker/module loading can exceed the default five seconds.
+  await expect(local(page)).toContainText(text, { timeout: 15000 });
 }
 test('explicit Save binds pre-extraction context and reopens without fetching or processing original again', async ({
   page,
@@ -2207,5 +2278,335 @@ test('original comparison renders distinct PDF pages and zooms locally without r
   expect(api.counts().previews).toBe(reads);
   expect(api.ocrAssets).toEqual([]);
   expect(api.clinicalWrites).toEqual([]);
+  expect(api.external).toEqual([]);
+});
+
+const withdrawalControls = (page: Page) =>
+  saved(page).getByRole('region', {
+    name: 'Withdraw confirmed lab fields',
+    exact: true,
+  });
+async function chooseWithdrawal(page: Page, index = 0) {
+  const controls = withdrawalControls(page);
+  await controls
+    .getByRole('checkbox', { name: /^Withdraw confirmation / })
+    .nth(index)
+    .check();
+  await controls
+    .getByRole('checkbox', {
+      name: 'I want to withdraw these confirmations and keep their history.',
+      exact: true,
+    })
+    .check();
+  return controls;
+}
+
+test('owner withdrawal removes the last active entry, retains history and requires explicit reconfirmation', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    metadataText: labText,
+    history: true,
+  });
+  const panel = await openClinical(page);
+  const controls = withdrawalControls(page);
+  await expect(
+    controls.getByRole('button', {
+      name: 'Withdraw selected confirmations',
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await chooseWithdrawal(page);
+  expect(api.withdrawWrites).toEqual([]);
+  await controls
+    .getByRole('button', {
+      name: 'Withdraw selected confirmations',
+      exact: true,
+    })
+    .click();
+  await expect(panel).toContainText(
+    'Selected confirmations withdrawn. History is preserved',
+  );
+  await expect(panel).toContainText('No active confirmed lab fields');
+  await expect(withdrawalControls(page)).toHaveCount(0);
+  await expect(
+    panel.getByRole('region', {
+      name: 'Withdrawn lab confirmations',
+      exact: true,
+    }),
+  ).toContainText('Synthetic correction 3');
+  const candidate = panel.getByRole('region', {
+    name: 'Lab candidate 1',
+    exact: true,
+  });
+  await expect(candidate.getByRole('checkbox')).not.toBeChecked();
+  await expect(
+    panel.getByRole('checkbox', {
+      name: 'I checked all selected values and units against the original document.',
+    }),
+  ).not.toBeChecked();
+  expect(api.withdrawWrites).toHaveLength(1);
+  const body = JSON.parse(api.withdrawWrites[0]!);
+  expect(body.expectedRevision).toBe(3);
+  expect(body.confirmed).toBe(true);
+  expect(body.candidateIds).toHaveLength(1);
+  expect(body).not.toHaveProperty('fields');
+  const history = panel.getByRole('region', {
+    name: 'Earlier clinical confirmations',
+    exact: true,
+  });
+  await history
+    .getByRole('button', { name: 'View previous confirmations', exact: true })
+    .click();
+  await expect(history).toContainText('Confirmed set revision 3');
+  expect(api.clinicalWrites).toEqual([]);
+  await candidate.getByRole('checkbox').check();
+  await panel
+    .getByRole('checkbox', {
+      name: 'I checked all selected values and units against the original document.',
+    })
+    .check();
+  await panel
+    .getByRole('button', { name: 'Verify selected lab fields', exact: true })
+    .click();
+  await expect(panel).toContainText('Selected fields verified');
+  await panel
+    .getByRole('button', { name: 'Reload clinical review', exact: true })
+    .click();
+  await expect(
+    panel.getByRole('region', {
+      name: 'Owner-confirmed lab fields',
+      exact: true,
+    }),
+  ).toContainText('Verified by profile owner');
+  await expect(withdrawalControls(page)).toBeVisible();
+  expect(api.clinicalWrites).toHaveLength(1);
+  expect(api.writes).toEqual([]);
+  expect(api.metadataWrites).toEqual([]);
+  expect(api.external).toEqual([]);
+});
+
+test('withdrawal retry preserves its exact body and POST operation through focus revalidation', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    metadataText: labText,
+    history: true,
+  });
+  const panel = await openClinical(page);
+  await chooseWithdrawal(page);
+  api.mode('withdraw-uncommitted');
+  await withdrawalControls(page)
+    .getByRole('button', {
+      name: 'Withdraw selected confirmations',
+      exact: true,
+    })
+    .click();
+  await expect(panel).toContainText('Withdrawal could not be confirmed');
+  await expect(
+    panel.getByRole('button', {
+      name: 'Verify selected lab fields',
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(
+    saved(page).getByRole('button', { name: 'Retry saved text', exact: true }),
+  ).toBeEnabled();
+  api.mode('normal');
+  await saved(page)
+    .getByRole('button', { name: 'Retry saved text', exact: true })
+    .click();
+  await panel.locator('summary').first().click();
+  await withdrawalControls(page)
+    .getByRole('button', { name: 'Retry withdrawal', exact: true })
+    .click();
+  await expect(panel).toContainText('No active confirmed lab fields');
+  expect(api.withdrawWrites).toHaveLength(2);
+  expect(api.withdrawWrites[0]).toBe(api.withdrawWrites[1]);
+  expect(api.clinicalWrites).toEqual([]);
+});
+
+test('uncertain committed withdrawal retries idempotently and conflicts never rebase automatically', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    metadataText: labText,
+    history: true,
+  });
+  const panel = await openClinical(page);
+  await chooseWithdrawal(page);
+  api.mode('withdraw-conflict');
+  await withdrawalControls(page)
+    .getByRole('button', {
+      name: 'Withdraw selected confirmations',
+      exact: true,
+    })
+    .click();
+  await expect(
+    panel.getByRole('button', { name: 'Reload saved text', exact: true }),
+  ).toBeVisible();
+  expect(api.withdrawWrites).toHaveLength(1);
+  api.mode('normal');
+  await panel
+    .getByRole('button', { name: 'Reload saved text', exact: true })
+    .click();
+  await panel.locator('summary').first().click();
+  await chooseWithdrawal(page);
+  api.mode('withdraw-uncertain');
+  await withdrawalControls(page)
+    .getByRole('button', {
+      name: 'Withdraw selected confirmations',
+      exact: true,
+    })
+    .click();
+  await expect(panel).toContainText('Withdrawal could not be confirmed');
+  api.mode('normal');
+  await withdrawalControls(page)
+    .getByRole('button', { name: 'Retry withdrawal', exact: true })
+    .click();
+  await expect(panel).toContainText('No active confirmed lab fields');
+  expect(api.withdrawWrites).toHaveLength(3);
+  expect(api.withdrawWrites[0]).not.toBe(api.withdrawWrites[1]);
+  expect(api.withdrawWrites[1]).toBe(api.withdrawWrites[2]);
+});
+
+test('View delegates cannot withdraw confirmations', async ({ page }) => {
+  const api = await setup(page, {
+    initial: true,
+    metadataText: labText,
+    history: true,
+    canVerify: false,
+  });
+  const panel = await openClinical(page);
+  await expect(withdrawalControls(page)).toHaveCount(0);
+  await expect(panel).toContainText('Only the profile owner');
+  expect(api.withdrawWrites).toEqual([]);
+});
+
+for (const theme of ['light', 'dark'])
+  test(`${theme} withdrawal controls are accessible and fit the existing review`, async ({
+    page,
+  }, info) => {
+    await page.setViewportSize({
+      width: info.project.name === 'mobile' ? 320 : 1440,
+      height: 1000,
+    });
+    await page.addInitScript(
+      (value) => localStorage.setItem('fmv.theme', value),
+      theme,
+    );
+    const api = await setup(page, {
+      initial: true,
+      metadataText: labText,
+      history: true,
+    });
+    await openClinical(page);
+    await chooseWithdrawal(page);
+    expect(
+      (await new AxeBuilder({ page }).include('[role="dialog"]').analyze())
+        .violations,
+    ).toEqual([]);
+    expect(
+      await saved(page).evaluate((el) => el.scrollWidth <= el.clientWidth),
+    ).toBe(true);
+    await withdrawalControls(page).scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `../../.local/screenshots/clinical-withdrawal-${theme}-${info.project.name}.png`,
+    });
+    expect(api.withdrawWrites).toEqual([]);
+    expect(api.external).toEqual([]);
+  });
+
+test('a denied withdrawal immediately clears protected context', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    metadataText: labText,
+    history: true,
+  });
+  await openClinical(page);
+  await chooseWithdrawal(page);
+  api.mode('withdraw-denied');
+  await withdrawalControls(page)
+    .getByRole('button', {
+      name: 'Withdraw selected confirmations',
+      exact: true,
+    })
+    .click();
+  await expect(saved(page)).toHaveCount(0);
+  await expect(action(page, 'Saved text')).toHaveCount(0);
+  expect(api.withdrawWrites).toHaveLength(1);
+});
+
+test('partial confirmation never resurrects an unselected withdrawn entry and history remains explicit', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    history: true,
+    metadataText:
+      'Test: First synthetic entry\nResult: 1.0\n\nTest: Second synthetic entry\nResult: 2.0',
+  });
+  const panel = await openClinical(page);
+  await chooseWithdrawal(page, 0);
+  await withdrawalControls(page)
+    .getByRole('button', {
+      name: 'Withdraw selected confirmations',
+      exact: true,
+    })
+    .click();
+  await expect(panel).toContainText('Selected confirmations withdrawn');
+  const current = panel.getByRole('region', {
+    name: 'Owner-confirmed lab fields',
+    exact: true,
+  });
+  await expect(current.locator(':scope > details')).toHaveCount(1);
+  await expect(current.locator(':scope > details')).toContainText(
+    'Second synthetic entry',
+  );
+  await panel
+    .getByRole('region', { name: 'Lab candidate 2', exact: true })
+    .getByRole('checkbox')
+    .check();
+  await panel
+    .getByRole('checkbox', {
+      name: 'I checked all selected values and units against the original document.',
+    })
+    .check();
+  await panel
+    .getByRole('button', { name: 'Verify selected lab fields', exact: true })
+    .click();
+  await expect(panel).toContainText('Selected fields verified');
+  await panel
+    .getByRole('button', { name: 'Reload clinical review', exact: true })
+    .click();
+  await expect(current.locator(':scope > details')).toHaveCount(1);
+  await expect(current.locator(':scope > details')).toContainText(
+    'Second synthetic entry',
+  );
+  await expect(current.locator(':scope > details')).not.toContainText(
+    'First synthetic entry',
+  );
+  const history = panel.getByRole('region', {
+    name: 'Earlier clinical confirmations',
+    exact: true,
+  });
+  await history
+    .getByRole('button', { name: 'View previous confirmations', exact: true })
+    .click();
+  await expect(history).toContainText('Withdrawal set revision 4');
+  await expect(
+    history.getByRole('region', {
+      name: 'Historical withdrawn lab confirmations',
+      exact: true,
+    }),
+  ).toContainText('First synthetic entry');
+  expect(api.withdrawWrites).toHaveLength(1);
+  expect(api.clinicalWrites).toHaveLength(1);
   expect(api.external).toEqual([]);
 });

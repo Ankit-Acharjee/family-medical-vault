@@ -7,6 +7,7 @@ import {
   extractLabFields,
   isLabFieldCandidate,
   isSaveClinicalReview,
+  isWithdrawClinicalReview,
   isClinicalReviewResult,
 } from '@fmv/contracts';
 const fields = {
@@ -139,6 +140,8 @@ test('clinical confirmation is strict, bounded and explicit; no user source evid
 });
 test('verified results require actual owner snapshot shape and preserve older source provenance', () => {
   const snapshot = {
+    action: 'confirmation',
+    withdrawnItems: [],
     revision: 1,
     sourceRevision: 1,
     sourceSha256: context.sourceSha256,
@@ -182,4 +185,69 @@ test('verified results require actual owner snapshot shape and preserve older so
     );
   const wrong = { ...source(), page: 2 };
   assert.equal(isLabFieldCandidate(wrong), false);
+});
+
+test('withdrawal input requires explicit owner intent and no client-supplied clinical evidence', () => {
+  const value = {
+    requestId: randomUUID(),
+    expectedRevision: 1,
+    sourceSha256: context.sourceSha256,
+    lifecycleVersion: 2,
+    confirmed: true,
+    candidateIds: [source().id],
+  };
+  assert.equal(isWithdrawClinicalReview(value), true);
+  for (const patch of [
+    { confirmed: false },
+    { candidateIds: [] },
+    { candidateIds: [source().id, source().id] },
+    { candidateIds: ['not-a-source-id'] },
+    { candidateIds: Array(21).fill(source().id) },
+    { expectedRevision: 0 },
+    { lifecycleVersion: -1 },
+    { sourceSha256: 'a'.repeat(64) + '\n' },
+    { actorAccountId: randomUUID() },
+    { fields },
+    { verified: true },
+  ])
+    assert.equal(isWithdrawClinicalReview({ ...value, ...patch }), false);
+});
+test('withdrawing the last confirmed entry leaves no verified active facts while retaining evidence', () => {
+  const snapshot = {
+    action: 'withdrawal',
+    withdrawnItems: [{ source: source(), fields }],
+    items: [],
+    revision: 1,
+    sourceRevision: 1,
+    sourceSha256: context.sourceSha256,
+    verifiedAt: '2026-11-15T00:00:00.000Z',
+    ruleVersion: 'labeled-lab-blocks-v1',
+    verified: false,
+    extraction: {
+      method: 'pdf-text',
+      engineVersion: 'pdfjs-6.5.438',
+      partial: false,
+      partialReason: null,
+      downsized: false,
+    },
+  };
+  const result = {
+    context: { ...context, revision: 1, sourceRevision: 2 },
+    candidates: [],
+    snapshot,
+  };
+  assert.equal(isClinicalReviewResult(result), true);
+  for (const patch of [
+    { verified: true },
+    { action: 'confirmation' },
+    { withdrawnItems: [] },
+    { items: snapshot.withdrawnItems, verified: true },
+  ])
+    assert.equal(
+      isClinicalReviewResult({
+        ...result,
+        snapshot: { ...snapshot, ...patch },
+      }),
+      false,
+    );
 });

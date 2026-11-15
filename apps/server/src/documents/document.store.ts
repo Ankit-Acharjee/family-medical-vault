@@ -2,11 +2,13 @@ import type {
   ClinicalReviewResult,
   ClinicalHistoryResult,
   SaveClinicalReview,
+  WithdrawClinicalReview,
 } from '@fmv/contracts';
 import {
   readClinicalReview,
   readClinicalHistory,
   saveClinicalReview,
+  withdrawClinicalReview,
 } from './clinical-review.store.js';
 import type { ClinicalAuthorization } from './clinical-review.store.js';
 import type { OnModuleDestroy } from '@nestjs/common';
@@ -60,6 +62,12 @@ export type SearchAuthorization = (
 
 export type TrashChangeResult = 'changed' | 'unchanged' | 'missing' | 'expired';
 export abstract class DocumentStore {
+  abstract withdrawClinicalReview(
+    p: string,
+    d: string,
+    input: WithdrawClinicalReview,
+    authorize: ClinicalAuthorization,
+  ): Promise<{ saved: true; revision: number } | 'missing' | 'conflict'>;
   abstract readClinicalHistory(
     p: string,
     d: string,
@@ -188,6 +196,14 @@ export class PrismaDocumentStore
     authorize: ClinicalAuthorization,
   ) {
     return readClinicalHistory(this.db, p, d, before, authorize);
+  }
+  withdrawClinicalReview(
+    p: string,
+    d: string,
+    input: WithdrawClinicalReview,
+    authorize: ClinicalAuthorization,
+  ) {
+    return withdrawClinicalReview(this.db, p, d, input, authorize);
   }
   readClinicalReview(p: string, d: string, authorize: ClinicalAuthorization) {
     return readClinicalReview(this.db, p, d, authorize);
