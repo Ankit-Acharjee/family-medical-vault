@@ -10,6 +10,14 @@ Adoption verification: workspace build, typecheck, lint, scoped formatting, secr
 
 Verified 2026-11-12. Setup only: no redesign, application behavior change, commit, push, Docker or production-data access.
 
+## Current delivery usage — 15 November 2026
+
+The installed seven project skill entrypoints remain present. The latest medication source-review delivery reused existing shadcn/Radix primitives, semantic theme tokens and scoped React state; it passed 64 built-browser checks including diagnosis and original-comparison regressions. Coverage includes both themes, 320px/1440px layouts, keyboard focus, reduced motion, axe and overflow; actual synthetic screenshots were inspected. See `.tasks/p3-medication-review-report.md` for the exact results and limitations. This records completed feature verification, not a new test run for this documentation change.
+
+Tool availability is session-specific. The current session exposes none of the Playwright, Chrome DevTools, shadcn or Context7 MCP tools, despite their previously verified machine configuration below. Browser checks use the installed Playwright CLI and axe integration. Do not claim a current MCP invocation or Context7 lookup without the tools being exposed and actually called. No new dependency or configuration change is needed for those existing CLI checks. Native Codex-only delegation is now required by the user; OpenCode is disabled until explicitly re-enabled.
+
+The four initial Hooks findings are historical: the reviewed exceptions described in Repository adoption were applied and current feature lint passed. The historical audit list below must not be read as four current unresolved lint failures.
+
 ## Existing environment
 
 Repository: `family-medical-vault`; frontend: `apps/web`. Node 24.14.0, pnpm 10.33.0, npm/npx 11.9.0, Python 3.9.6 and local Google Chrome available.
@@ -68,7 +76,7 @@ Checks performed:
 ## Read-only overview audit and follow-up work
 
 1. Review `AuthRoot.tsx:134,232` and `patients/index.tsx:162`: cleanup increments version refs. These are async generation counters, so assess cancellation semantics before changing them to satisfy DOM-ref-oriented lint advice.
-2. `AuthRoot.tsx:234` references `account` while depending on context/email fields; review the intended refresh identity before modifying dependencies. These four lint findings remain outstanding.
+2. `AuthRoot.tsx:234` references `account` while depending on context/email fields; review the intended refresh identity before modifying dependencies. These were the four findings at the initial audit; their reviewed resolution is described in Repository adoption and Current delivery usage above.
 3. The no-patient overview shows a patient-selection CTA even when the synthetic account has no patient profiles. The dialog explains unavailability; a clearer permitted next action could reduce this dead end after product requirements are checked.
 4. At 390px, the overview hero plus document panel pushes the privacy footer below the first viewport. Review density on small screens without removing approved artwork/gradients or changing the accepted design.
 5. `documents/index.tsx` is approximately 1,459 lines and `App.tsx` 422 lines: review responsibilities in future feature work; line count alone does not justify a refactor. No top-level React error boundary was found; evaluate a meaningful application/feature boundary separately.

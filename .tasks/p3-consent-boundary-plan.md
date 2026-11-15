@@ -12,3 +12,5 @@ Proposed bounded sequence:
 5. Verify denial when no provider is approved, stale/withdrawn/scope-mismatched consent, permission changes, Trash/deletion, exact retry/atomic audit and policy-version fences. Hosted migration remains separately approved only after implementation/review/tests and push.
 
 This is a boundary/ledger task, not permission to enable external AI or begin P4 regimens, schedules or summaries. Medication migration17 was separately approved/applied and all17 development checksums and immutable source guards passed read-only postflight.
+
+Preparation checkpoint: the owner-only decision is resolved. The initial ledger's expiry and exact source/Trash/Restore/provider-version invalidation rules are pending the user question issued on15November2026. Persistence and consent UI depend on that decision; no consent migration, grant endpoint or provider enablement has been introduced. Relevant existing source locks and owner/current-View checks were inspected for reuse. Toolchain guide now distinguishes available Playwright CLI/axe checks from MCP tools not exposed in this session.
