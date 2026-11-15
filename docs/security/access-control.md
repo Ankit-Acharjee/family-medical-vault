@@ -74,3 +74,7 @@ Diagnosis confirmation attests the source statement as written, preserving negat
 ## Approved medication-confirmation meaning — 15 November 2026
 
 Medication confirmation attests prescription source fields exactly as written, retaining uncertainty, historical/stopped wording and source evidence. It does not create an active regimen or schedule, start/stop a medication, calculate a dose or establish prescribing intent. A separate explicit reconciliation step is required before activating a regimen or schedule. Current owner-only verification and history-preserving withdrawal policies still apply; delegates with current View may review source fields but cannot confirm or withdraw.
+
+## Approved initial external-processing consent authority — 15 November 2026
+
+Only the explicit Person owner, with current scoped View authority for the source document, may initially grant or withdraw external-processing consent. Delegate consent is deferred; View, Edit, Manage or combinations of those actions do not confer consent authority. This decision does not approve a provider or authorize any external processing. Consent and independently vetted provider policy are separate prerequisites; no external processor is currently approved, so processing remains disabled.
