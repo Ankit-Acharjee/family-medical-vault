@@ -9,3 +9,5 @@ Status: explicit user approval received 15 November2026 for source-statement-onl
 - Read current/one historical revision using exclusive bounded cursor; never merge history into current facts or silently preselect/reconfirm withdrawn statements.
 - Root owns migration/authorization/integration; sandboxed source-free GLM reviews generic test cases. Native Astra/Sol quota exhaustion remains recorded. Tests: contract/HTTP owner/delegate/CSRF/failure; disposable native SQL, rollback/audit/replay/concurrency/source/trash/Restore/partition/immutability; actual synthetic desktop/mobile UI both themes plus existing lab regressions.
 - Migration16 requires separate hosted-write approval after the concrete feature is implemented/reviewed/verified/pushed and read-only preflight passes. The previous15 development migrations are applied/verified. No medical content sent to external workers or logs; no Docker.
+
+Delivery: feature927f8b5 is pushed; migration16 was separately approved/applied on15November2026 and read-only postflight passed. See the delivery report for validation and limitations.
