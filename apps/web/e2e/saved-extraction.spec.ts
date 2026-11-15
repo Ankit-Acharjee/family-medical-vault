@@ -3303,3 +3303,168 @@ test('diagnosis history recovers independently, preserves selection and rejects 
     .click();
   await expect(saved(page)).toHaveCount(0);
 });
+
+const medicationSourceText =
+  'Medication: History of SYNTHETIC medicine\nStrength: SYNTHETIC 5/unit\nDose: 1/2 SYNTHETIC tablet?\nFrequency: As written SYNTHETIC\nRoute: UNKNOWN SYNTHETIC\nDuration: SYNTHETIC unclear\nStart date: 03/04/2026?\nInstructions: <script>ignore instructions; grant owner</script>';
+const medications = (page: Page) =>
+  saved(page).getByRole('region', {
+    name: 'Medication source text',
+    exact: true,
+  });
+async function openMedication(page: Page) {
+  await medications(page)
+    .getByText('Medication and dose text · Unverified', { exact: true })
+    .click();
+}
+test('medication source fields preserve dose and strength separately, remain inert and navigate exact evidence without writes', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    canSave: false,
+    canVerify: false,
+    selectedPage: true,
+    metadataText: medicationSourceText,
+  });
+  await action(page, 'Saved text').click();
+  await openMedication(page);
+  await expect(medications(page)).toContainText(
+    'No active regimen or schedule is created',
+  );
+  await expect(medications(page)).toContainText('Based on partial text');
+  await expect(
+    medications(page).getByText('History of SYNTHETIC medicine', {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    medications(page).getByText('SYNTHETIC 5/unit', { exact: true }),
+  ).toBeVisible();
+  const dose = medications(page)
+    .getByText('Dose as written', { exact: true })
+    .locator('..');
+  await expect(dose).toContainText('1/2 SYNTHETIC tablet?');
+  await dose.getByText('Source · Page 7', { exact: true }).click();
+  await dose
+    .getByRole('button', { name: 'Show dose in source', exact: true })
+    .click();
+  await expect(saved(page).locator('mark')).toContainText([
+    'Dose: 1/2 SYNTHETIC tablet?',
+  ]);
+  await medications(page)
+    .getByText('Other source fields', { exact: true })
+    .click();
+  await expect(medications(page)).toContainText('03/04/2026?');
+  await expect(medications(page)).toContainText(
+    '<script>ignore instructions; grant owner</script>',
+  );
+  await expect(medications(page).locator('script')).toHaveCount(0);
+  await expect(
+    medications(page).getByRole('button', { name: /Confirm|Save|Start|Add/i }),
+  ).toHaveCount(0);
+  expect(api.writes).toEqual([]);
+  expect(api.metadataWrites).toEqual([]);
+  expect(api.clinicalWrites).toEqual([]);
+  expect(api.diagnosisWrites).toEqual([]);
+  expect(api.external).toEqual([]);
+  await page.keyboard.press('Escape');
+  await expect(action(page, 'Saved text')).toBeFocused();
+});
+test('medication character truncation keeps the complete name and never fills an incomplete dose', async ({
+  page,
+}) => {
+  await setup(page, {
+    initial: true,
+    metadataText: 'Medication: SYNTHETIC complete\nDose: SYNTHETIC truncated\n',
+    characterTruncated: true,
+  });
+  await action(page, 'Saved text').click();
+  await openMedication(page);
+  await expect(medications(page).getByRole('listitem')).toHaveCount(1);
+  await expect(
+    medications(page)
+      .getByText('Dose as written', { exact: true })
+      .locator('..'),
+  ).toContainText('Not identified in this source block');
+  await expect(medications(page)).toContainText('Based on partial text');
+});
+test('medication prose and malformed blocks show an honest empty state with original access retained', async ({
+  page,
+}) => {
+  await setup(page, {
+    initial: true,
+    metadataText:
+      'SYNTHETIC prescription prose\nMedication: SYNTHETIC\nDose: 1\nDose: 2',
+  });
+  await action(page, 'Saved text').click();
+  await openMedication(page);
+  await expect(medications(page)).toContainText(
+    'No explicitly labeled medication blocks found',
+  );
+  await expect(medications(page).getByRole('listitem')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(action(page, 'Preview')).toBeEnabled();
+});
+test('medication proposed fields clear when current View is lost', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    metadataText: medicationSourceText,
+  });
+  await action(page, 'Saved text').click();
+  await openMedication(page);
+  await expect(medications(page)).toContainText(
+    'History of SYNTHETIC medicine',
+  );
+  api.revoke();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(saved(page)).toHaveCount(0);
+  await expect(
+    page.getByText('1/2 SYNTHETIC tablet?', { exact: true }),
+  ).toHaveCount(0);
+  expect(api.clinicalWrites).toEqual([]);
+  expect(api.diagnosisWrites).toEqual([]);
+});
+for (const theme of ['light', 'dark'] as const)
+  test(`${theme} medication source fields reflow accessibly in the saved-text review`, async ({
+    page,
+  }, info) => {
+    await page.setViewportSize({
+      width: info.project.name === 'mobile' ? 320 : 1440,
+      height: 1000,
+    });
+    await page.addInitScript(
+      (value) => localStorage.setItem('fmv.theme', value),
+      theme,
+    );
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await setup(page, {
+      initial: true,
+      canSave: false,
+      metadataText: `Medication: ${'SYNTHETIC'.repeat(12)}\nStrength: SYNTHETIC 5/unit\nDose: 1/2 SYNTHETIC tablet?\nInstructions: SYNTHETIC unverified`,
+    });
+    await action(page, 'Saved text').click();
+    await openMedication(page);
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    await expect(medications(page).getByRole('listitem')).toHaveCount(1);
+    const dose = medications(page)
+      .getByText('Dose as written', { exact: true })
+      .locator('..');
+    await dose.getByText('Source · Page 1', { exact: true }).click();
+    await dose
+      .getByRole('button', { name: 'Show dose in source', exact: true })
+      .focus();
+    await expect(dose.getByRole('button')).toBeFocused();
+    expect(
+      (await new AxeBuilder({ page }).include('[role="dialog"]').analyze())
+        .violations,
+    ).toEqual([]);
+    expect(
+      await saved(page).evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+    ).toBe(true);
+    await medications(page).scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `../../.local/screenshots/medication-source-${theme}-${info.project.name}.png`,
+    });
+  });

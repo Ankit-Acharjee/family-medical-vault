@@ -17,6 +17,7 @@ import { OriginalComparison } from './OriginalComparison';
 import { ClinicalReviewPanel } from './ClinicalReviewPanel';
 import type { ClinicalDraft } from './clinicalReviewDraft';
 import { MetadataSuggestions } from './MetadataSuggestions';
+import { MedicationCandidates } from './MedicationCandidates';
 import { DiagnosisReviewPanel } from './DiagnosisReviewPanel';
 import type { DiagnosisDraft } from './diagnosisReviewDraft';
 import type { SourceExcerptTarget } from './sourceExcerpt';
@@ -269,6 +270,16 @@ export function SavedExtractionDialog({
               draft={diagnosisDraft}
               onDenied={onDenied}
               onReloadSource={reloadSource}
+              snapshot={snapshot}
+              onShowSource={(evidence) =>
+                setSourceSelection({
+                  revision: snapshot.revision,
+                  sourceSha256: snapshot.sourceSha256,
+                  target: { ...evidence, requestId: crypto.randomUUID() },
+                })
+              }
+            />
+            <MedicationCandidates
               snapshot={snapshot}
               onShowSource={(evidence) =>
                 setSourceSelection({
