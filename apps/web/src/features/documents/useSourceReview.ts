@@ -1,28 +1,28 @@
 import { useEffect, useRef, useState } from 'react';
+import { isSaveExtractionResult } from '@fmv/contracts';
 import {
-  isDiagnosisReviewResult,
-  isSaveExtractionResult,
-} from '@fmv/contracts';
-import type { DiagnosisReviewResult, SavedExtraction } from '@fmv/contracts';
-import {
-  diagnosisDraftKey,
-  type DiagnosisDraftRef,
-} from './diagnosisReviewDraft';
+  isSourceReviewResult,
+  type SourceReviewResult,
+  type SourceReviewKind,
+} from './sourceReviewDomain';
+import type { SavedExtraction } from '@fmv/contracts';
+import { sourceDraftKey, type SourceDraftRef } from './sourceReviewDraft';
 import type {
   ClinicalSaveState,
   ClinicalOperation,
 } from './clinicalReviewDraft';
 import { readClinicalJson } from './useClinicalReview';
-export function useDiagnosisReview(
+export function useSourceReview(
+  kind: SourceReviewKind,
   patientId: string,
   documentId: string,
   snapshot: SavedExtraction,
   onDenied: () => void,
-  draft: DiagnosisDraftRef,
+  draft: SourceDraftRef,
 ) {
-  const path = `/api/patients/${encodeURIComponent(patientId)}/documents/${encodeURIComponent(documentId)}/diagnosis-review`;
+  const path = `/api/patients/${encodeURIComponent(patientId)}/documents/${encodeURIComponent(documentId)}/${kind}-review`;
   const [state, setState] = useState<
-    DiagnosisReviewResult | 'loading' | 'failed' | 'conflict'
+    SourceReviewResult | 'loading' | 'failed' | 'conflict'
   >('loading');
   const [saveState, setSaveState] = useState<ClinicalSaveState>('idle');
   const [attempt, setAttempt] = useState(0);
@@ -56,7 +56,7 @@ export function useDiagnosisReview(
       if (!response.ok) throw Error();
       const value = await readClinicalJson(response, abort.signal);
       abort.signal.throwIfAborted();
-      if (!isDiagnosisReviewResult(value)) throw Error();
+      if (!isSourceReviewResult(kind, value)) throw Error();
       if (
         value.context.sourceRevision !== revision ||
         value.context.sourceSha256 !== sha
@@ -67,7 +67,7 @@ export function useDiagnosisReview(
       const cached = draft.current;
       if (
         value.context.canVerify &&
-        cached?.key === diagnosisDraftKey(patientId, documentId, value)
+        cached?.key === sourceDraftKey(patientId, documentId, value, kind)
       ) {
         setSaveState(
           cached.saveState === 'pending' ? 'uncertain' : cached.saveState,
@@ -86,7 +86,7 @@ export function useDiagnosisReview(
       abort.abort();
       writer.current?.abort();
     };
-  }, [path, patientId, documentId, revision, sha, attempt, draft]);
+  }, [path, kind, patientId, documentId, revision, sha, attempt, draft]);
   const reload = () => {
     draft.current = null;
     writer.current?.abort();

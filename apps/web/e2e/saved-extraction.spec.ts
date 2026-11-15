@@ -4,6 +4,9 @@ import { createHash } from 'node:crypto';
 import {
   extractLabFields,
   extractDiagnosisFields,
+  extractMedicationFields,
+  isSaveMedicationReview,
+  isWithdrawMedicationReview,
   isSaveDiagnosisReview,
   isWithdrawDiagnosisReview,
   suggestMetadata,
@@ -146,6 +149,13 @@ async function setup(
     diagnosisLastOp = '',
     diagnosisUncertain = false;
   const diagnosisSets = new Map<number, Record<string, unknown>>();
+  const medicationWrites: { body: string; operation: string }[] = [];
+  let medicationRevision = 0,
+    medicationSnapshot: Record<string, unknown> | null = null,
+    medicationLastBody = '',
+    medicationLastOp = '',
+    medicationUncertain = false;
+  const medicationSets = new Map<number, Record<string, unknown>>();
   const clinicalWrites: string[] = [];
   const withdrawWrites: string[] = [];
   let withdrawLastRequest = '',
@@ -726,6 +736,159 @@ async function setup(
       });
     },
   );
+  const medicationContext = () => ({
+    sourceRevision: Number(snapshot?.revision ?? 0),
+    sourceSha256: sourceSha,
+    lifecycleVersion: 0,
+    revision: medicationRevision,
+    canVerify: options.canVerify ?? canSave,
+  });
+  await page.route(
+    '**/api/patients/*/documents/*/medication-review',
+    async (route) => {
+      const context = medicationContext();
+      if (mode === 'medication-denied') return route.fulfill({ status: 404 });
+      if (route.request().method() === 'GET') {
+        if (mode === 'medication-read-failed')
+          return route.fulfill({ status: 503 });
+        return route.fulfill({
+          json: {
+            context,
+            candidates: snapshot
+              ? extractMedicationFields(
+                  snapshot.pages as { page: number; text: string }[],
+                  {
+                    truncatedFinalLine: snapshot.partialReason === 'characters',
+                  },
+                )
+              : [],
+            snapshot: medicationSnapshot,
+          },
+        });
+      }
+      const raw = route.request().postData()!;
+      medicationWrites.push({ body: raw, operation: 'confirmation' });
+      const input = JSON.parse(raw);
+      if (!isSaveMedicationReview(input)) return route.fulfill({ status: 400 });
+      if (mode === 'medication-conflict') return route.fulfill({ status: 409 });
+      if (mode === 'medication-uncommitted') return route.abort('failed');
+      if (raw !== medicationLastBody || medicationLastOp !== 'confirmation') {
+        if (
+          input.expectedRevision !== medicationRevision ||
+          input.sourceRevision !== context.sourceRevision ||
+          !snapshot
+        )
+          return route.fulfill({ status: 409 });
+        const candidates = extractMedicationFields(
+            snapshot.pages as { page: number; text: string }[],
+            { truncatedFinalLine: snapshot.partialReason === 'characters' },
+          ),
+          active = new Map<string, (typeof candidates)[number]>();
+        if (medicationSnapshot?.sourceRevision === context.sourceRevision)
+          for (const c of medicationSnapshot.statements as typeof candidates)
+            active.set(c.id, c);
+        for (const c of candidates)
+          if (input.candidateIds.includes(c.id)) active.set(c.id, c);
+        medicationRevision++;
+        medicationSnapshot = {
+          revision: medicationRevision,
+          sourceRevision: context.sourceRevision,
+          sourceSha256: sourceSha,
+          confirmedAt: '2026-11-15T00:00:00.000Z',
+          action: 'confirmation',
+          meaning: 'source-fields-only',
+          ruleVersion: 'labeled-medication-blocks-v1',
+          extraction: {
+            method: snapshot.method,
+            engineVersion: snapshot.engineVersion,
+            partial: snapshot.partial,
+            partialReason: snapshot.partialReason,
+            downsized: snapshot.downsized,
+          },
+          statements: [...active.values()],
+          withdrawnStatements: [],
+        };
+        medicationSets.set(medicationRevision, medicationSnapshot);
+        medicationLastBody = raw;
+        medicationLastOp = 'confirmation';
+      }
+      if (mode === 'medication-uncertain' && !medicationUncertain) {
+        medicationUncertain = true;
+        return route.abort('failed');
+      }
+      return route.fulfill({
+        json: { saved: true, revision: medicationRevision },
+      });
+    },
+  );
+  await page.route(
+    '**/api/patients/*/documents/*/medication-review/withdraw',
+    async (route) => {
+      const raw = route.request().postData()!;
+      medicationWrites.push({ body: raw, operation: 'withdrawal' });
+      if (mode === 'medication-denied') return route.fulfill({ status: 404 });
+      const input = JSON.parse(raw);
+      if (!isWithdrawMedicationReview(input))
+        return route.fulfill({ status: 400 });
+      if (mode === 'medication-conflict') return route.fulfill({ status: 409 });
+      if (mode === 'medication-uncommitted') return route.abort('failed');
+      if (raw !== medicationLastBody || medicationLastOp !== 'withdrawal') {
+        if (
+          !medicationSnapshot ||
+          input.expectedRevision !== medicationRevision
+        )
+          return route.fulfill({ status: 409 });
+        const active = medicationSnapshot.statements as { id: string }[];
+        medicationRevision++;
+        medicationSnapshot = {
+          ...medicationSnapshot,
+          revision: medicationRevision,
+          action: 'withdrawal',
+          statements: active.filter((c) => !input.candidateIds.includes(c.id)),
+          withdrawnStatements: active.filter((c) =>
+            input.candidateIds.includes(c.id),
+          ),
+        };
+        medicationSets.set(medicationRevision, medicationSnapshot);
+        medicationLastBody = raw;
+        medicationLastOp = 'withdrawal';
+      }
+      if (mode === 'medication-uncertain' && !medicationUncertain) {
+        medicationUncertain = true;
+        return route.abort('failed');
+      }
+      return route.fulfill({
+        json: { saved: true, revision: medicationRevision },
+      });
+    },
+  );
+  await page.route(
+    '**/api/patients/*/documents/*/medication-review/history?*',
+    async (route) => {
+      if (mode === 'medication-history-failed')
+        return route.fulfill({ status: 503 });
+      if (mode === 'medication-denied') return route.fulfill({ status: 404 });
+      const before = Number(
+          new URL(route.request().url()).searchParams.get('beforeRevision'),
+        ),
+        keys = [...medicationSets.keys()]
+          .filter((n) => n < before)
+          .sort((a, b) => b - a),
+        found = keys[0];
+      return route.fulfill({
+        json: {
+          context: {
+            ...medicationContext(),
+            ...(mode === 'medication-history-conflict'
+              ? { revision: medicationRevision + 1 }
+              : {}),
+          },
+          snapshot: found ? medicationSets.get(found) : null,
+          nextBefore: found && keys.length > 1 ? found : null,
+        },
+      });
+    },
+  );
   await page.goto('/#documents');
   await page
     .getByRole('button', { name: 'Select patient: No patient selected' })
@@ -739,6 +902,7 @@ async function setup(
     metadataWrites,
     clinicalWrites,
     diagnosisWrites,
+    medicationWrites,
     withdrawWrites,
     ocrAssets,
     external,
@@ -3312,6 +3476,13 @@ const medications = (page: Page) =>
     exact: true,
   });
 async function openMedication(page: Page) {
+  if (
+    (await medications(page)
+      .locator('details')
+      .first()
+      .getAttribute('open')) !== null
+  )
+    return;
   await medications(page)
     .getByText('Medication and dose text · Unverified', { exact: true })
     .click();
@@ -3468,3 +3639,297 @@ for (const theme of ['light', 'dark'] as const)
       path: `../../.local/screenshots/medication-source-${theme}-${info.project.name}.png`,
     });
   });
+
+async function attestMedication(page: Page) {
+  await medications(page)
+    .getByRole('checkbox', { name: /I checked every provided field/ })
+    .check();
+}
+async function confirmMedication(page: Page, index = 0) {
+  await openMedication(page);
+  await medications(page)
+    .getByRole('checkbox', { name: /Select medication source block/ })
+    .nth(index)
+    .check();
+  await attestMedication(page);
+  await medications(page)
+    .getByRole('button', {
+      name: 'Confirm selected prescription fields',
+      exact: true,
+    })
+    .click();
+  await expect(saved(page)).toContainText(
+    'Prescription source fields confirmed.',
+  );
+  await openMedication(page);
+}
+const medicationReviewText =
+  'Medication: SYNTHETIC historical/stopped?\nStrength: SYNTHETIC 5/unit\nDose: 1/2 SYNTHETIC tablet?\nFrequency: uncertain as written\n\nMedication: SYNTHETIC second medicine\nInstructions: source wording only';
+test('medication confirmation preserves every source field, merges selected blocks and keeps withdrawal/history separate', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    metadataText: medicationReviewText,
+  });
+  await action(page, 'Saved text').click();
+  await confirmMedication(page);
+  const current = () =>
+    medications(page).getByRole('region', {
+      name: 'Owner-confirmed medication source fields',
+    });
+  await expect(current()).toContainText('Dose: 1/2 SYNTHETIC tablet?');
+  await expect(current()).toContainText('Separate reconciliation is required');
+  await expect(
+    medications(page)
+      .getByRole('checkbox', { name: /Select medication source block/ })
+      .first(),
+  ).not.toBeChecked();
+  await confirmMedication(page, 1);
+  await expect(current()).toContainText(
+    'Medication: SYNTHETIC second medicine',
+  );
+  const withdraw = () =>
+    medications(page).getByRole('region', {
+      name: 'Withdraw medication source confirmations',
+    });
+  await withdraw()
+    .getByRole('checkbox', {
+      name: 'Withdraw medication source confirmation 1',
+      exact: true,
+    })
+    .check();
+  await withdraw()
+    .getByRole('checkbox', { name: /I want to withdraw/ })
+    .check();
+  await withdraw()
+    .getByRole('button', {
+      name: 'Withdraw selected source confirmations',
+      exact: true,
+    })
+    .click();
+  await expect(saved(page)).toContainText('Source confirmations withdrawn.');
+  await openMedication(page);
+  await expect(current()).toContainText('Withdrawn prescription source fields');
+  const history = medications(page).getByRole('region', {
+    name: 'Medication confirmation history',
+  });
+  await history
+    .getByRole('button', {
+      name: 'View earlier source confirmations',
+      exact: true,
+    })
+    .click();
+  await expect(history).toContainText('Revision 2');
+  await expect(history).toContainText('Frequency: uncertain as written');
+  expect(api.medicationWrites).toHaveLength(3);
+  for (const write of api.medicationWrites) {
+    const body = JSON.parse(write.body);
+    expect(body.meaning).toBe('source-fields-only');
+    expect(body).not.toHaveProperty('fields');
+    expect(body).not.toHaveProperty('status');
+    expect(body).not.toHaveProperty('schedule');
+  }
+  expect(api.clinicalWrites).toEqual([]);
+  expect(api.diagnosisWrites).toEqual([]);
+  expect(api.external).toEqual([]);
+});
+for (const mode of ['medication-uncertain', 'medication-uncommitted'])
+  test(`${mode} medication confirmation retries exactly the captured request after fresh context checks`, async ({
+    page,
+  }) => {
+    const api = await setup(page, {
+      initial: true,
+      metadataText: medicationReviewText,
+    });
+    await action(page, 'Saved text').click();
+    await openMedication(page);
+    await medications(page)
+      .getByRole('checkbox', { name: /Select medication source block/ })
+      .first()
+      .check();
+    await attestMedication(page);
+    api.mode(mode);
+    await medications(page)
+      .getByRole('button', {
+        name: 'Confirm selected prescription fields',
+        exact: true,
+      })
+      .click();
+    await expect(
+      medications(page).getByRole('button', {
+        name: 'Retry source confirmation',
+        exact: true,
+      }),
+    ).toBeEnabled();
+    if (mode === 'medication-uncommitted') {
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+      await saved(page)
+        .getByRole('button', { name: 'Retry saved text', exact: true })
+        .click();
+      await openMedication(page);
+      await expect(
+        medications(page)
+          .getByRole('checkbox', { name: /Select medication source block/ })
+          .first(),
+      ).toBeChecked();
+    }
+    api.mode('normal');
+    await medications(page)
+      .getByRole('button', { name: 'Retry source confirmation', exact: true })
+      .click();
+    await expect(saved(page)).toContainText(
+      'Prescription source fields confirmed.',
+    );
+    expect(api.medicationWrites).toHaveLength(2);
+    expect(api.medicationWrites[0]).toEqual(api.medicationWrites[1]);
+  });
+test('medication conflicts require explicit reload and denied writes clear protected content', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    metadataText: medicationReviewText,
+  });
+  await action(page, 'Saved text').click();
+  await openMedication(page);
+  await medications(page)
+    .getByRole('checkbox', { name: /Select medication source block/ })
+    .first()
+    .check();
+  await attestMedication(page);
+  api.mode('medication-conflict');
+  await medications(page)
+    .getByRole('button', {
+      name: 'Confirm selected prescription fields',
+      exact: true,
+    })
+    .click();
+  await expect(medications(page)).toContainText(
+    'Reload saved text before confirming',
+  );
+  api.mode('normal');
+  await medications(page)
+    .getByRole('button', { name: 'Reload saved text', exact: true })
+    .click();
+  await openMedication(page);
+  await expect(
+    medications(page)
+      .getByRole('checkbox', { name: /Select medication source block/ })
+      .first(),
+  ).not.toBeChecked();
+  await medications(page)
+    .getByRole('checkbox', { name: /Select medication source block/ })
+    .first()
+    .check();
+  await attestMedication(page);
+  api.mode('medication-denied');
+  await medications(page)
+    .getByRole('button', {
+      name: 'Confirm selected prescription fields',
+      exact: true,
+    })
+    .click();
+  await expect(saved(page)).toHaveCount(0);
+});
+for (const theme of ['light', 'dark'])
+  test(`${theme} medication confirmation controls are accessible, responsive and source-only`, async ({
+    page,
+  }, info) => {
+    await page.setViewportSize({
+      width: info.project.name === 'mobile' ? 320 : 1440,
+      height: 1000,
+    });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.addInitScript(
+      (value) => localStorage.setItem('fmv.theme', value),
+      theme,
+    );
+    const api = await setup(page, {
+      initial: true,
+      metadataText: medicationReviewText,
+    });
+    await action(page, 'Saved text').click();
+    await openMedication(page);
+    await expect(medications(page)).toContainText(
+      'Patient: Saved Fixture Patient',
+    );
+    await medications(page)
+      .getByRole('checkbox', { name: /Select medication source block/ })
+      .first()
+      .focus();
+    await expect(
+      medications(page)
+        .getByRole('checkbox', { name: /Select medication source block/ })
+        .first(),
+    ).toBeFocused();
+    expect(
+      (await new AxeBuilder({ page }).include('[role="dialog"]').analyze())
+        .violations,
+    ).toEqual([]);
+    expect(
+      await saved(page).evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+    ).toBe(true);
+    await medications(page).scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `../../.local/screenshots/medication-confirmation-${theme}-${info.project.name}.png`,
+    });
+    expect(api.medicationWrites).toEqual([]);
+    expect(api.external).toEqual([]);
+  });
+
+test('medication committed withdrawal retries only its captured operation and denied writes clear context', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    metadataText: medicationReviewText,
+  });
+  await action(page, 'Saved text').click();
+  await confirmMedication(page);
+  const w = medications(page).getByRole('region', {
+    name: 'Withdraw medication source confirmations',
+  });
+  await w
+    .getByRole('checkbox', {
+      name: 'Withdraw medication source confirmation 1',
+      exact: true,
+    })
+    .check();
+  await w.getByRole('checkbox', { name: /I want to withdraw/ }).check();
+  api.mode('medication-uncertain');
+  await w
+    .getByRole('button', {
+      name: 'Withdraw selected source confirmations',
+      exact: true,
+    })
+    .click();
+  await expect(
+    w.getByRole('button', { name: 'Retry source withdrawal', exact: true }),
+  ).toBeEnabled();
+  await expect(
+    medications(page).getByRole('button', {
+      name: 'Confirm selected prescription fields',
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await w
+    .getByRole('button', { name: 'Retry source withdrawal', exact: true })
+    .click();
+  await expect(saved(page)).toContainText('Source confirmations withdrawn.');
+  expect(api.medicationWrites[1]).toEqual(api.medicationWrites[2]);
+  await openMedication(page);
+  await medications(page)
+    .getByRole('checkbox', { name: /Select medication source block/ })
+    .first()
+    .check();
+  await attestMedication(page);
+  api.mode('medication-denied');
+  await medications(page)
+    .getByRole('button', {
+      name: 'Confirm selected prescription fields',
+      exact: true,
+    })
+    .click();
+  await expect(saved(page)).toHaveCount(0);
+});

@@ -119,3 +119,5 @@ export * from './clinical-history.js';
 export * from './diagnosis-fields.js';
 export * from './diagnosis-review.js';
 export * from './medication-fields.js';
+
+export * from './medication-review.js';

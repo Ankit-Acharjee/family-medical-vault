@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { extractMedicationFields } from '@fmv/contracts';
 import type { MedicationCandidate, SavedExtraction } from '@fmv/contracts';
 import { Button } from '../../components/ui/button';
@@ -22,7 +23,21 @@ const otherFields = [
 export function MedicationCandidates({
   snapshot,
   onShowSource,
+  selected,
+  onSelection,
+  disabled,
+  review,
+  children,
+  open,
+  onOpenChange,
 }: {
+  selected?: string[];
+  onSelection?: ((ids: string[]) => void) | undefined;
+  disabled?: boolean;
+  review?: ReactNode;
+  children?: ReactNode;
+  open?: boolean;
+  onOpenChange?: ((open: boolean) => void) | undefined;
   snapshot: SavedExtraction;
   onShowSource: (target: { page: number; excerpt: string }) => void;
 }) {
@@ -73,7 +88,11 @@ export function MedicationCandidates({
       aria-label="Medication source text"
       className="min-w-0 rounded-xl border border-border px-4 py-1"
     >
-      <details className="min-w-0">
+      <details
+        className="min-w-0"
+        open={open}
+        onToggle={(e) => onOpenChange?.(e.currentTarget.open)}
+      >
         <summary className="min-h-11 cursor-pointer content-center rounded-sm text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
           Medication and dose text · Unverified
         </summary>
@@ -83,6 +102,7 @@ export function MedicationCandidates({
             frequency against the original. No active regimen or schedule is
             created.
           </p>
+          {review}
           {snapshot.partial && (
             <p className="text-pretty text-sm text-muted-foreground">
               Based on partial text; other medicines or fields may be missing.
@@ -110,6 +130,29 @@ export function MedicationCandidates({
                   key={candidate.id}
                   className="min-w-0 space-y-3 py-3 first:pt-0"
                 >
+                  {onSelection && (
+                    <label className="flex min-h-11 min-w-0 items-start gap-2 text-sm font-medium">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select medication source block ${candidate.id}`}
+                        className="mt-1 size-5 shrink-0 accent-primary"
+                        disabled={disabled}
+                        checked={selected?.includes(candidate.id) ?? false}
+                        onChange={(e) =>
+                          onSelection(
+                            e.target.checked
+                              ? [...(selected ?? []), candidate.id]
+                              : (selected ?? []).filter(
+                                  (id) => id !== candidate.id,
+                                ),
+                          )
+                        }
+                      />
+                      <span className="min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                        Select all provided fields in this block
+                      </span>
+                    </label>
+                  )}
                   <h3 className="text-balance text-sm font-semibold">
                     Source block {i + 1} · Unverified · Page {candidate.page}
                   </h3>
@@ -135,6 +178,7 @@ export function MedicationCandidates({
               ))}
             </ul>
           )}
+          {children}
         </div>
       </details>
     </section>

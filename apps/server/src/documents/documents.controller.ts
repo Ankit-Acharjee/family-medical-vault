@@ -48,6 +48,59 @@ export class DocumentsController {
       throw e;
     }
   }
+  @Get('documents/:documentId/medication-review')
+  async medicationReview(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+  ) {
+    return this.documents.medication.read(await this.principal(req), p, d);
+  }
+  @Get('documents/:documentId/medication-review/history')
+  async medicationHistory(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+    @Query('beforeRevision') cursor: unknown,
+  ) {
+    return this.documents.medication.history(
+      await this.principal(req),
+      p,
+      d,
+      cursor,
+    );
+  }
+  @Put('documents/:documentId/medication-review')
+  async confirmMedication(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+    @Body() input: unknown,
+  ) {
+    return this.documents.medication.write(
+      await this.principal(req),
+      p,
+      d,
+      input,
+      'confirmation',
+    );
+  }
+  @Post('documents/:documentId/medication-review/withdraw')
+  @HttpCode(200)
+  async withdrawMedication(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+    @Body() input: unknown,
+  ) {
+    return this.documents.medication.write(
+      await this.principal(req),
+      p,
+      d,
+      input,
+      'withdrawal',
+    );
+  }
   @Get('documents/:documentId/diagnosis-review')
   async diagnosisReview(
     @Req() req: Request,

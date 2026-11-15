@@ -1,26 +1,30 @@
 import { useEffect, useRef, useState } from 'react';
-import { isDiagnosisHistoryResult } from '@fmv/contracts';
-import type {
-  DiagnosisHistoryResult,
-  DiagnosisReviewContext,
-} from '@fmv/contracts';
+import {
+  isSourceHistoryResult,
+  sourceCandidateExcerpts,
+  type SourceReviewKind,
+  type SourceHistoryResult,
+} from './sourceReviewDomain';
+import type { SourceReviewResult } from './sourceReviewDomain';
 import { Button } from '../../components/ui/button';
 import { readClinicalJson } from './useClinicalReview';
-export function DiagnosisHistory({
+export function SourceHistory({
+  kind,
   patientId,
   documentId,
   context,
   onDenied,
   onReload,
 }: {
+  kind: SourceReviewKind;
   patientId: string;
   documentId: string;
-  context: DiagnosisReviewContext;
+  context: SourceReviewResult['context'];
   onDenied: () => void;
   onReload: () => void;
 }) {
   const [state, setState] = useState<
-    DiagnosisHistoryResult | 'idle' | 'loading' | 'failed' | 'conflict'
+    SourceHistoryResult | 'idle' | 'loading' | 'failed' | 'conflict'
   >('idle');
   const current = useRef<AbortController | null>(null);
   const [before, setBefore] = useState(context.revision);
@@ -40,7 +44,7 @@ export function DiagnosisHistory({
     const timer = window.setTimeout(() => abort.abort(), 20000);
     try {
       const r = await fetch(
-        `/api/patients/${encodeURIComponent(patientId)}/documents/${encodeURIComponent(documentId)}/diagnosis-review/history?beforeRevision=${cursor}`,
+        `/api/patients/${encodeURIComponent(patientId)}/documents/${encodeURIComponent(documentId)}/${kind}-review/history?beforeRevision=${cursor}`,
         { signal: abort.signal, credentials: 'same-origin', cache: 'no-store' },
       );
       abort.signal.throwIfAborted();
@@ -51,7 +55,7 @@ export function DiagnosisHistory({
       if (!r.ok) throw Error();
       const v = await readClinicalJson(r, abort.signal);
       abort.signal.throwIfAborted();
-      if (!isDiagnosisHistoryResult(v)) throw Error();
+      if (!isSourceHistoryResult(kind, v)) throw Error();
       if (
         (
           [
@@ -75,13 +79,18 @@ export function DiagnosisHistory({
   };
   return (
     <section
-      aria-label="Diagnosis confirmation history"
+      aria-label={
+        kind === 'diagnosis'
+          ? 'Diagnosis confirmation history'
+          : 'Medication confirmation history'
+      }
       className="space-y-2 border-t border-border pt-3"
     >
       <h4 className="text-sm font-semibold">Earlier source confirmations</h4>
       <p className="text-pretty text-sm text-muted-foreground">
-        Historical statements retain their wording. They do not replace the
-        current set or establish current diagnoses.
+        {kind === 'diagnosis'
+          ? 'Historical statements retain their wording. They do not replace the current set or establish current diagnoses.'
+          : 'Historical prescription fields retain their wording. They do not replace the current set or create an active regimen or schedule.'}
       </p>
       {state === 'idle' ? (
         <Button variant="secondary" onClick={() => void load(context.revision)}>
@@ -126,7 +135,9 @@ export function DiagnosisHistory({
               </p>
               {state.snapshot.statements.length === 0 && (
                 <p className="text-sm">
-                  No active source statements in this revision.
+                  {kind === 'diagnosis'
+                    ? 'No active source statements in this revision.'
+                    : 'No confirmed prescription source blocks in this revision.'}
                 </p>
               )}
               {state.snapshot.statements.map((s) => (
@@ -134,14 +145,22 @@ export function DiagnosisHistory({
                   key={s.id}
                   className="whitespace-pre-wrap break-words border-l-2 border-border pl-3 text-sm [overflow-wrap:anywhere]"
                 >
-                  {s.field.excerpt}
+                  {sourceCandidateExcerpts(s).map((excerpt, index) => (
+                    <p key={index}>{excerpt}</p>
+                  ))}
                 </blockquote>
               ))}
               {state.snapshot.withdrawnStatements.map((s) => (
                 <div key={s.id} className="space-y-1 text-sm">
-                  <p className="font-medium">Withdrawn source statement</p>
+                  <p className="font-medium">
+                    {kind === 'diagnosis'
+                      ? 'Withdrawn source statement'
+                      : 'Withdrawn prescription source fields'}
+                  </p>
                   <blockquote className="whitespace-pre-wrap break-words border-l-2 border-border pl-3 [overflow-wrap:anywhere]">
-                    {s.field.excerpt}
+                    {sourceCandidateExcerpts(s).map((excerpt, index) => (
+                      <p key={index}>{excerpt}</p>
+                    ))}
                   </blockquote>
                 </div>
               ))}

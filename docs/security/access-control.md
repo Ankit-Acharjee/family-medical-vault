@@ -70,3 +70,7 @@ Only the explicit Person owner may withdraw an incorrectly confirmed clinical en
 ## Approved diagnosis-confirmation meaning — 15 November 2026
 
 Diagnosis confirmation attests the source statement as written, preserving negation, uncertainty, history and references to another person. It does not establish a current patient diagnosis, disease status or clinical code. Current explicit Person-owner authority and source-linked verification are still required; delegates cannot confirm. Confirmed source statements remain distinct from patient condition lists and from unverified extraction. Withdrawal preserves history under the existing approved policy.
+
+## Approved medication-confirmation meaning — 15 November 2026
+
+Medication confirmation attests prescription source fields exactly as written, retaining uncertainty, historical/stopped wording and source evidence. It does not create an active regimen or schedule, start/stop a medication, calculate a dose or establish prescribing intent. A separate explicit reconciliation step is required before activating a regimen or schedule. Current owner-only verification and history-preserving withdrawal policies still apply; delegates with current View may review source fields but cannot confirm or withdraw.

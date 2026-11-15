@@ -17,7 +17,8 @@ import { OriginalComparison } from './OriginalComparison';
 import { ClinicalReviewPanel } from './ClinicalReviewPanel';
 import type { ClinicalDraft } from './clinicalReviewDraft';
 import { MetadataSuggestions } from './MetadataSuggestions';
-import { MedicationCandidates } from './MedicationCandidates';
+import { MedicationReviewPanel } from './MedicationReviewPanel';
+import type { SourceDraft } from './sourceReviewDraft';
 import { DiagnosisReviewPanel } from './DiagnosisReviewPanel';
 import type { DiagnosisDraft } from './diagnosisReviewDraft';
 import type { SourceExcerptTarget } from './sourceExcerpt';
@@ -57,6 +58,7 @@ export function SavedExtractionDialog({
   const controller = useRef<AbortController | null>(null);
   const clinicalDraft = useRef<ClinicalDraft | null>(null);
   const diagnosisDraft = useRef<DiagnosisDraft | null>(null);
+  const medicationDraft = useRef<SourceDraft | null>(null);
   const title = useRef<HTMLHeadingElement | null>(null);
   const allowed = useRef(enabled);
   allowed.current = enabled;
@@ -89,6 +91,7 @@ export function SavedExtractionDialog({
         if (allowed.current) {
           clinicalDraft.current = null;
           diagnosisDraft.current = null;
+          medicationDraft.current = null;
           onDenied();
         }
         return;
@@ -158,6 +161,7 @@ export function SavedExtractionDialog({
   const reloadSource = () => {
     clinicalDraft.current = null;
     diagnosisDraft.current = null;
+    medicationDraft.current = null;
     retry();
   };
   const snapshot =
@@ -279,7 +283,13 @@ export function SavedExtractionDialog({
                 })
               }
             />
-            <MedicationCandidates
+            <MedicationReviewPanel
+              patientName={source.patientName}
+              patientId={source.patientId}
+              documentId={source.documentId}
+              draft={medicationDraft}
+              onDenied={onDenied}
+              onReloadSource={reloadSource}
               snapshot={snapshot}
               onShowSource={(evidence) =>
                 setSourceSelection({

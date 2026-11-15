@@ -44,6 +44,7 @@ model AppAccount {
   savedExtractions    DocumentExtraction[]
   savedMetadata       DocumentMetadataSnapshot[]
   clinicalReviews     DocumentClinicalReview[]
+  medicationReviews   DocumentMedicationReview[]
   diagnosisReviews    DocumentDiagnosisReview[]
   issuedInvitations   AccessInvitation[]         @relation("InvitationIssuer")
   receivedInvitations AccessInvitation[]         @relation("InvitationRecipient")
@@ -164,6 +165,7 @@ model Document {
   grants              AccessGrant[]
   events              DocumentEvent[]
   clinicalReviews     DocumentClinicalReview[]
+  medicationReviews   DocumentMedicationReview[]
   diagnosisReviews    DocumentDiagnosisReview[]
   metadataSnapshot    DocumentMetadataSnapshot?
   extraction          DocumentExtraction?
@@ -316,5 +318,32 @@ model DocumentDiagnosisReview {
   @@unique([documentId, revision])
   @@unique([documentId, requestId])
   @@map("document_diagnosis_reviews")
+  @@schema("fmv")
+}
+
+model DocumentMedicationReview {
+  id                  String     @id @db.Uuid
+  documentId          String     @map("document_id") @db.Uuid
+  patientId           String     @map("patient_id") @db.Uuid
+  revision            Int
+  sourceRevision      Int        @map("source_revision")
+  sourceSha256        String     @map("source_sha256")
+  lifecycleVersion    Int        @map("lifecycle_version")
+  requestId           String     @map("request_id") @db.Uuid
+  payloadHash         String     @map("payload_hash")
+  actorAccountId      String     @map("actor_account_id") @db.Uuid
+  ruleVersion         String     @default("labeled-medication-blocks-v1") @map("rule_version")
+  meaning             String     @default("source-fields-only")
+  sourceContext       Json       @map("source_context") @db.JsonB
+  action              String
+  statements          Json       @db.JsonB
+  withdrawnStatements Json       @default("[]") @map("withdrawn_statements") @db.JsonB
+  confirmedAt         DateTime   @default(dbgenerated("clock_timestamp()")) @map("confirmed_at") @db.Timestamptz(3)
+  document            Document   @relation(fields: [patientId, documentId], references: [patientId, id], onDelete: Cascade)
+  actor               AppAccount @relation(fields: [actorAccountId], references: [id], onDelete: Restrict)
+
+  @@unique([documentId, revision])
+  @@unique([documentId, requestId])
+  @@map("document_medication_reviews")
   @@schema("fmv")
 }
