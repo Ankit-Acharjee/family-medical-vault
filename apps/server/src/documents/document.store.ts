@@ -1,4 +1,14 @@
 import type {
+  ProcessingConsentResult,
+  ProcessingConsentHistoryResult,
+  SaveProcessingConsent,
+  WithdrawProcessingConsent,
+} from '@fmv/contracts';
+import {
+  readProcessingConsent,
+  writeProcessingConsent,
+} from './processing-consent.store.js';
+import type {
   MedicationReviewResult,
   MedicationHistoryResult,
   SaveMedicationReview,
@@ -82,6 +92,25 @@ export type SearchAuthorization = (
 
 export type TrashChangeResult = 'changed' | 'unchanged' | 'missing' | 'expired';
 export abstract class DocumentStore {
+  abstract readProcessingConsent(
+    p: string,
+    d: string,
+    authorize: ClinicalAuthorization,
+    before?: number,
+  ): Promise<ProcessingConsentResult | ProcessingConsentHistoryResult | null>;
+  abstract writeProcessingConsent(
+    p: string,
+    d: string,
+    input: SaveProcessingConsent | WithdrawProcessingConsent,
+    action: 'grant' | 'withdrawal',
+    authorize: ClinicalAuthorization,
+  ): Promise<
+    | { saved: true; revision: number }
+    | 'missing'
+    | 'conflict'
+    | 'unavailable'
+    | 'invalid'
+  >;
   abstract readMedicationReview(
     p: string,
     d: string,
@@ -234,6 +263,25 @@ export class PrismaDocumentStore
       }),
       log: [],
     });
+  }
+  readProcessingConsent(
+    p: string,
+    d: string,
+    authorize: ClinicalAuthorization,
+    before?: number,
+  ) {
+    return before === undefined
+      ? readProcessingConsent(this.db, p, d, authorize)
+      : readProcessingConsent(this.db, p, d, authorize, before);
+  }
+  writeProcessingConsent(
+    p: string,
+    d: string,
+    input: SaveProcessingConsent | WithdrawProcessingConsent,
+    action: 'grant' | 'withdrawal',
+    authorize: ClinicalAuthorization,
+  ) {
+    return writeProcessingConsent(this.db, p, d, input, action, authorize);
   }
   readMedicationReview(
     p: string,

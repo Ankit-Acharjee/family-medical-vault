@@ -78,3 +78,7 @@ Medication confirmation attests prescription source fields exactly as written, r
 ## Approved initial external-processing consent authority — 15 November 2026
 
 Only the explicit Person owner, with current scoped View authority for the source document, may initially grant or withdraw external-processing consent. Delegate consent is deferred; View, Edit, Manage or combinations of those actions do not confer consent authority. This decision does not approve a provider or authorize any external processing. Consent and independently vetted provider policy are separate prerequisites; no external processor is currently approved, so processing remains disabled.
+
+## Approved initial consent lifecycle — 15 November 2026
+
+Initial processing consent covers one exact document and source version, with an explicit owner-chosen expiry. It becomes invalid after Trash/Restore, a source-version change or a provider-policy change. Withdrawal preserves historical evidence and remains possible for an expired or invalidated grant when the owner currently has access to the document. A later grant replaces the current consent intent; earlier grants must never become effective again by fallback. Provider approval, consent validity and actual processing enablement remain independent; no external provider is currently approved.

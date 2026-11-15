@@ -44,6 +44,7 @@ model AppAccount {
   savedExtractions    DocumentExtraction[]
   savedMetadata       DocumentMetadataSnapshot[]
   clinicalReviews     DocumentClinicalReview[]
+  processingConsents  DocumentProcessingConsent[]
   medicationReviews   DocumentMedicationReview[]
   diagnosisReviews    DocumentDiagnosisReview[]
   issuedInvitations   AccessInvitation[]         @relation("InvitationIssuer")
@@ -165,6 +166,7 @@ model Document {
   grants              AccessGrant[]
   events              DocumentEvent[]
   clinicalReviews     DocumentClinicalReview[]
+  processingConsents  DocumentProcessingConsent[]
   medicationReviews   DocumentMedicationReview[]
   diagnosisReviews    DocumentDiagnosisReview[]
   metadataSnapshot    DocumentMetadataSnapshot?
@@ -345,5 +347,48 @@ model DocumentMedicationReview {
   @@unique([documentId, revision])
   @@unique([documentId, requestId])
   @@map("document_medication_reviews")
+  @@schema("fmv")
+}
+
+model ProcessingProviderRecord {
+  generation String @id @db.Uuid
+  providerId String @map("provider_id")
+  policyVersion String @map("policy_version")
+  purposes String[]
+  dataCategories String[] @map("data_categories")
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  reviewReference String @map("review_reference")
+  enabled Boolean @default(false)
+  reviewedAt DateTime @default(dbgenerated("clock_timestamp()")) @map("reviewed_at") @db.Timestamptz(3)
+  consents DocumentProcessingConsent[]
+  @@unique([providerId,policyVersion])
+  @@map("processing_provider_policies")
+  @@schema("fmv")
+}
+model DocumentProcessingConsent {
+  id String @id @db.Uuid
+  documentId String @map("document_id") @db.Uuid
+  patientId String @map("patient_id") @db.Uuid
+  revision Int
+  requestId String @map("request_id") @db.Uuid
+  payloadHash String @map("payload_hash")
+  actorAccountId String @map("actor_account_id") @db.Uuid
+  action String
+  sourceSha256 String @map("source_sha256")
+  sourceRevision Int @map("source_revision")
+  lifecycleVersion Int @map("lifecycle_version")
+  policyGeneration String @map("policy_generation") @db.Uuid
+  providerId String @map("provider_id")
+  policyVersion String @map("policy_version")
+  purpose String
+  dataCategories String[] @map("data_categories")
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  recordedAt DateTime @default(dbgenerated("clock_timestamp()")) @map("recorded_at") @db.Timestamptz(3)
+  document Document @relation(fields:[patientId,documentId],references:[patientId,id],onDelete:Cascade)
+  actor AppAccount @relation(fields:[actorAccountId],references:[id],onDelete:Restrict)
+  policy ProcessingProviderRecord @relation(fields:[policyGeneration],references:[generation],onDelete:Restrict)
+  @@unique([documentId,revision])
+  @@unique([documentId,requestId])
+  @@map("document_processing_consents")
   @@schema("fmv")
 }

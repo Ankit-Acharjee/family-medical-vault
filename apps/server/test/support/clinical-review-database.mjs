@@ -1,3 +1,4 @@
+import { verifyProcessingConsent } from './processing-consent-database.mjs';
 import { verifyMedicationStatements } from './medication-review-database.mjs';
 import { verifyDiagnosisStatements } from './diagnosis-review-database.mjs';
 import assert from 'node:assert/strict';
@@ -694,6 +695,24 @@ export async function verifyClinicalReview(runtimeUrl, owner, insertGrant) {
       insertGrant,
       ownerAccountId,
       readerAccountId,
+    });
+    await verifyProcessingConsent({
+      service,
+      otherService,
+      store,
+      runtime,
+      owner,
+      principal,
+      reader,
+      patient,
+      id,
+      extraction,
+      insertGrant,
+      ownerAccountId,
+      readerAccountId,
+      intake,
+      authorize,
+      categoryId,
     });
     assert.deepEqual(await immutable(), original);
     assert.deepEqual(

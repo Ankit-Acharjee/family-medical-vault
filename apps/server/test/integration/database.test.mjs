@@ -332,15 +332,15 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
         );
         assert.equal(
           result.rowCount,
-          17,
-          'All foundation through medication-source migrations must exist',
+          18,
+          'All foundation through processing-consent migrations must exist',
         );
         assert.equal(
           result.rows
             .map((row) => row.migration_name)
             .sort()
             .join(','),
-          '20261105000100_foundation,20261105000300_auth_sessions,20261105000400_person_identity,20261110000100_patient_permissions,20261110000200_document_intake,20261110000300_caregiver_approvals,20261111000100_object_generations,20261111000200_patient_object_layout,20261112000100_document_display_titles,20261112000200_document_trash,20261113000100_saved_extractions,20261113000200_extraction_search,20261114000100_saved_metadata,20261114000200_clinical_review,20261115000100_clinical_withdrawal,20261115000200_diagnosis_statements,20261115000300_medication_source_fields',
+          '20261105000100_foundation,20261105000300_auth_sessions,20261105000400_person_identity,20261110000100_patient_permissions,20261110000200_document_intake,20261110000300_caregiver_approvals,20261111000100_object_generations,20261111000200_patient_object_layout,20261112000100_document_display_titles,20261112000200_document_trash,20261113000100_saved_extractions,20261113000200_extraction_search,20261114000100_saved_metadata,20261114000200_clinical_review,20261115000100_clinical_withdrawal,20261115000200_diagnosis_statements,20261115000300_medication_source_fields,20261115000400_processing_consent',
         );
         assert.ok(result.rows.every((row) => row.finished && row.active));
       }
@@ -436,7 +436,7 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           .map((row) => row.tablename)
           .sort()
           .join(','),
-        'access_events,access_grant_dependencies,access_grants,access_invitations,app_accounts,auth_rate_limits,auth_sessions,document_categories,document_clinical_reviews,document_diagnosis_reviews,document_events,document_extractions,document_medication_reviews,document_metadata_snapshots,document_object_attempts,documents,persons',
+        'access_events,access_grant_dependencies,access_grants,access_invitations,app_accounts,auth_rate_limits,auth_sessions,document_categories,document_clinical_reviews,document_diagnosis_reviews,document_events,document_extractions,document_medication_reviews,document_metadata_snapshots,document_object_attempts,document_processing_consents,documents,persons,processing_provider_policies',
         'Only reviewed application tables may exist',
       );
       const permissions = await query(
@@ -865,6 +865,8 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           'document_clinical_reviews',
           'document_diagnosis_reviews',
           'document_medication_reviews',
+          'document_processing_consents',
+          'processing_provider_policies',
         ];
         const flags = await query(
           runtime,

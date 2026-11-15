@@ -48,6 +48,59 @@ export class DocumentsController {
       throw e;
     }
   }
+  @Get('documents/:documentId/processing-consent')
+  async processingConsent(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+  ) {
+    return this.documents.consent.read(await this.principal(req), p, d);
+  }
+  @Get('documents/:documentId/processing-consent/history')
+  async processingConsentHistory(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+    @Query('beforeRevision') cursor: unknown,
+  ) {
+    return this.documents.consent.history(
+      await this.principal(req),
+      p,
+      d,
+      cursor,
+    );
+  }
+  @Put('documents/:documentId/processing-consent')
+  async grantProcessingConsent(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+    @Body() input: unknown,
+  ) {
+    return this.documents.consent.write(
+      await this.principal(req),
+      p,
+      d,
+      input,
+      'grant',
+    );
+  }
+  @Post('documents/:documentId/processing-consent/withdraw')
+  @HttpCode(200)
+  async withdrawProcessingConsent(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+    @Body() input: unknown,
+  ) {
+    return this.documents.consent.write(
+      await this.principal(req),
+      p,
+      d,
+      input,
+      'withdrawal',
+    );
+  }
   @Get('documents/:documentId/medication-review')
   async medicationReview(
     @Req() req: Request,

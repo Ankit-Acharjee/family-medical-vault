@@ -1,3 +1,4 @@
+import { ProcessingConsentService } from './processing-consent.service.js';
 import { MedicationReviewService } from './medication-review.service.js';
 import { DiagnosisReviewService } from './diagnosis-review.service.js';
 import { ClinicalReviewService } from './clinical-review.service.js';
@@ -33,6 +34,7 @@ export class DocumentsService {
   readonly extraction: ExtractionService;
   readonly metadata: MetadataSuggestionsService;
   readonly clinical: ClinicalReviewService;
+  readonly consent: ProcessingConsentService;
   readonly medication: MedicationReviewService;
   readonly diagnosis: DiagnosisReviewService;
   constructor(
@@ -41,6 +43,7 @@ export class DocumentsService {
     private readonly objects: ObjectStore,
   ) {
     this.clinical = new ClinicalReviewService(permissions, store);
+    this.consent = new ProcessingConsentService(this.clinical, store);
     this.medication = new MedicationReviewService(this.clinical, store);
     this.diagnosis = new DiagnosisReviewService(this.clinical, store);
     this.extraction = new ExtractionService(permissions, store);
