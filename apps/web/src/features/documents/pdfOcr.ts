@@ -6,6 +6,7 @@ import {
   VerbosityLevel,
 } from 'pdfjs-dist';
 import type { RenderTask } from 'pdfjs-dist';
+import { maximumDocumentBytes } from '@fmv/contracts';
 import rendererUrl from 'pdfjs-dist/build/pdf.renderer.mjs?url&no-inline';
 import { recognizeImage } from './imageOcr';
 import { ocrByteLimit } from './ocrTypes';
@@ -18,15 +19,51 @@ const assets = import.meta.glob(
 ) as Record<string, string>;
 let running = false;
 
+export type PdfPagePreview =
+  | { kind: 'preview'; blob: Blob; pages: number }
+  | Extract<OcrState, { kind: 'failed' }>;
+
+/** Render only; no OCR engine or text extraction is started. */
+export function renderPdfPagePreview(
+  data: Uint8Array<ArrayBuffer>,
+  pageNumber: number,
+  signal: AbortSignal,
+): Promise<PdfPagePreview> {
+  return processPdfPage(data, pageNumber, signal, () => {}, true);
+}
 /** The caller's 60-second signal includes original acquisition and this entire job. */
-export async function recognizePdfPage(
+export function recognizePdfPage(
   data: Uint8Array<ArrayBuffer>,
   pageNumber: number,
   signal: AbortSignal,
   progress: OcrProgress,
 ): Promise<OcrState> {
+  return processPdfPage(data, pageNumber, signal, progress, false);
+}
+function processPdfPage(
+  data: Uint8Array<ArrayBuffer>,
+  pageNumber: number,
+  signal: AbortSignal,
+  progress: OcrProgress,
+  preview: true,
+): Promise<PdfPagePreview>;
+function processPdfPage(
+  data: Uint8Array<ArrayBuffer>,
+  pageNumber: number,
+  signal: AbortSignal,
+  progress: OcrProgress,
+  preview: false,
+): Promise<OcrState>;
+async function processPdfPage(
+  data: Uint8Array<ArrayBuffer>,
+  pageNumber: number,
+  signal: AbortSignal,
+  progress: OcrProgress,
+  preview: boolean,
+): Promise<OcrState | PdfPagePreview> {
   signal.throwIfAborted();
-  if (data.byteLength > ocrByteLimit) return { kind: 'failed', reason: 'size' };
+  if (data.byteLength > (preview ? maximumDocumentBytes : ocrByteLimit))
+    return { kind: 'failed', reason: 'size' };
   if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > 50)
     return { kind: 'failed', reason: 'page' };
   if (running) return { kind: 'failed', reason: 'unavailable' };
@@ -78,7 +115,7 @@ export async function recognizePdfPage(
   };
   signal.addEventListener('abort', cancel, { once: true });
 
-  const run = async (): Promise<OcrState> => {
+  const run = async (): Promise<OcrState | PdfPagePreview> => {
     progress('preparing', 0);
     signal.throwIfAborted();
     parserPort = new Worker(
@@ -215,7 +252,8 @@ export async function recognizePdfPage(
     }
     const pdf = await loading.promise;
     signal.throwIfAborted();
-    if (pdf.numPages > 50) return { kind: 'failed', reason: 'pages' };
+    if (!preview && pdf.numPages > 50)
+      return { kind: 'failed', reason: 'pages' };
     if (pageNumber > pdf.numPages) return { kind: 'failed', reason: 'page' };
     if (pdf.isPureXfa) return { kind: 'failed', reason: 'unsupported' };
     const page = await pdf.getPage(pageNumber);
@@ -278,6 +316,11 @@ export async function recognizePdfPage(
       );
     });
     signal.throwIfAborted();
+    if (preview) {
+      const pages = pdf.numPages;
+      releasePdf();
+      return { kind: 'preview', blob: png, pages };
+    }
     const bytes = new Uint8Array(await png.arrayBuffer());
     signal.throwIfAborted();
     // No PDF parser/renderer remains while the single OCR engine initializes.

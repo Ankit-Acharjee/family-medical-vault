@@ -3,7 +3,7 @@ import {
   isExtractionReadResult,
   maximumExtractionRequestBytes,
 } from '@fmv/contracts';
-import type { ExtractionReadResult } from '@fmv/contracts';
+import type { DocumentMimeType, ExtractionReadResult } from '@fmv/contracts';
 import { Button } from '../../components/ui/button';
 import {
   Dialog,
@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '../../components/ui/dialog';
 import { PdfTextContent } from './PdfTextContent';
+import { OriginalComparison } from './OriginalComparison';
 import { ClinicalReviewPanel } from './ClinicalReviewPanel';
 import type { ClinicalDraft } from './clinicalReviewDraft';
 import { MetadataSuggestions } from './MetadataSuggestions';
@@ -21,6 +22,7 @@ import { extractionPath } from './savedExtraction';
 export type SavedTextSource = {
   kind: 'saved';
   patientName: string;
+  mime: DocumentMimeType;
   patientId: string;
   documentId: string;
   title: string;
@@ -220,6 +222,19 @@ export function SavedExtractionDialog({
                 {snapshot.downsized ? ' The source was downsized.' : ''}
               </p>
             )}
+            <OriginalComparison
+              key={`${snapshot.revision}:${snapshot.sourceSha256}`}
+              source={{
+                patientId: source.patientId,
+                documentId: source.documentId,
+                title: source.title,
+                bytes: source.bytes,
+                mime: source.mime,
+                sha256: snapshot.sourceSha256,
+              }}
+              onDenied={onDenied}
+              onReloadSource={retry}
+            />
             <MetadataSuggestions
               snapshot={snapshot}
               patientId={source.patientId}

@@ -62,3 +62,7 @@ The owner or users with both current scoped **edit** and **view** may save unver
 ## Approved clinical-verification authority — 14 November 2026
 
 Only the explicit Person owner may verify extracted clinical fields (laboratory values, diagnoses or medication fields). Scoped delegates may review unverified data under current View authority; Edit, View, Manage or their combination does not confer verification authority. Verification is an explicit source-linked action and never follows automatically from saving text or metadata.
+
+## Approved clinical-confirmation withdrawal — 15 November 2026
+
+Only the explicit Person owner may withdraw an incorrectly confirmed clinical entry, under current scoped View authority. Withdrawal must be explicit, retain prior confirmation/history and original source evidence, and exclude the withdrawn entry from future trusted use. Delegates cannot withdraw confirmations. This is a separate state transition, not erasure of historical records or a document-derived instruction.

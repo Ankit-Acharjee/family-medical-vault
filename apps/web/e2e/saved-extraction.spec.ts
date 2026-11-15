@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { createHash } from 'node:crypto';
 import { extractLabFields, suggestMetadata } from '@fmv/contracts';
 const patient = {
   id: 'saved-patient',
@@ -45,6 +46,33 @@ function pdf() {
   output += `xref\n0 6\n0000000000 65535 f \n${offsets.map((n) => `${String(n).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${at}\n%%EOF\n`;
   return Buffer.from(output);
 }
+function comparisonPdfPages() {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>',
+  ];
+  for (const label of [
+    'SYNTHETIC ORIGINAL PAGE ONE',
+    'SYNTHETIC ORIGINAL PAGE TWO',
+  ]) {
+    const contentId = objects.length + 2;
+    const stream = `BT /F1 18 Tf 72 700 Td (${label}) Tj ET`;
+    objects.push(
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 7 0 R >> >> /Contents ${contentId} 0 R >>`,
+      `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    );
+  }
+  objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+  let output = '%PDF-1.4\n';
+  const offsets = objects.map((o, i) => {
+    const at = Buffer.byteLength(output);
+    output += `${i + 1} 0 obj\n${o}\nendobj\n`;
+    return at;
+  });
+  const at = Buffer.byteLength(output);
+  output += `xref\n0 8\n0000000000 65535 f \n${offsets.map((n) => `${String(n).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size 8 /Root 1 0 R >>\nstartxref\n${at}\n%%EOF\n`;
+  return Buffer.from(output);
+}
 const local = (page: Page) =>
   page.getByRole('dialog', { name: 'Extracted text', exact: true });
 const saved = (page: Page) =>
@@ -62,8 +90,42 @@ async function setup(
     characterTruncated?: boolean;
     canVerify?: boolean;
     history?: boolean;
+    comparison?: 'pdf' | 'png' | 'pdf-pages';
   } = {},
 ) {
+  const pngFixture =
+    options.comparison === 'png'
+      ? await page.evaluate(() => {
+          const canvas = document.createElement('canvas');
+          canvas.width = 320;
+          canvas.height = 200;
+          const c = canvas.getContext('2d');
+          if (!c) throw Error('Synthetic canvas unavailable');
+          c.fillStyle = '#ffffff';
+          c.fillRect(0, 0, 320, 200);
+          c.fillStyle = '#0f1724';
+          c.font = 'bold 15px sans-serif';
+          c.fillText('SYNTHETIC ORIGINAL', 18, 30);
+          c.font = '11px sans-serif';
+          c.fillText('TEST FIXTURE — NOT A MEDICAL RECORD', 18, 52);
+          c.fillRect(18, 67, 284, 1);
+          c.font = '14px sans-serif';
+          c.fillText('Test: Synthetic analyte', 18, 100);
+          c.fillText('Result: <5.4', 18, 130);
+          c.fillText('Unit: synthetic/unit', 18, 160);
+          return canvas.toDataURL('image/png').split(',')[1]!;
+        })
+      : null;
+  const originalBytes = pngFixture
+    ? Buffer.from(pngFixture, 'base64')
+    : options.comparison === 'pdf-pages'
+      ? comparisonPdfPages()
+      : pdf();
+  const originalMime =
+    options.comparison === 'png' ? 'image/png' : 'application/pdf';
+  const sourceSha = options.comparison
+    ? createHash('sha256').update(originalBytes).digest('hex')
+    : 'a'.repeat(64);
   const canSave = options.canSave ?? true;
   let canView = options.canView ?? true,
     revision = 0,
@@ -72,6 +134,7 @@ async function setup(
     reads = 0,
     previews = 0;
   const clinicalWrites: string[] = [];
+  const ocrAssets: string[] = [];
   let clinicalLastRequest = '',
     clinicalLastBody = '';
   let clinicalRevision = 0,
@@ -83,10 +146,18 @@ async function setup(
     external: string[] = [];
   let snapshot: Record<string, unknown> | null = options.initial
     ? {
-        method: options.selectedPage ? 'pdf-page-ocr' : 'pdf-text',
-        engineVersion: options.selectedPage
-          ? 'pdfjs-6.5.438+tesseract-7.0.0+eng-1.0.0'
-          : 'pdfjs-6.5.438',
+        method:
+          options.comparison === 'png'
+            ? 'image-ocr'
+            : options.selectedPage
+              ? 'pdf-page-ocr'
+              : 'pdf-text',
+        engineVersion:
+          options.comparison === 'png'
+            ? 'tesseract-7.0.0+eng-1.0.0'
+            : options.selectedPage
+              ? 'pdfjs-6.5.438+tesseract-7.0.0+eng-1.0.0'
+              : 'pdfjs-6.5.438',
         pages: [
           {
             page: options.selectedPage ? 7 : 1,
@@ -100,7 +171,7 @@ async function setup(
             ? 'selected-page'
             : null,
         downsized: !!options.selectedPage,
-        sourceSha256: 'a'.repeat(64),
+        sourceSha256: sourceSha,
         revision: 1,
         savedAt: '2026-11-13T00:00:00.000Z',
         unverified: true,
@@ -116,7 +187,7 @@ async function setup(
       clinicalSets.set(n, {
         revision: n,
         sourceRevision: 1,
-        sourceSha256: 'a'.repeat(64),
+        sourceSha256: sourceSha,
         verifiedAt: '2026-11-15T00:00:00.000Z',
         ruleVersion: 'labeled-lab-blocks-v1',
         verified: true,
@@ -147,13 +218,14 @@ async function setup(
     release: () => void = () => {};
   const gate = new Promise<void>((r) => (release = r));
   const context = () => ({
-    sourceSha256: 'a'.repeat(64),
+    sourceSha256: sourceSha,
     lifecycleVersion: 0,
     revision,
     canSave,
   });
   page.on('request', (request) => {
     const url = new URL(request.url());
+    if (url.pathname.includes('/ocr-assets/')) ocrAssets.push(url.pathname);
     if (
       /^https?:$/.test(url.protocol) &&
       !['127.0.0.1', 'localhost'].includes(url.hostname)
@@ -177,14 +249,34 @@ async function setup(
   await page.route('**/api/patients/*/documents', (route) =>
     route.fulfill({
       json: {
-        documents: [{ ...record, canView, canEdit: canSave }],
+        documents: [
+          {
+            ...record,
+            ...(options.comparison
+              ? { bytes: originalBytes.length, mimeType: originalMime }
+              : {}),
+            canView,
+            canEdit: canSave,
+          },
+        ],
         storageReady: true,
       },
     }),
   );
-  await page.route('**/api/patients/*/documents/*/preview', (route) => {
+  await page.route('**/api/patients/*/documents/*/preview', async (route) => {
     previews++;
-    return route.fulfill({ contentType: 'application/pdf', body: pdf() });
+    if (mode === 'original-held') await gate;
+    if (mode === 'original-denied') return route.fulfill({ status: 403 });
+    if (mode === 'original-unavailable') return route.fulfill({ status: 503 });
+    const body = Buffer.from(originalBytes);
+    if (mode === 'original-mismatch')
+      body[body.length - 1] = body[body.length - 1]! ^ 1;
+    return route
+      .fulfill({
+        contentType: mode === 'original-type' ? 'text/html' : originalMime,
+        body,
+      })
+      .catch(() => {});
   });
   await page.route(
     '**/api/patients/*/documents/*/extraction/context',
@@ -239,7 +331,7 @@ async function setup(
       const currentSourceRevision = Number(snapshot?.revision ?? 0);
       const metadataContext = () => ({
         sourceRevision: currentSourceRevision,
-        sourceSha256: 'a'.repeat(64),
+        sourceSha256: sourceSha,
         lifecycleVersion: 0,
         revision: metadataRevision,
         canSave,
@@ -263,7 +355,7 @@ async function setup(
           metadataSnapshot = {
             revision: 1,
             sourceRevision: currentSourceRevision,
-            sourceSha256: 'a'.repeat(64),
+            sourceSha256: sourceSha,
             ruleVersion: 'explicit-lines-v1',
             suggestions: suggestMetadata(
               snapshot!.pages as { page: number; text: string }[],
@@ -303,7 +395,7 @@ async function setup(
       );
       const context = {
         sourceRevision: currentRevision,
-        sourceSha256: 'a'.repeat(64),
+        sourceSha256: sourceSha,
         lifecycleVersion: 0,
         revision: clinicalRevision,
         canVerify,
@@ -344,7 +436,7 @@ async function setup(
           clinicalSnapshot = {
             revision: clinicalRevision,
             sourceRevision: currentRevision,
-            sourceSha256: 'a'.repeat(64),
+            sourceSha256: sourceSha,
             verifiedAt: '2026-11-14T00:00:00.000Z',
             ruleVersion: 'labeled-lab-blocks-v1',
             extraction: {
@@ -386,7 +478,7 @@ async function setup(
         json: {
           context: {
             sourceRevision: Number(snapshot?.revision ?? 0),
-            sourceSha256: 'a'.repeat(64),
+            sourceSha256: sourceSha,
             lifecycleVersion: mode === 'history-stale' ? 1 : 0,
             revision: clinicalRevision,
             canVerify: options.canVerify ?? canSave,
@@ -414,6 +506,7 @@ async function setup(
     writes,
     metadataWrites,
     clinicalWrites,
+    ocrAssets,
     external,
     counts: () => ({ contexts, reads, previews }),
     mode: (next: string) => {
@@ -1715,4 +1808,404 @@ test('clinical history denial immediately clears all protected review content', 
   await expect(saved(page)).toHaveCount(0);
   await expect(action(page, 'Saved text')).toHaveCount(0);
   expect(api.clinicalWrites).toEqual([]);
+});
+
+async function trackOriginalUrls(page: Page) {
+  await page.addInitScript(() => {
+    const created: string[] = [],
+      revoked: string[] = [];
+    Object.assign(window, { syntheticOriginalUrls: { created, revoked } });
+    const create = URL.createObjectURL.bind(URL),
+      revoke = URL.revokeObjectURL.bind(URL);
+    URL.createObjectURL = (blob) => {
+      const url = create(blob);
+      created.push(url);
+      return url;
+    };
+    URL.revokeObjectURL = (url) => {
+      revoked.push(url);
+      revoke(url);
+    };
+  });
+}
+const comparison = (page: Page) =>
+  saved(page).getByRole('region', {
+    name: 'Original source comparison',
+    exact: true,
+  });
+
+test('original comparison explicitly validates source and preserves corrections while revoking closed URLs', async ({
+  page,
+}) => {
+  await trackOriginalUrls(page);
+  const api = await setup(page, {
+    initial: true,
+    metadataText: labText,
+    comparison: 'pdf',
+  });
+  const panel = await openClinical(page);
+  const draft = panel.getByRole('region', { name: 'Lab candidate 1' });
+  await draft
+    .getByRole('textbox', { name: 'Result as written', exact: true })
+    .fill('Synthetic draft');
+  await draft.getByRole('checkbox').check();
+  expect(api.counts().previews).toBe(0);
+  await comparison(page)
+    .getByRole('button', { name: 'Compare original', exact: true })
+    .click();
+  await expect(comparison(page)).toContainText('Original source matches');
+  const frame = comparison(page).getByRole('img', {
+    name: `Original PDF page 1: ${title}`,
+    exact: true,
+  });
+  await expect(frame).toBeVisible();
+  await expect
+    .poll(() => frame.evaluate((el) => (el as HTMLImageElement).naturalWidth))
+    .toBeGreaterThan(0);
+  await expect(comparison(page).locator('iframe')).toHaveCount(0);
+  expect(
+    await frame.evaluate((el) => {
+      const c = document.createElement('canvas');
+      c.width = 200;
+      c.height = 260;
+      const g = c.getContext('2d')!;
+      g.drawImage(el as HTMLImageElement, 0, 0, 200, 260);
+      const pixels = g.getImageData(0, 0, 200, 260).data;
+      for (let i = 0; i < pixels.length; i += 4)
+        if (pixels[i]! < 200 && pixels[i + 1]! < 200 && pixels[i + 2]! < 200)
+          return true;
+      return false;
+    }),
+  ).toBe(true);
+  const firstReads = api.counts().previews;
+  expect(firstReads).toBeGreaterThanOrEqual(1);
+  expect(firstReads).toBeLessThanOrEqual(2);
+  const url = await frame.getAttribute('src');
+  expect(url).toMatch(/^blob:/);
+  await comparison(page).scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: `../../.local/screenshots/original-comparison-pdf-${test.info().project.name}.png`,
+  });
+  await comparison(page)
+    .getByRole('button', { name: 'Hide original', exact: true })
+    .click();
+  await expect(frame).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () => Reflect.get(window, 'syntheticOriginalUrls').revoked,
+    ),
+  ).toContain(url);
+  await expect(
+    draft.getByRole('textbox', { name: 'Result as written', exact: true }),
+  ).toHaveValue('Synthetic draft');
+  await expect(draft.getByRole('checkbox')).toBeChecked();
+  await comparison(page)
+    .getByRole('button', { name: 'Compare original', exact: true })
+    .click();
+  await expect(comparison(page)).toContainText('Original source matches');
+  // Development StrictMode may start and abort an initial effect read.
+  await expect(frame).toBeVisible();
+  expect(api.counts().previews).toBeGreaterThan(firstReads);
+  expect(api.counts().previews).toBeLessThanOrEqual(firstReads + 2);
+  await page.keyboard.press('Escape');
+  await expect(action(page, 'Saved text')).toBeFocused();
+  const urls = await page.evaluate(() =>
+    Reflect.get(window, 'syntheticOriginalUrls'),
+  );
+  expect(urls.created).toHaveLength(2);
+  expect(
+    urls.created.every((value: string) => urls.revoked.includes(value)),
+  ).toBe(true);
+  expect(api.ocrAssets).toEqual([]);
+  expect(api.clinicalWrites).toEqual([]);
+  expect(api.external).toEqual([]);
+});
+
+test('original comparison failures never render mismatched source and permit recovery', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    metadataText: labText,
+    comparison: 'pdf',
+  });
+  await openClinical(page);
+  api.mode('original-unavailable');
+  await comparison(page)
+    .getByRole('button', { name: 'Compare original', exact: true })
+    .click();
+  await expect(comparison(page)).toContainText('could not be loaded');
+  api.mode('original-mismatch');
+  await comparison(page)
+    .getByRole('button', { name: 'Retry original comparison', exact: true })
+    .click();
+  await expect(comparison(page)).toContainText('does not match');
+  await expect(comparison(page).getByRole('img')).toHaveCount(0);
+  await expect(
+    comparison(page).getByRole('button', {
+      name: 'Reload saved source',
+      exact: true,
+    }),
+  ).toBeVisible();
+  await comparison(page)
+    .getByRole('button', { name: 'Hide original', exact: true })
+    .click();
+  api.mode('normal');
+  await comparison(page)
+    .getByRole('button', { name: 'Compare original', exact: true })
+    .click();
+  await expect(comparison(page)).toContainText('Original source matches');
+  expect(api.clinicalWrites).toEqual([]);
+});
+
+test('original comparison is cleared on access revalidation and denial without losing a valid draft', async ({
+  page,
+}) => {
+  await trackOriginalUrls(page);
+  const api = await setup(page, {
+    initial: true,
+    metadataText: labText,
+    comparison: 'pdf',
+  });
+  const panel = await openClinical(page);
+  const draft = panel.getByRole('textbox', {
+    name: 'Result as written',
+    exact: true,
+  });
+  await draft.fill('Synthetic retained draft');
+  await comparison(page)
+    .getByRole('button', { name: 'Compare original', exact: true })
+    .click();
+  await expect(comparison(page)).toContainText('Original source matches');
+  const firstReads = api.counts().previews;
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(comparison(page)).toHaveCount(0);
+  const urls = await page.evaluate(() =>
+    Reflect.get(window, 'syntheticOriginalUrls'),
+  );
+  expect(
+    urls.created.every((value: string) => urls.revoked.includes(value)),
+  ).toBe(true);
+  await expect(
+    saved(page).getByRole('button', { name: 'Retry saved text', exact: true }),
+  ).toBeEnabled();
+  await saved(page)
+    .getByRole('button', { name: 'Retry saved text', exact: true })
+    .click();
+  await panel.locator('summary').first().click();
+  await expect(draft).toHaveValue('Synthetic retained draft');
+  expect(api.counts().previews).toBe(firstReads);
+  api.mode('original-denied');
+  await comparison(page)
+    .getByRole('button', { name: 'Compare original', exact: true })
+    .click();
+  await expect(saved(page)).toHaveCount(0);
+  expect(api.clinicalWrites).toEqual([]);
+});
+
+for (const theme of ['light', 'dark'])
+  test(`${theme} original image comparison fits narrow and desktop review with accessible controls`, async ({
+    page,
+  }, info) => {
+    await page.setViewportSize({
+      width: info.project.name === 'mobile' ? 320 : 1440,
+      height: 1000,
+    });
+    await page.addInitScript(
+      (value) => localStorage.setItem('fmv.theme', value),
+      theme,
+    );
+    const api = await setup(page, {
+      initial: true,
+      metadataText: labText,
+      comparison: 'png',
+      canVerify: false,
+    });
+    await openClinical(page);
+    await comparison(page)
+      .getByRole('button', { name: 'Compare original', exact: true })
+      .click();
+    await expect(comparison(page)).toContainText('Original source matches');
+    const image = comparison(page).getByRole('img');
+    await expect(image).toBeVisible();
+    await expect
+      .poll(() => image.evaluate((el) => (el as HTMLImageElement).naturalWidth))
+      .toBeGreaterThan(0);
+    expect(
+      (await new AxeBuilder({ page }).include('[role="dialog"]').analyze())
+        .violations,
+    ).toEqual([]);
+    expect(
+      await saved(page).evaluate((el) => el.scrollWidth <= el.clientWidth),
+    ).toBe(true);
+    await comparison(page).scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `../../.local/screenshots/original-comparison-${theme}-${info.project.name}.png`,
+    });
+    expect(api.counts().previews).toBeGreaterThanOrEqual(1);
+    expect(api.counts().previews).toBeLessThanOrEqual(2);
+    expect(api.external).toEqual([]);
+    expect(api.clinicalWrites).toEqual([]);
+  });
+
+test('original comparison cancels a late read without rendering or replacing the clinical draft', async ({
+  page,
+}) => {
+  await trackOriginalUrls(page);
+  const api = await setup(page, {
+    initial: true,
+    metadataText: labText,
+    comparison: 'pdf',
+  });
+  const panel = await openClinical(page);
+  const field = panel.getByRole('textbox', {
+    name: 'Result as written',
+    exact: true,
+  });
+  await field.fill('Synthetic cancel-safe draft');
+  api.mode('original-held');
+  await comparison(page)
+    .getByRole('button', { name: 'Compare original', exact: true })
+    .click();
+  await expect(comparison(page)).toContainText('Loading original');
+  await comparison(page)
+    .getByRole('button', { name: 'Hide original', exact: true })
+    .click();
+  api.release();
+  await expect(comparison(page).getByRole('img')).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () => Reflect.get(window, 'syntheticOriginalUrls').created,
+    ),
+  ).toEqual([]);
+  await expect(field).toHaveValue('Synthetic cancel-safe draft');
+  api.mode('normal');
+  await comparison(page)
+    .getByRole('button', { name: 'Compare original', exact: true })
+    .click();
+  await expect(comparison(page)).toContainText('Original source matches');
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => Reflect.get(window, 'syntheticOriginalUrls').created.length,
+      ),
+    )
+    .toBe(1);
+  expect(api.clinicalWrites).toEqual([]);
+});
+
+test('original comparison does not modify an uncertain verification request', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    metadataText: labText,
+    comparison: 'pdf',
+  });
+  const panel = await openClinical(page);
+  await panel
+    .getByRole('button', { name: 'Select all entries', exact: true })
+    .click();
+  await panel
+    .getByRole('checkbox', {
+      name: 'I checked all selected values and units against the original document.',
+    })
+    .check();
+  api.mode('clinical-uncommitted');
+  await panel
+    .getByRole('button', { name: 'Verify selected lab fields', exact: true })
+    .click();
+  await expect(panel).toContainText('Verification could not be confirmed');
+  await comparison(page)
+    .getByRole('button', { name: 'Compare original', exact: true })
+    .click();
+  await expect(comparison(page)).toContainText('Original source matches');
+  await expect(
+    panel.getByRole('textbox', { name: 'Result as written', exact: true }),
+  ).toBeDisabled();
+  api.mode('normal');
+  await panel
+    .getByRole('button', { name: 'Retry verification', exact: true })
+    .click();
+  await expect(panel).toContainText('Selected fields verified');
+  expect(api.clinicalWrites).toHaveLength(2);
+  expect(api.clinicalWrites[0]).toBe(api.clinicalWrites[1]);
+});
+
+test('original comparison renders distinct PDF pages and zooms locally without reloading source', async ({
+  page,
+}) => {
+  await trackOriginalUrls(page);
+  const api = await setup(page, {
+    initial: true,
+    metadataText: labText,
+    comparison: 'pdf-pages',
+  });
+  await openClinical(page);
+  await comparison(page)
+    .getByRole('button', { name: 'Compare original', exact: true })
+    .click();
+  const pages = comparison(page).getByRole('region', {
+    name: 'Original PDF pages',
+    exact: true,
+  });
+  const first = pages.getByRole('img', {
+    name: `Original PDF page 1: ${title}`,
+    exact: true,
+  });
+  await expect(first).toBeVisible();
+  await expect
+    .poll(() => first.evaluate((el) => (el as HTMLImageElement).naturalWidth))
+    .toBeGreaterThan(0);
+  const firstUrl = await first.getAttribute('src'),
+    reads = api.counts().previews;
+  const raster = async () =>
+    pages.getByRole('img').evaluate((el) => {
+      const c = document.createElement('canvas');
+      c.width = 200;
+      c.height = 260;
+      c.getContext('2d')!.drawImage(el as HTMLImageElement, 0, 0, 200, 260);
+      return c.toDataURL();
+    });
+  const firstRaster = await raster();
+  await pages
+    .getByRole('button', { name: 'Next PDF page', exact: true })
+    .click();
+  const second = pages.getByRole('img', {
+    name: `Original PDF page 2: ${title}`,
+    exact: true,
+  });
+  await expect(second).toBeVisible();
+  await expect
+    .poll(() => second.evaluate((el) => (el as HTMLImageElement).naturalWidth))
+    .toBeGreaterThan(0);
+  expect(await raster()).not.toBe(firstRaster);
+  expect(
+    await page.evaluate(
+      () => Reflect.get(window, 'syntheticOriginalUrls').revoked,
+    ),
+  ).toContain(firstUrl);
+  await pages.getByRole('button', { name: 'Zoom page', exact: true }).click();
+  await expect(
+    pages.getByRole('button', { name: 'Fit page', exact: true }),
+  ).toHaveAttribute('aria-pressed', 'true');
+  const viewport = pages.getByRole('region', {
+    name: 'Original PDF page view',
+    exact: true,
+  });
+  expect(await viewport.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
+    true,
+  );
+  expect(
+    await saved(page).evaluate((el) => el.scrollWidth <= el.clientWidth),
+  ).toBe(true);
+  await pages.getByRole('button', { name: 'Fit page', exact: true }).click();
+  await pages
+    .getByRole('combobox', { name: 'Original PDF page', exact: true })
+    .selectOption('1');
+  await expect(first).toBeVisible();
+  expect(api.counts().previews).toBe(reads);
+  expect(api.ocrAssets).toEqual([]);
+  expect(api.clinicalWrites).toEqual([]);
+  expect(api.external).toEqual([]);
 });

@@ -836,6 +836,7 @@ export function DocumentsPanel({
                         extractionTrigger.current = event.currentTarget;
                         setExtraction({
                           kind: 'saved',
+                          mime: doc.mimeType,
                           patientName: displayPatient.displayName,
                           patientId: patientId!,
                           documentId: doc.id,

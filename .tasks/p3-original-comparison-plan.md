@@ -1,0 +1,11 @@
+# P3 compare original during clinical review
+
+Status: implemented and verified; see `.tasks/p3-original-comparison-report.md`.
+
+- AI-03/AI-05 and screen-spec processing/verification: explicitly open the original source inside the existing saved-text dialog without dismissing clinical drafts or creating nested dialogs. No automatic original fetch or verification.
+- Reuse the existing authorized preview endpoint, MIME allowlist, byte limits and bounded PDF raster-rendering pipeline. Bound actual streamed bytes, require recorded length/type and SHA-256 to match the displayed saved extraction, and create only a local object URL after validation.
+- Keep optional original loading/error/retry independent of review/text. Revoke object URLs and abort on close, source/context change or access revalidation; denial clears protected review. Do not introduce download/export affordances under View-only access.
+- Root owns protected byte handling and integration. Delegate only a generic source-free lifecycle/validation invariant review to sandboxed GLM. No new dependencies, backend/schema/global/Overview changes or external processing.
+- Verify explicit fetch, length/type/hash mismatch, oversized/stream failure, cancellation/retry, URL cleanup, permission denial, draft/exact-retry preservation, no external writes/requests, both themes, mobile and keyboard/focus. Commit/push after checks; withdrawal-policy question remains pending while independent comparison work proceeds.
+
+Actual browser inspection found the sandboxed native PDF iframe blank/blocked on mobile despite DOM-only checks passing. The implementation now reuses the existing hardened PDF.js parser/renderer worker pipeline without starting OCR: one bounded page raster at a time, no annotations/scripts/external assets, first-50-page selector and local zoom. The existing selected-page OCR entry point keeps its original 10 MiB and page/worker/error guards; preview permits the upload byte limit. Add actual nonblank raster, multipage/zoom/cleanup tests and OCR regressions before pushing. Context7 tools were unavailable; only the public official PDF.js examples were consulted, with pinned worker settings preserved and verified locally.
