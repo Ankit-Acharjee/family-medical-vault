@@ -1,4 +1,14 @@
 import type {
+  DiagnosisReviewResult,
+  DiagnosisHistoryResult,
+  SaveDiagnosisReview,
+  WithdrawDiagnosisReview,
+} from '@fmv/contracts';
+import {
+  readDiagnosisReview,
+  writeDiagnosisReview,
+} from './diagnosis-review.store.js';
+import type {
   ClinicalReviewResult,
   ClinicalHistoryResult,
   SaveClinicalReview,
@@ -62,6 +72,19 @@ export type SearchAuthorization = (
 
 export type TrashChangeResult = 'changed' | 'unchanged' | 'missing' | 'expired';
 export abstract class DocumentStore {
+  abstract readDiagnosisReview(
+    p: string,
+    d: string,
+    authorize: ClinicalAuthorization,
+    before?: number,
+  ): Promise<DiagnosisReviewResult | DiagnosisHistoryResult | null>;
+  abstract writeDiagnosisReview(
+    p: string,
+    d: string,
+    input: SaveDiagnosisReview | WithdrawDiagnosisReview,
+    action: 'confirmation' | 'withdrawal',
+    authorize: ClinicalAuthorization,
+  ): Promise<{ saved: true; revision: number } | 'missing' | 'conflict'>;
   abstract withdrawClinicalReview(
     p: string,
     d: string,
@@ -188,6 +211,25 @@ export class PrismaDocumentStore
       }),
       log: [],
     });
+  }
+  readDiagnosisReview(
+    p: string,
+    d: string,
+    authorize: ClinicalAuthorization,
+    before?: number,
+  ) {
+    return before === undefined
+      ? readDiagnosisReview(this.db, p, d, authorize)
+      : readDiagnosisReview(this.db, p, d, authorize, before);
+  }
+  writeDiagnosisReview(
+    p: string,
+    d: string,
+    input: SaveDiagnosisReview | WithdrawDiagnosisReview,
+    action: 'confirmation' | 'withdrawal',
+    authorize: ClinicalAuthorization,
+  ) {
+    return writeDiagnosisReview(this.db, p, d, input, action, authorize);
   }
   readClinicalHistory(
     p: string,

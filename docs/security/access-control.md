@@ -66,3 +66,7 @@ Only the explicit Person owner may verify extracted clinical fields (laboratory 
 ## Approved clinical-confirmation withdrawal — 15 November 2026
 
 Only the explicit Person owner may withdraw an incorrectly confirmed clinical entry, under current scoped View authority. Withdrawal must be explicit, retain prior confirmation/history and original source evidence, and exclude the withdrawn entry from future trusted use. Delegates cannot withdraw confirmations. This is a separate state transition, not erasure of historical records or a document-derived instruction.
+
+## Approved diagnosis-confirmation meaning — 15 November 2026
+
+Diagnosis confirmation attests the source statement as written, preserving negation, uncertainty, history and references to another person. It does not establish a current patient diagnosis, disease status or clinical code. Current explicit Person-owner authority and source-linked verification are still required; delegates cannot confirm. Confirmed source statements remain distinct from patient condition lists and from unverified extraction. Withdrawal preserves history under the existing approved policy.

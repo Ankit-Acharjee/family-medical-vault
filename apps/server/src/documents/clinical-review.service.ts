@@ -18,7 +18,7 @@ export class ClinicalReviewService {
     private readonly permissions: PermissionService,
     private readonly store: DocumentStore,
   ) {}
-  private authorize(
+  authorize(
     principal: Principal,
     p: string,
     d: string,

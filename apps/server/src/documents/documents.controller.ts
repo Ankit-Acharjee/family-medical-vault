@@ -48,6 +48,59 @@ export class DocumentsController {
       throw e;
     }
   }
+  @Get('documents/:documentId/diagnosis-review')
+  async diagnosisReview(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+  ) {
+    return this.documents.diagnosis.read(await this.principal(req), p, d);
+  }
+  @Get('documents/:documentId/diagnosis-review/history')
+  async diagnosisHistory(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+    @Query('beforeRevision') cursor: unknown,
+  ) {
+    return this.documents.diagnosis.history(
+      await this.principal(req),
+      p,
+      d,
+      cursor,
+    );
+  }
+  @Put('documents/:documentId/diagnosis-review')
+  async confirmDiagnosis(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+    @Body() input: unknown,
+  ) {
+    return this.documents.diagnosis.write(
+      await this.principal(req),
+      p,
+      d,
+      input,
+      'confirmation',
+    );
+  }
+  @Post('documents/:documentId/diagnosis-review/withdraw')
+  @HttpCode(200)
+  async withdrawDiagnosis(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+    @Body() input: unknown,
+  ) {
+    return this.documents.diagnosis.write(
+      await this.principal(req),
+      p,
+      d,
+      input,
+      'withdrawal',
+    );
+  }
   @Post('documents/:documentId/clinical-review/withdraw')
   @HttpCode(200)
   async withdrawClinical(

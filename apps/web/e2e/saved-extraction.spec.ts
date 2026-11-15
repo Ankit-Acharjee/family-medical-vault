@@ -1,7 +1,13 @@
 import { test, expect, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { createHash } from 'node:crypto';
-import { extractLabFields, suggestMetadata } from '@fmv/contracts';
+import {
+  extractLabFields,
+  extractDiagnosisFields,
+  isSaveDiagnosisReview,
+  isWithdrawDiagnosisReview,
+  suggestMetadata,
+} from '@fmv/contracts';
 const patient = {
   id: 'saved-patient',
   displayName: 'Saved Fixture Patient',
@@ -133,6 +139,13 @@ async function setup(
     contexts = 0,
     reads = 0,
     previews = 0;
+  const diagnosisWrites: { body: string; operation: string }[] = [];
+  let diagnosisRevision = 0,
+    diagnosisSnapshot: Record<string, unknown> | null = null,
+    diagnosisLastBody = '',
+    diagnosisLastOp = '',
+    diagnosisUncertain = false;
+  const diagnosisSets = new Map<number, Record<string, unknown>>();
   const clinicalWrites: string[] = [];
   const withdrawWrites: string[] = [];
   let withdrawLastRequest = '',
@@ -563,6 +576,156 @@ async function setup(
       });
     },
   );
+  const diagnosisContext = () => ({
+    sourceRevision: Number(snapshot?.revision ?? 0),
+    sourceSha256: sourceSha,
+    lifecycleVersion: 0,
+    revision: diagnosisRevision,
+    canVerify: options.canVerify ?? canSave,
+  });
+  await page.route(
+    '**/api/patients/*/documents/*/diagnosis-review',
+    async (route) => {
+      const context = diagnosisContext();
+      if (mode === 'diagnosis-denied') return route.fulfill({ status: 404 });
+      if (route.request().method() === 'GET') {
+        if (mode === 'diagnosis-read-failed')
+          return route.fulfill({ status: 503 });
+        return route.fulfill({
+          json: {
+            context,
+            candidates: snapshot
+              ? extractDiagnosisFields(
+                  snapshot.pages as { page: number; text: string }[],
+                  {
+                    truncatedFinalLine: snapshot.partialReason === 'characters',
+                  },
+                )
+              : [],
+            snapshot: diagnosisSnapshot,
+          },
+        });
+      }
+      const raw = route.request().postData()!;
+      diagnosisWrites.push({ body: raw, operation: 'confirmation' });
+      const input = JSON.parse(raw);
+      if (!isSaveDiagnosisReview(input)) return route.fulfill({ status: 400 });
+      if (mode === 'diagnosis-conflict') return route.fulfill({ status: 409 });
+      if (mode === 'diagnosis-uncommitted') return route.abort('failed');
+      if (raw !== diagnosisLastBody || diagnosisLastOp !== 'confirmation') {
+        if (
+          input.expectedRevision !== diagnosisRevision ||
+          input.sourceRevision !== context.sourceRevision ||
+          !snapshot
+        )
+          return route.fulfill({ status: 409 });
+        const candidates = extractDiagnosisFields(
+            snapshot.pages as { page: number; text: string }[],
+            { truncatedFinalLine: snapshot.partialReason === 'characters' },
+          ),
+          active = new Map<string, (typeof candidates)[number]>();
+        if (diagnosisSnapshot?.sourceRevision === context.sourceRevision)
+          for (const c of diagnosisSnapshot.statements as typeof candidates)
+            active.set(c.id, c);
+        for (const c of candidates)
+          if (input.candidateIds.includes(c.id)) active.set(c.id, c);
+        diagnosisRevision++;
+        diagnosisSnapshot = {
+          revision: diagnosisRevision,
+          sourceRevision: context.sourceRevision,
+          sourceSha256: sourceSha,
+          confirmedAt: '2026-11-15T00:00:00.000Z',
+          action: 'confirmation',
+          meaning: 'source-statement-only',
+          ruleVersion: 'explicit-diagnosis-lines-v1',
+          extraction: {
+            method: snapshot.method,
+            engineVersion: snapshot.engineVersion,
+            partial: snapshot.partial,
+            partialReason: snapshot.partialReason,
+            downsized: snapshot.downsized,
+          },
+          statements: [...active.values()],
+          withdrawnStatements: [],
+        };
+        diagnosisSets.set(diagnosisRevision, diagnosisSnapshot);
+        diagnosisLastBody = raw;
+        diagnosisLastOp = 'confirmation';
+      }
+      if (mode === 'diagnosis-uncertain' && !diagnosisUncertain) {
+        diagnosisUncertain = true;
+        return route.abort('failed');
+      }
+      return route.fulfill({
+        json: { saved: true, revision: diagnosisRevision },
+      });
+    },
+  );
+  await page.route(
+    '**/api/patients/*/documents/*/diagnosis-review/withdraw',
+    async (route) => {
+      const raw = route.request().postData()!;
+      diagnosisWrites.push({ body: raw, operation: 'withdrawal' });
+      if (mode === 'diagnosis-denied') return route.fulfill({ status: 404 });
+      const input = JSON.parse(raw);
+      if (!isWithdrawDiagnosisReview(input))
+        return route.fulfill({ status: 400 });
+      if (mode === 'diagnosis-conflict') return route.fulfill({ status: 409 });
+      if (mode === 'diagnosis-uncommitted') return route.abort('failed');
+      if (raw !== diagnosisLastBody || diagnosisLastOp !== 'withdrawal') {
+        if (!diagnosisSnapshot || input.expectedRevision !== diagnosisRevision)
+          return route.fulfill({ status: 409 });
+        const active = diagnosisSnapshot.statements as { id: string }[];
+        diagnosisRevision++;
+        diagnosisSnapshot = {
+          ...diagnosisSnapshot,
+          revision: diagnosisRevision,
+          action: 'withdrawal',
+          statements: active.filter((c) => !input.candidateIds.includes(c.id)),
+          withdrawnStatements: active.filter((c) =>
+            input.candidateIds.includes(c.id),
+          ),
+        };
+        diagnosisSets.set(diagnosisRevision, diagnosisSnapshot);
+        diagnosisLastBody = raw;
+        diagnosisLastOp = 'withdrawal';
+      }
+      if (mode === 'diagnosis-uncertain' && !diagnosisUncertain) {
+        diagnosisUncertain = true;
+        return route.abort('failed');
+      }
+      return route.fulfill({
+        json: { saved: true, revision: diagnosisRevision },
+      });
+    },
+  );
+  await page.route(
+    '**/api/patients/*/documents/*/diagnosis-review/history?*',
+    async (route) => {
+      if (mode === 'diagnosis-history-failed')
+        return route.fulfill({ status: 503 });
+      if (mode === 'diagnosis-denied') return route.fulfill({ status: 404 });
+      const before = Number(
+          new URL(route.request().url()).searchParams.get('beforeRevision'),
+        ),
+        keys = [...diagnosisSets.keys()]
+          .filter((n) => n < before)
+          .sort((a, b) => b - a),
+        found = keys[0];
+      return route.fulfill({
+        json: {
+          context: {
+            ...diagnosisContext(),
+            ...(mode === 'diagnosis-history-conflict'
+              ? { revision: diagnosisRevision + 1 }
+              : {}),
+          },
+          snapshot: found ? diagnosisSets.get(found) : null,
+          nextBefore: found && keys.length > 1 ? found : null,
+        },
+      });
+    },
+  );
   await page.goto('/#documents');
   await page
     .getByRole('button', { name: 'Select patient: No patient selected' })
@@ -575,6 +738,7 @@ async function setup(
     writes,
     metadataWrites,
     clinicalWrites,
+    diagnosisWrites,
     withdrawWrites,
     ocrAssets,
     external,
@@ -2729,3 +2893,413 @@ for (const theme of ['light', 'dark'] as const)
       path: `../../.local/screenshots/diagnosis-source-${theme}-${mobile ? 'mobile' : 'desktop'}.png`,
     });
   });
+
+async function openDiagnosis(page: Page) {
+  if (
+    (await diagnoses(page).locator('details').first().getAttribute('open')) ===
+    null
+  )
+    await diagnoses(page)
+      .getByText('Diagnosis text · Unverified', { exact: true })
+      .click();
+}
+async function attestDiagnosis(page: Page) {
+  await diagnoses(page)
+    .getByRole('checkbox', { name: /I checked the selected statements/ })
+    .check();
+}
+async function confirmFirstDiagnosis(page: Page) {
+  await openDiagnosis(page);
+  await expect(diagnoses(page)).toContainText('Patient: Saved Fixture Patient');
+  await diagnoses(page)
+    .getByRole('checkbox', { name: /Select diagnosis source statement/ })
+    .first()
+    .check();
+  await attestDiagnosis(page);
+  await diagnoses(page)
+    .getByRole('button', {
+      name: 'Confirm selected source statements',
+      exact: true,
+    })
+    .click();
+  await expect(saved(page)).toContainText('Source statements confirmed.');
+  await openDiagnosis(page);
+}
+test('diagnosis confirmation preserves wording, merges selections, withdraws with history and never resurrects implicitly', async ({
+  page,
+}) => {
+  const api = await setup(page, { initial: true, metadataText: diagnosisText });
+  await action(page, 'Saved text').click();
+  await confirmFirstDiagnosis(page);
+  const confirmed = () =>
+      diagnoses(page).getByRole('region', {
+        name: 'Owner-confirmed diagnosis source statements',
+      }),
+    w = () =>
+      diagnoses(page).getByRole('region', {
+        name: 'Withdraw diagnosis source confirmations',
+      });
+  await expect(confirmed()).toContainText('Diagnosis: No SYNTHETIC condition');
+  await expect(confirmed()).toContainText(
+    'does not establish a current patient diagnosis',
+  );
+  await expect(
+    diagnoses(page)
+      .getByRole('checkbox', { name: /Select diagnosis source statement/ })
+      .first(),
+  ).not.toBeChecked();
+  await diagnoses(page)
+    .getByRole('checkbox', { name: /Select diagnosis source statement/ })
+    .nth(1)
+    .check();
+  await attestDiagnosis(page);
+  await diagnoses(page)
+    .getByRole('button', {
+      name: 'Confirm selected source statements',
+      exact: true,
+    })
+    .click();
+  await expect(saved(page)).toContainText('Source statements confirmed.');
+  await openDiagnosis(page);
+  await expect(confirmed().locator('blockquote')).toHaveCount(2);
+  await w()
+    .getByRole('checkbox', {
+      name: 'Withdraw diagnosis source confirmation 1',
+      exact: true,
+    })
+    .check();
+  await w()
+    .getByRole('checkbox', { name: /I want to withdraw/ })
+    .check();
+  await w()
+    .getByRole('button', {
+      name: 'Withdraw selected source confirmations',
+      exact: true,
+    })
+    .click();
+  await expect(saved(page)).toContainText('Source confirmations withdrawn.');
+  await openDiagnosis(page);
+  await expect(confirmed()).toContainText('Withdrawn source statement');
+  await diagnoses(page)
+    .getByRole('checkbox', { name: /Select diagnosis source statement/ })
+    .nth(1)
+    .check();
+  await attestDiagnosis(page);
+  await diagnoses(page)
+    .getByRole('button', {
+      name: 'Confirm selected source statements',
+      exact: true,
+    })
+    .click();
+  await expect(saved(page)).toContainText('Source statements confirmed.');
+  await openDiagnosis(page);
+  await expect(confirmed().locator('blockquote')).toHaveCount(1);
+  await expect(confirmed()).not.toContainText('No SYNTHETIC condition');
+  await w()
+    .getByRole('checkbox', {
+      name: 'Withdraw diagnosis source confirmation 1',
+      exact: true,
+    })
+    .check();
+  await w()
+    .getByRole('checkbox', { name: /I want to withdraw/ })
+    .check();
+  await w()
+    .getByRole('button', {
+      name: 'Withdraw selected source confirmations',
+      exact: true,
+    })
+    .click();
+  await expect(saved(page)).toContainText('Source confirmations withdrawn.');
+  await openDiagnosis(page);
+  await expect(confirmed()).toContainText(
+    'No active confirmed source statements.',
+  );
+  await diagnoses(page)
+    .getByRole('button', {
+      name: 'View earlier source confirmations',
+      exact: true,
+    })
+    .click();
+  await expect(
+    diagnoses(page).getByRole('region', {
+      name: 'Diagnosis confirmation history',
+    }),
+  ).toContainText('Possible SYNTHETIC condition?');
+  expect(api.diagnosisWrites).toHaveLength(5);
+  for (const q of api.diagnosisWrites) {
+    expect(JSON.parse(q.body).meaning).toBe('source-statement-only');
+    expect(q.body).not.toContain('SYNTHETIC condition');
+  }
+  expect(api.clinicalWrites).toEqual([]);
+  expect(api.external).toEqual([]);
+});
+test('diagnosis uncertain confirmation preserves exact body through same-context access revalidation', async ({
+  page,
+}) => {
+  const api = await setup(page, { initial: true, metadataText: diagnosisText });
+  await action(page, 'Saved text').click();
+  await openDiagnosis(page);
+  await diagnoses(page)
+    .getByRole('checkbox', { name: /Select diagnosis source statement/ })
+    .first()
+    .check();
+  await attestDiagnosis(page);
+  api.mode('diagnosis-uncommitted');
+  await diagnoses(page)
+    .getByRole('button', {
+      name: 'Confirm selected source statements',
+      exact: true,
+    })
+    .click();
+  await expect(
+    diagnoses(page).getByRole('button', {
+      name: 'Retry source confirmation',
+      exact: true,
+    }),
+  ).toBeEnabled();
+  const captured = api.diagnosisWrites[0];
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await saved(page)
+    .getByRole('button', { name: 'Retry saved text', exact: true })
+    .click();
+  await expect(diagnoses(page)).toBeVisible();
+  await openDiagnosis(page);
+  api.mode('normal');
+  await diagnoses(page)
+    .getByRole('button', { name: 'Retry source confirmation', exact: true })
+    .click();
+  await expect(saved(page)).toContainText('Source statements confirmed.');
+  expect(api.diagnosisWrites).toEqual([captured, captured]);
+});
+test('diagnosis committed withdrawal retries only its captured operation and denied writes clear context', async ({
+  page,
+}) => {
+  const api = await setup(page, { initial: true, metadataText: diagnosisText });
+  await action(page, 'Saved text').click();
+  await confirmFirstDiagnosis(page);
+  const w = diagnoses(page).getByRole('region', {
+    name: 'Withdraw diagnosis source confirmations',
+  });
+  await w
+    .getByRole('checkbox', {
+      name: 'Withdraw diagnosis source confirmation 1',
+      exact: true,
+    })
+    .check();
+  await w.getByRole('checkbox', { name: /I want to withdraw/ }).check();
+  api.mode('diagnosis-uncertain');
+  await w
+    .getByRole('button', {
+      name: 'Withdraw selected source confirmations',
+      exact: true,
+    })
+    .click();
+  await expect(
+    w.getByRole('button', { name: 'Retry source withdrawal', exact: true }),
+  ).toBeEnabled();
+  await expect(
+    diagnoses(page).getByRole('button', {
+      name: 'Confirm selected source statements',
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await w
+    .getByRole('button', { name: 'Retry source withdrawal', exact: true })
+    .click();
+  await expect(saved(page)).toContainText('Source confirmations withdrawn.');
+  expect(api.diagnosisWrites[1]).toEqual(api.diagnosisWrites[2]);
+  await openDiagnosis(page);
+  await diagnoses(page)
+    .getByRole('checkbox', { name: /Select diagnosis source statement/ })
+    .first()
+    .check();
+  await attestDiagnosis(page);
+  api.mode('diagnosis-denied');
+  await diagnoses(page)
+    .getByRole('button', {
+      name: 'Confirm selected source statements',
+      exact: true,
+    })
+    .click();
+  await expect(saved(page)).toHaveCount(0);
+});
+test('diagnosis source conflict requires explicit reload and changed source discards selections', async ({
+  page,
+}) => {
+  const api = await setup(page, { initial: true, metadataText: diagnosisText });
+  await action(page, 'Saved text').click();
+  await openDiagnosis(page);
+  await diagnoses(page)
+    .getByRole('checkbox', { name: /Select diagnosis source statement/ })
+    .first()
+    .check();
+  await attestDiagnosis(page);
+  api.mode('diagnosis-conflict');
+  await diagnoses(page)
+    .getByRole('button', {
+      name: 'Confirm selected source statements',
+      exact: true,
+    })
+    .click();
+  await expect(diagnoses(page)).toContainText(
+    'Reload saved text before confirming',
+  );
+  expect(api.diagnosisWrites).toHaveLength(1);
+  api.mode('normal');
+  await diagnoses(page)
+    .getByRole('button', { name: 'Reload saved text', exact: true })
+    .click();
+  await openDiagnosis(page);
+  await expect(
+    diagnoses(page)
+      .getByRole('checkbox', { name: /Select diagnosis source statement/ })
+      .first(),
+  ).not.toBeChecked();
+  await diagnoses(page)
+    .getByRole('checkbox', { name: /Select diagnosis source statement/ })
+    .first()
+    .check();
+  await attestDiagnosis(page);
+  api.advanceSource();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await saved(page)
+    .getByRole('button', { name: 'Retry saved text', exact: true })
+    .click();
+  await expect(diagnoses(page)).toBeVisible();
+  await openDiagnosis(page);
+  await expect(
+    diagnoses(page)
+      .getByRole('checkbox', { name: /Select diagnosis source statement/ })
+      .first(),
+  ).not.toBeChecked();
+  await expect(
+    diagnoses(page).getByRole('checkbox', {
+      name: /I checked the selected statements/,
+    }),
+  ).not.toBeChecked();
+});
+for (const theme of ['light', 'dark'] as const)
+  test(`${theme} diagnosis confirmation controls remain accessible at narrow and desktop widths`, async ({
+    page,
+  }, info) => {
+    await page.setViewportSize({
+      width: info.project.name === 'mobile' ? 320 : 1440,
+      height: 1000,
+    });
+    await page.addInitScript(
+      (value) => localStorage.setItem('fmv.theme', value),
+      theme,
+    );
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await setup(page, { initial: true, metadataText: diagnosisText });
+    await action(page, 'Saved text').click();
+    await confirmFirstDiagnosis(page);
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    const w = diagnoses(page).getByRole('region', {
+      name: 'Withdraw diagnosis source confirmations',
+    });
+    await w
+      .getByRole('checkbox', {
+        name: 'Withdraw diagnosis source confirmation 1',
+        exact: true,
+      })
+      .check();
+    await w.getByRole('checkbox', { name: /I want to withdraw/ }).check();
+    await w
+      .getByRole('button', {
+        name: 'Withdraw selected source confirmations',
+        exact: true,
+      })
+      .focus();
+    await expect(w.getByRole('button')).toBeFocused();
+    expect(
+      (await new AxeBuilder({ page }).include('[role="dialog"]').analyze())
+        .violations,
+    ).toEqual([]);
+    expect(
+      await saved(page).evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
+    ).toBe(true);
+    await w.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `../../.local/screenshots/diagnosis-review-${theme}-${info.project.name}.png`,
+    });
+  });
+test('diagnosis history recovers independently, preserves selection and rejects stale or denied context', async ({
+  page,
+}) => {
+  const api = await setup(page, { initial: true, metadataText: diagnosisText });
+  await action(page, 'Saved text').click();
+  await confirmFirstDiagnosis(page);
+  await diagnoses(page)
+    .getByRole('checkbox', { name: /Select diagnosis source statement/ })
+    .first()
+    .check();
+  await attestDiagnosis(page);
+  await diagnoses(page)
+    .getByRole('button', {
+      name: 'Confirm selected source statements',
+      exact: true,
+    })
+    .click();
+  await expect(saved(page)).toContainText('Source statements confirmed.');
+  await openDiagnosis(page);
+  await diagnoses(page)
+    .getByRole('checkbox', { name: /Select diagnosis source statement/ })
+    .nth(1)
+    .check();
+  api.mode('diagnosis-history-failed');
+  await diagnoses(page)
+    .getByRole('button', {
+      name: 'View earlier source confirmations',
+      exact: true,
+    })
+    .click();
+  await expect(diagnoses(page)).toContainText(
+    'Source confirmation history could not be loaded.',
+  );
+  api.mode('normal');
+  await diagnoses(page)
+    .getByRole('button', {
+      name: 'Retry source confirmation history',
+      exact: true,
+    })
+    .click();
+  await expect(
+    diagnoses(page).getByRole('region', {
+      name: 'Diagnosis confirmation history',
+    }),
+  ).toContainText('Diagnosis: No SYNTHETIC condition');
+  await expect(
+    diagnoses(page)
+      .getByRole('checkbox', { name: /Select diagnosis source statement/ })
+      .nth(1),
+  ).toBeChecked();
+  await page.keyboard.press('Escape');
+  await action(page, 'Saved text').click();
+  await openDiagnosis(page);
+  api.mode('diagnosis-history-conflict');
+  await diagnoses(page)
+    .getByRole('button', {
+      name: 'View earlier source confirmations',
+      exact: true,
+    })
+    .click();
+  const h = diagnoses(page).getByRole('region', {
+    name: 'Diagnosis confirmation history',
+  });
+  await expect(h).toContainText('The source or confirmation changed.');
+  api.mode('normal');
+  await h
+    .getByRole('button', { name: 'Reload saved text', exact: true })
+    .click();
+  await openDiagnosis(page);
+  api.mode('diagnosis-denied');
+  await diagnoses(page)
+    .getByRole('button', {
+      name: 'View earlier source confirmations',
+      exact: true,
+    })
+    .click();
+  await expect(saved(page)).toHaveCount(0);
+});

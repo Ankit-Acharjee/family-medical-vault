@@ -1,3 +1,4 @@
+import { verifyDiagnosisStatements } from './diagnosis-review-database.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID, createHash } from 'node:crypto';
 import { Buffer } from 'node:buffer';
@@ -663,6 +664,21 @@ export async function verifyClinicalReview(runtimeUrl, owner, insertGrant) {
       )
     ).rows[0];
     assert.deepEqual(privileges, { action: false, withdrawn: false });
+    await verifyDiagnosisStatements({
+      service,
+      otherService,
+      store,
+      runtime,
+      owner,
+      principal,
+      reader,
+      patient,
+      id,
+      extraction,
+      insertGrant,
+      ownerAccountId,
+      readerAccountId,
+    });
     assert.deepEqual(await immutable(), original);
     assert.deepEqual(
       (await intake.read(patient.id, id, 'view', authorize)).bytes,

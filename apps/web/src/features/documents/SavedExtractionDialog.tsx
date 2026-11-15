@@ -17,7 +17,8 @@ import { OriginalComparison } from './OriginalComparison';
 import { ClinicalReviewPanel } from './ClinicalReviewPanel';
 import type { ClinicalDraft } from './clinicalReviewDraft';
 import { MetadataSuggestions } from './MetadataSuggestions';
-import { DiagnosisCandidates } from './DiagnosisCandidates';
+import { DiagnosisReviewPanel } from './DiagnosisReviewPanel';
+import type { DiagnosisDraft } from './diagnosisReviewDraft';
 import type { SourceExcerptTarget } from './sourceExcerpt';
 import { extractionPath } from './savedExtraction';
 export type SavedTextSource = {
@@ -54,6 +55,7 @@ export function SavedExtractionDialog({
   >('loading');
   const controller = useRef<AbortController | null>(null);
   const clinicalDraft = useRef<ClinicalDraft | null>(null);
+  const diagnosisDraft = useRef<DiagnosisDraft | null>(null);
   const title = useRef<HTMLHeadingElement | null>(null);
   const allowed = useRef(enabled);
   allowed.current = enabled;
@@ -85,6 +87,7 @@ export function SavedExtractionDialog({
       if ([401, 403, 404].includes(response.status)) {
         if (allowed.current) {
           clinicalDraft.current = null;
+          diagnosisDraft.current = null;
           onDenied();
         }
         return;
@@ -153,6 +156,7 @@ export function SavedExtractionDialog({
   };
   const reloadSource = () => {
     clinicalDraft.current = null;
+    diagnosisDraft.current = null;
     retry();
   };
   const snapshot =
@@ -258,7 +262,13 @@ export function SavedExtractionDialog({
                 })
               }
             />
-            <DiagnosisCandidates
+            <DiagnosisReviewPanel
+              patientName={source.patientName}
+              patientId={source.patientId}
+              documentId={source.documentId}
+              draft={diagnosisDraft}
+              onDenied={onDenied}
+              onReloadSource={reloadSource}
               snapshot={snapshot}
               onShowSource={(evidence) =>
                 setSourceSelection({

@@ -1,3 +1,4 @@
+import { DiagnosisReviewService } from './diagnosis-review.service.js';
 import { ClinicalReviewService } from './clinical-review.service.js';
 import {
   Injectable,
@@ -31,12 +32,14 @@ export class DocumentsService {
   readonly extraction: ExtractionService;
   readonly metadata: MetadataSuggestionsService;
   readonly clinical: ClinicalReviewService;
+  readonly diagnosis: DiagnosisReviewService;
   constructor(
     private readonly permissions: PermissionService,
     private readonly store: DocumentStore,
     private readonly objects: ObjectStore,
   ) {
     this.clinical = new ClinicalReviewService(permissions, store);
+    this.diagnosis = new DiagnosisReviewService(this.clinical, store);
     this.extraction = new ExtractionService(permissions, store);
     this.metadata = new MetadataSuggestionsService(this.extraction, store);
   }

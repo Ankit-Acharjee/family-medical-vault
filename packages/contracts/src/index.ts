@@ -117,3 +117,4 @@ export * from './lab-fields.js';
 export * from './clinical-review.js';
 export * from './clinical-history.js';
 export * from './diagnosis-fields.js';
+export * from './diagnosis-review.js';
