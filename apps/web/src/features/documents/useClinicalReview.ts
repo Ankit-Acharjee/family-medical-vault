@@ -6,7 +6,10 @@ import {
   type ClinicalDraftRef,
   type ClinicalSaveState,
 } from './clinicalReviewDraft';
-async function json(response: Response, signal: AbortSignal): Promise<unknown> {
+export async function readClinicalJson(
+  response: Response,
+  signal: AbortSignal,
+): Promise<unknown> {
   const maximum = 1024 * 1024;
   if (Number(response.headers.get('content-length')) > maximum) {
     void response.body?.cancel();
@@ -80,7 +83,7 @@ export function useClinicalReview(
         return;
       }
       if (!response.ok) throw Error();
-      const value = await json(response, abort.signal);
+      const value = await readClinicalJson(response, abort.signal);
       abort.signal.throwIfAborted();
       if (!isClinicalReviewResult(value)) throw Error();
       if (
@@ -148,7 +151,7 @@ export function useClinicalReview(
         return;
       }
       if (!boot.ok) throw Error();
-      const value = await json(boot, abort.signal);
+      const value = await readClinicalJson(boot, abort.signal);
       if (
         !value ||
         typeof value !== 'object' ||
@@ -185,7 +188,7 @@ export function useClinicalReview(
         setSaveState('failed');
         return;
       }
-      const result = await json(response, abort.signal);
+      const result = await readClinicalJson(response, abort.signal);
       if (
         !isSaveExtractionResult(result) ||
         result.revision !== state.context.revision + 1

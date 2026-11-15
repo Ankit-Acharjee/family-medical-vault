@@ -61,6 +61,7 @@ async function setup(
     metadataText?: string;
     characterTruncated?: boolean;
     canVerify?: boolean;
+    history?: boolean;
   } = {},
 ) {
   const canSave = options.canSave ?? true;
@@ -106,6 +107,42 @@ async function setup(
       }
     : null;
   if (snapshot) revision = 1;
+  const clinicalSets = new Map<number, Record<string, unknown>>();
+  if (options.history && snapshot) {
+    const candidates = extractLabFields(
+      snapshot.pages as { page: number; text: string }[],
+    );
+    for (let n = 1; n <= 3; n++)
+      clinicalSets.set(n, {
+        revision: n,
+        sourceRevision: 1,
+        sourceSha256: 'a'.repeat(64),
+        verifiedAt: '2026-11-15T00:00:00.000Z',
+        ruleVersion: 'labeled-lab-blocks-v1',
+        verified: true,
+        extraction: {
+          method: snapshot.method,
+          engineVersion: snapshot.engineVersion,
+          partial: snapshot.partial,
+          partialReason: snapshot.partialReason,
+          downsized: snapshot.downsized,
+        },
+        items: candidates.map((source) => ({
+          source,
+          fields: {
+            ...Object.fromEntries(
+              Object.entries(source.fields).map(([k, v]) => [
+                k,
+                v?.value ?? null,
+              ]),
+            ),
+            result: `Synthetic correction ${n}`,
+          },
+        })),
+      });
+    clinicalRevision = 3;
+    clinicalSnapshot = clinicalSets.get(3)!;
+  }
   let hold = false,
     release: () => void = () => {};
   const gate = new Promise<void>((r) => (release = r));
@@ -330,6 +367,38 @@ async function setup(
       }
       return route.fulfill({
         json: { context, candidates, snapshot: clinicalSnapshot },
+      });
+    },
+  );
+  await page.route(
+    '**/api/patients/*/documents/*/clinical-review/history?*',
+    async (route) => {
+      if (mode === 'history-denied') return route.fulfill({ status: 403 });
+      if (mode === 'history-unavailable') return route.fulfill({ status: 503 });
+      const before = Number(
+        new URL(route.request().url()).searchParams.get('beforeRevision'),
+      );
+      const keys = [...clinicalSets.keys()]
+        .filter((n) => n < before)
+        .sort((a, b) => b - a);
+      const found = keys[0];
+      return route.fulfill({
+        json: {
+          context: {
+            sourceRevision: Number(snapshot?.revision ?? 0),
+            sourceSha256: 'a'.repeat(64),
+            lifecycleVersion: mode === 'history-stale' ? 1 : 0,
+            revision: clinicalRevision,
+            canVerify: options.canVerify ?? canSave,
+          },
+          snapshot: found ? clinicalSets.get(found) : null,
+          nextBefore:
+            mode === 'history-invalid'
+              ? before
+              : keys.length > 1
+                ? found
+                : null,
+        },
       });
     },
   );
@@ -1435,4 +1504,215 @@ test('OCR-like and forged verification lines remain unsupported without blocking
   expect(api.clinicalWrites).toEqual([]);
   expect(api.counts().previews).toBe(0);
   expect(api.external).toEqual([]);
+});
+
+test('clinical history pages immutable sets without replacing current owner corrections or selection', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    metadataText: labText,
+    history: true,
+  });
+  const panel = await openClinical(page);
+  const draft = panel.getByRole('region', { name: 'Lab candidate 1' });
+  await draft
+    .getByRole('textbox', { name: 'Result as written', exact: true })
+    .fill('Synthetic unsent correction');
+  await draft.getByRole('checkbox').check();
+  const history = panel.getByRole('region', {
+    name: 'Earlier clinical confirmations',
+  });
+  await history
+    .getByRole('button', { name: 'View previous confirmations', exact: true })
+    .click();
+  await expect(history).toContainText('Confirmed set revision 2');
+  await expect(
+    history.getByRole('heading', { name: 'Earlier owner confirmations' }),
+  ).toBeFocused();
+  await expect(
+    draft.getByRole('textbox', { name: 'Result as written', exact: true }),
+  ).toHaveValue('Synthetic unsent correction');
+  await expect(draft.getByRole('checkbox')).toBeChecked();
+  await history
+    .getByRole('button', { name: 'View earlier set', exact: true })
+    .click();
+  await expect(history).toContainText('Confirmed set revision 1');
+  await expect(history).not.toContainText('Synthetic correction 2');
+  await expect(history).toContainText('earliest confirmed set');
+  expect(api.clinicalWrites).toEqual([]);
+  expect(api.counts().previews).toBe(0);
+  expect(api.external).toEqual([]);
+});
+
+test('clinical history permits current View delegates and clears on revocation', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    metadataText: labText,
+    history: true,
+    canVerify: false,
+  });
+  const panel = await openClinical(page);
+  const history = panel.getByRole('region', {
+    name: 'Earlier clinical confirmations',
+  });
+  await history
+    .getByRole('button', { name: 'View previous confirmations', exact: true })
+    .click();
+  await expect(history).toContainText('Confirmed set revision 2');
+  await expect(
+    panel.getByRole('button', {
+      name: 'Verify selected lab fields',
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(history.getByRole('textbox')).toHaveCount(0);
+  api.revoke();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(saved(page)).toHaveCount(0);
+  expect(api.clinicalWrites).toEqual([]);
+});
+
+test('clinical history rejects looping output and stale context with actionable recovery', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    metadataText: labText,
+    history: true,
+  });
+  const panel = await openClinical(page);
+  const history = panel.getByRole('region', {
+    name: 'Earlier clinical confirmations',
+  });
+  api.mode('history-invalid');
+  await history
+    .getByRole('button', { name: 'View previous confirmations', exact: true })
+    .click();
+  await expect(history).toContainText('History could not be loaded');
+  await expect(history).not.toContainText('Synthetic correction 2');
+  api.mode('normal');
+  await history
+    .getByRole('button', { name: 'Retry confirmation history', exact: true })
+    .click();
+  await expect(history).toContainText('Confirmed set revision 2');
+  api.mode('history-stale');
+  await history
+    .getByRole('button', { name: 'View earlier set', exact: true })
+    .click();
+  await expect(history).toContainText('The source or document changed');
+  await expect(history).not.toContainText('Synthetic correction 2');
+  await expect(
+    history.getByRole('button', { name: 'Reload saved text', exact: true }),
+  ).toBeVisible();
+  expect(api.clinicalWrites).toEqual([]);
+});
+
+for (const theme of ['light', 'dark'])
+  test(`${theme} clinical history is accessible on desktop and narrow mobile`, async ({
+    page,
+  }, info) => {
+    await page.setViewportSize({
+      width: info.project.name === 'mobile' ? 320 : 1440,
+      height: 1000,
+    });
+    await page.addInitScript(
+      (value) => localStorage.setItem('fmv.theme', value),
+      theme,
+    );
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const api = await setup(page, {
+      initial: true,
+      metadataText: labText,
+      history: true,
+    });
+    const panel = await openClinical(page);
+    const history = panel.getByRole('region', {
+      name: 'Earlier clinical confirmations',
+    });
+    await history
+      .getByRole('button', { name: 'View previous confirmations', exact: true })
+      .click();
+    await history.locator('summary').first().click();
+    await expect(history).toContainText('Synthetic correction 2');
+    await expect(
+      history.getByRole('button', { name: 'Show in source', exact: true }),
+    ).toHaveCount(0);
+    expect(
+      (await new AxeBuilder({ page }).include('[role="dialog"]').analyze())
+        .violations,
+    ).toEqual([]);
+    expect(
+      await saved(page).evaluate((el) => el.scrollWidth <= el.clientWidth),
+    ).toBe(true);
+    await history.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `../../.local/screenshots/clinical-history-${theme}-${info.project.name}.png`,
+    });
+    expect(api.clinicalWrites).toEqual([]);
+    expect(api.external).toEqual([]);
+    await page.keyboard.press('Escape');
+    await expect(action(page, 'Saved text')).toBeFocused();
+  });
+
+test('clinical history never changes a pending exact-body verification retry', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    metadataText: labText,
+    history: true,
+  });
+  const panel = await openClinical(page);
+  await panel
+    .getByRole('button', { name: 'Select all entries', exact: true })
+    .click();
+  await panel
+    .getByRole('checkbox', {
+      name: 'I checked all selected values and units against the original document.',
+    })
+    .check();
+  api.mode('clinical-uncommitted');
+  await panel
+    .getByRole('button', { name: 'Verify selected lab fields', exact: true })
+    .click();
+  await expect(panel).toContainText('Verification could not be confirmed');
+  const history = panel.getByRole('region', {
+    name: 'Earlier clinical confirmations',
+  });
+  await history
+    .getByRole('button', { name: 'View previous confirmations', exact: true })
+    .click();
+  await expect(history).toContainText('Confirmed set revision 2');
+  await expect(
+    panel.getByRole('textbox', { name: 'Result as written', exact: true }),
+  ).toBeDisabled();
+  api.mode('normal');
+  await panel
+    .getByRole('button', { name: 'Retry verification', exact: true })
+    .click();
+  await expect(panel).toContainText('Selected fields verified');
+  expect(api.clinicalWrites).toHaveLength(2);
+  expect(api.clinicalWrites[0]).toBe(api.clinicalWrites[1]);
+});
+
+test('clinical history denial immediately clears all protected review content', async ({
+  page,
+}) => {
+  const api = await setup(page, {
+    initial: true,
+    metadataText: labText,
+    history: true,
+  });
+  const panel = await openClinical(page);
+  api.mode('history-denied');
+  await panel
+    .getByRole('region', { name: 'Earlier clinical confirmations' })
+    .getByRole('button', { name: 'View previous confirmations', exact: true })
+    .click();
+  await expect(saved(page)).toHaveCount(0);
+  await expect(action(page, 'Saved text')).toHaveCount(0);
+  expect(api.clinicalWrites).toEqual([]);
 });

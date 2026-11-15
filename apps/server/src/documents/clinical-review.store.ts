@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   extractLabFields,
   isClinicalReviewResult,
+  isClinicalHistoryResult,
   isExtractionResult,
   isLabFieldCandidate,
   isReviewedLabFields,
@@ -9,6 +10,7 @@ import {
 } from '@fmv/contracts';
 import type {
   ClinicalReviewResult,
+  ClinicalHistoryResult,
   SaveClinicalReview,
   LabFieldCandidate,
   ReviewedLabFields,
@@ -205,5 +207,69 @@ export async function saveClinicalReview(
     if (!current.canVerify || current.accountId !== actor.accountId)
       throw new Error('Unavailable clinical review');
     return { saved: true, revision };
+  }, options);
+}
+
+export async function readClinicalHistory(
+  client: PrismaClient,
+  p: string,
+  d: string,
+  before: number,
+  authorize: ClinicalAuthorization,
+): Promise<ClinicalHistoryResult | null> {
+  return client.$transaction(async (db) => {
+    const original = await extractionSource(db, p, d);
+    if (!original) return null;
+    const actor = await authorize(original);
+    const extraction = await latestExtraction(db, d);
+    if (
+      extraction &&
+      (!isExtractionResult(extraction.result) ||
+        extraction.sourceSha256 !== original.sha256)
+    )
+      throw new Error('Unavailable clinical history');
+    const current = await latest(db, d);
+    const rows = await db.$queryRaw<
+      Row[]
+    >`SELECT revision,source_revision AS "sourceRevision",source_sha256 AS "sourceSha256",source_context AS "extraction",items,rule_version AS "ruleVersion",verified_at AS "verifiedAt" FROM fmv.document_clinical_reviews WHERE document_id=${d}::uuid AND revision<${before} ORDER BY revision DESC LIMIT 1`;
+    const row = rows[0];
+    const older = row
+      ? await db.$queryRaw<
+          { present: boolean }[]
+        >`SELECT EXISTS(SELECT 1 FROM fmv.document_clinical_reviews WHERE document_id=${d}::uuid AND revision<${row.revision}) AS present`
+      : [];
+    const result = {
+      context: {
+        sourceRevision: extraction?.revision ?? 0,
+        sourceSha256: original.sha256,
+        lifecycleVersion: original.lifecycleVersion,
+        revision: current?.revision ?? 0,
+        canVerify: actor.canVerify,
+      },
+      snapshot: row
+        ? {
+            revision: row.revision,
+            sourceRevision: row.sourceRevision,
+            sourceSha256: row.sourceSha256,
+            extraction: row.extraction,
+            items: row.items,
+            ruleVersion: row.ruleVersion,
+            verifiedAt: row.verifiedAt.toISOString(),
+            verified: true,
+          }
+        : null,
+      nextBefore: older[0]?.present && row ? row.revision : null,
+    };
+    if (!isClinicalHistoryResult(result))
+      throw new Error('Unavailable clinical history');
+    if (row)
+      await db.$executeRaw`INSERT INTO fmv.document_events(id,patient_id,document_id,actor_account_id,kind) VALUES (${randomUUID()}::uuid,${p}::uuid,${d}::uuid,${actor.accountId}::uuid,'document.viewed')`;
+    const finalActor = await authorize(original);
+    if (actor.accountId !== finalActor.accountId)
+      throw new Error('Unavailable clinical history');
+    return {
+      ...result,
+      context: { ...result.context, canVerify: finalActor.canVerify },
+    };
   }, options);
 }

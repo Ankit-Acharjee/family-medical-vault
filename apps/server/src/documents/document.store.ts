@@ -1,6 +1,11 @@
-import type { ClinicalReviewResult, SaveClinicalReview } from '@fmv/contracts';
+import type {
+  ClinicalReviewResult,
+  ClinicalHistoryResult,
+  SaveClinicalReview,
+} from '@fmv/contracts';
 import {
   readClinicalReview,
+  readClinicalHistory,
   saveClinicalReview,
 } from './clinical-review.store.js';
 import type { ClinicalAuthorization } from './clinical-review.store.js';
@@ -55,6 +60,12 @@ export type SearchAuthorization = (
 
 export type TrashChangeResult = 'changed' | 'unchanged' | 'missing' | 'expired';
 export abstract class DocumentStore {
+  abstract readClinicalHistory(
+    p: string,
+    d: string,
+    before: number,
+    authorize: ClinicalAuthorization,
+  ): Promise<ClinicalHistoryResult | null>;
   abstract readClinicalReview(
     p: string,
     d: string,
@@ -169,6 +180,14 @@ export class PrismaDocumentStore
       }),
       log: [],
     });
+  }
+  readClinicalHistory(
+    p: string,
+    d: string,
+    before: number,
+    authorize: ClinicalAuthorization,
+  ) {
+    return readClinicalHistory(this.db, p, d, before, authorize);
   }
   readClinicalReview(p: string, d: string, authorize: ClinicalAuthorization) {
     return readClinicalReview(this.db, p, d, authorize);

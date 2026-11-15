@@ -4,7 +4,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { isSaveClinicalReview } from '@fmv/contracts';
+import { clinicalHistoryCursor, isSaveClinicalReview } from '@fmv/contracts';
 import { PermissionService, isUuid } from '../access/permission.service.js';
 import type { Principal } from '../identity/person.store.js';
 import type { DocumentStore } from './document.store.js';
@@ -64,6 +64,23 @@ export class ClinicalReviewService {
         p,
         d,
         this.authorize(principal, p, d, requireOwner),
+      );
+      if (!r) throw new NotFoundException();
+      return r;
+    } catch (e) {
+      this.failure(e);
+    }
+  }
+  async history(principal: Principal, p: string, d: string, cursor: unknown) {
+    this.ids(p, d);
+    const before = clinicalHistoryCursor(cursor);
+    if (before === null) throw new BadRequestException();
+    try {
+      const r = await this.store.readClinicalHistory(
+        p,
+        d,
+        before,
+        this.authorize(principal, p, d),
       );
       if (!r) throw new NotFoundException();
       return r;

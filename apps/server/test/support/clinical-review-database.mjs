@@ -121,6 +121,8 @@ export async function verifyClinicalReview(runtimeUrl, owner, insertGrant) {
           [id],
         )
       ).rows[0].n;
+    const history = (before, actor = principal) =>
+      service.clinical.history(actor, patient.id, id, String(before));
     const empty = await read();
     assert.equal(empty.context.sourceRevision, 0);
     assert.equal(empty.snapshot, null);
@@ -192,6 +194,48 @@ export async function verifyClinicalReview(runtimeUrl, owner, insertGrant) {
     second.selections[0].fields.unit = null;
     assert.deepEqual(await save(second), { saved: true, revision: 2 });
     assert.equal(await count(), 2);
+    const viewedCount = async () =>
+      (
+        await runtime.query(
+          "SELECT count(*)::int n FROM fmv.document_events WHERE document_id=$1::uuid AND kind='document.viewed'",
+          [id],
+        )
+      ).rows[0].n;
+    const viewedBefore = await viewedCount();
+    let historyChecks = 0;
+    await assert.rejects(
+      store.readClinicalHistory(patient.id, id, 2, async () => {
+        if (++historyChecks === 2) throw Error('synthetic history revocation');
+        return { accountId: ownerAccountId, canVerify: true };
+      }),
+    );
+    assert.equal(await viewedCount(), viewedBefore);
+    const older = await history(2);
+    assert.equal(older.snapshot.revision, 1);
+    assert.equal(older.snapshot.items[0].fields.unit, 'synthetic/unit');
+    assert.equal(older.context.revision, 2);
+    assert.equal(older.nextBefore, null);
+    assert.equal((await history(1)).snapshot, null);
+    const historyGrant = await insertGrant(
+      runtime,
+      {
+        patientId: patient.id,
+        caregiverAccountId: readerAccountId,
+        ownerAccountId,
+      },
+      { actions: ['view'], scopeKind: 'document', documentId: id },
+    );
+    assert.equal((await history(2, reader)).snapshot.revision, 1);
+    await owner.query(
+      'UPDATE fmv.access_grants SET revoked_at=clock_timestamp() WHERE id=$1::uuid',
+      [historyGrant.id ?? historyGrant],
+    );
+    await assert.rejects(history(2, reader), status(404));
+    for (const cursor of ['0', '01', '-1', '2147483648', '2\n', undefined])
+      await assert.rejects(
+        service.clinical.history(principal, patient.id, id, cursor),
+        status(400),
+      );
     await assert.rejects(
       runtime.query(
         'UPDATE fmv.document_clinical_reviews SET items=items WHERE document_id=$1::uuid',
@@ -220,22 +264,32 @@ export async function verifyClinicalReview(runtimeUrl, owner, insertGrant) {
     const stale = make(changed);
     await service.changeTrash(principal, patient.id, id, 'trash', {});
     await assert.rejects(read(), status(404));
+    await assert.rejects(history(2), status(404));
     await assert.rejects(save(stale), status(404));
     await service.changeTrash(principal, patient.id, id, 'restore', {});
     assert.equal((await read()).snapshot.revision, 2);
+    const restoredHistory = await history(2);
+    assert.equal(restoredHistory.snapshot.sourceRevision, 1);
+    assert.equal(restoredHistory.context.sourceRevision, 2);
+    assert.ok(restoredHistory.context.lifecycleVersion > 0);
     await assert.rejects(save(stale), status(409));
     assert.deepEqual(await save(make(await read())), {
       saved: true,
       revision: 3,
     });
     const race = make(await read());
-    const raced = await Promise.allSettled([
-      save(race),
-      otherService.clinical.save(principal, patient.id, id, {
-        ...race,
-        requestId: randomUUID(),
-      }),
+    const [raced, concurrentHistory] = await Promise.all([
+      Promise.allSettled([
+        save(race),
+        otherService.clinical.save(principal, patient.id, id, {
+          ...race,
+          requestId: randomUUID(),
+        }),
+      ]),
+      history(3),
     ]);
+    assert.equal(concurrentHistory.snapshot.revision, 2);
+    assert.ok([3, 4].includes(concurrentHistory.context.revision));
     assert.equal(raced.filter((r) => r.status === 'fulfilled').length, 1);
     assert.equal(
       raced.filter(
@@ -350,6 +404,9 @@ export async function verifyClinicalReview(runtimeUrl, owner, insertGrant) {
     const remainder = make(await read());
     remainder.selections = remainder.selections.slice(1);
     assert.deepEqual(await save(remainder), { saved: true, revision: 7 });
+    assert.equal((await history(7)).snapshot.revision, 6);
+    assert.equal((await history(7)).nextBefore, 6);
+    assert.equal((await history(6)).snapshot.revision, 5);
     const merged = (await read()).snapshot.items;
     assert.equal(merged.length, 2);
     assert.deepEqual(

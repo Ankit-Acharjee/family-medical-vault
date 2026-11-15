@@ -7,6 +7,7 @@ import type {
   SavedExtraction,
 } from '@fmv/contracts';
 import { Button } from '../../components/ui/button';
+import { ClinicalHistory } from './ClinicalHistory';
 import { ClinicalLabFields } from './ClinicalLabFields';
 import { useClinicalReview } from './useClinicalReview';
 import {
@@ -393,16 +394,28 @@ export function ClinicalReviewPanel({
               </Button>
             </>
           ) : (
-            <ReviewForm
-              key={`${state.context.revision}:${state.context.sourceRevision}:${state.context.lifecycleVersion}`}
-              data={state}
-              draft={draft}
-              contextKey={clinicalDraftKey(patientId, documentId, state)}
-              saveState={saveState}
-              onSave={(body) => void save(body)}
-              onReload={refresh}
-              onShowSource={onShowSource}
-            />
+            <>
+              <ReviewForm
+                key={`${state.context.revision}:${state.context.sourceRevision}:${state.context.lifecycleVersion}`}
+                data={state}
+                draft={draft}
+                contextKey={clinicalDraftKey(patientId, documentId, state)}
+                saveState={saveState}
+                onSave={(body) => void save(body)}
+                onReload={refresh}
+                onShowSource={onShowSource}
+              />
+              {state.context.revision > 1 && (
+                <ClinicalHistory
+                  key={clinicalDraftKey(patientId, documentId, state)}
+                  patientId={patientId}
+                  documentId={documentId}
+                  context={state.context}
+                  onReloadSource={onReloadSource}
+                  onDenied={onDenied}
+                />
+              )}
+            </>
           )}
         </div>
       </details>

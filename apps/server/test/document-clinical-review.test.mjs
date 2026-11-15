@@ -72,6 +72,15 @@ async function setup(f) {
       ? { saved: true, revision: 1 }
       : 'conflict';
   };
+  f.metadata.readClinicalHistory = async (p, d, before, auth) => {
+    if (p !== record().patientId || d !== upload.documentId) return null;
+    const actor = await auth(source());
+    return {
+      context: { ...context, canVerify: actor.canVerify },
+      snapshot: null,
+      nextBefore: null,
+    };
+  };
   const path = f.path(`documents/${upload.documentId}/clinical-review`);
   const input = {
     requestId: randomUUID(),
@@ -200,4 +209,42 @@ test('clinical HTTP rejects forged evidence, stale source, oversized and unsafe 
     const error = await f.request('GET', x.path, x.session);
     assert.equal(error.status, 503);
     assert.ok(!(await error.text()).includes('private synthetic'));
+  }));
+
+test('clinical history HTTP is scoped, no-store and strictly bounded without writes or sensitive errors', async () =>
+  documentSetup(async (f) => {
+    const x = await setup(f),
+      path = `${x.path}/history?beforeRevision=1`;
+    assert.equal((await f.request('GET', path)).status, 401);
+    const response = await f.request('GET', path, x.session);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal((await response.json()).snapshot, null);
+    const reader = await f.login(principals.caregiver.subject);
+    assert.equal((await f.request('GET', path, reader)).status, 404);
+    const grant = f.access.grant({
+      actions: ['view'],
+      scope: { kind: 'document', documentId: x.upload.documentId },
+    });
+    assert.equal((await f.request('GET', path, reader)).status, 200);
+    grant.revokedAt = f.access.now;
+    assert.equal((await f.request('GET', path, reader)).status, 404);
+    for (const cursor of ['', '0', '01', '-1', '1.5', '2147483648', '2%0A'])
+      assert.equal(
+        (
+          await f.request(
+            'GET',
+            `${x.path}/history?beforeRevision=${cursor}`,
+            x.session,
+          )
+        ).status,
+        400,
+      );
+    f.metadata.readClinicalHistory = async () => {
+      throw Error('Synthetic private failure');
+    };
+    const failure = await f.request('GET', path, x.session);
+    assert.equal(failure.status, 503);
+    assert.ok(!(await failure.text()).includes('Synthetic private failure'));
+    assert.ok(!JSON.stringify(f.logs).includes(x.input.sourceSha256));
   }));

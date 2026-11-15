@@ -4,6 +4,7 @@ import {
   Get,
   HttpCode,
   Param,
+  Query,
   Post,
   Put,
   Patch,
@@ -46,6 +47,20 @@ export class DocumentsController {
         throw new HttpException(e.message, e.status);
       throw e;
     }
+  }
+  @Get('documents/:documentId/clinical-review/history')
+  async clinicalHistory(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+    @Query('beforeRevision') cursor: unknown,
+  ) {
+    return this.documents.clinical.history(
+      await this.principal(req),
+      p,
+      d,
+      cursor,
+    );
   }
   @Get('documents/:documentId/clinical-review')
   async clinicalReview(

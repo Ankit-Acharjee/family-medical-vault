@@ -1,5 +1,7 @@
 # P3 accessible clinical confirmation history
 
+Status: implemented and verified; see `.tasks/p3-clinical-history-report.md`.
+
 - LAB-01/LAB-02 and AI-03/AI-05: make earlier immutable owner-confirmed sets accessible from the existing saved-text review, so retained provenance can actually be inspected.
 - Current View is required on every read; no additional verification or edit authority. Read one previous set per request using a strictly bounded revision cursor and existing document lock/authorization; no schema migration or original-file access.
 - Show immutable raw fields, source excerpts, extraction provenance and original confirmation time. Older extraction evidence must not jump into a different current source revision. Never allow historical entries to overwrite current review or prefill corrections for a different source.
