@@ -1,6 +1,6 @@
 # P3 owner-only clinical confirmation withdrawal
 
-Status: explicit user approval of owner-only withdrawal with retained history received 15 November 2026; policy recorded in `docs/security/access-control.md`. Implementation complete after original comparison; see `.tasks/p3-clinical-withdrawal-report.md`. Hosted migration15 remains pending separate approval.
+Status: explicit user approval of owner-only withdrawal with retained history received 15 November 2026; policy recorded in `docs/security/access-control.md`. Implementation complete after original comparison; see `.tasks/p3-clinical-withdrawal-report.md`. Hosted migration15 was separately approved/applied and read-only postflight passed on 15 November 2026.
 
 - LAB-02 / AI-03/AI-05: incorrect confirmed entries must be explicitly withdrawable by the current Person owner with View. Delegates cannot withdraw; original files/evidence and immutable prior sets remain. Withdrawn fields must be excluded from future trusted use. No clinical inference, reason field or normalized measurements is added.
 - Append a new immutable set revision, rather than mutating/deleting prior rows. Proposed migration 15 adds `action` (`confirmation` default / `withdrawal`) and `withdrawn_items` (default empty array) to existing history. Latest `items` contains active confirmed entries only; withdrawal may leave it empty. `withdrawn_items` records exactly the removed prior items, preserving their original evidence/corrections. Historical rows retain their action and evidence.
