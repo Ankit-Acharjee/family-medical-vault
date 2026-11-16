@@ -42,21 +42,24 @@ async function image(
   mime = 'image/png',
   width = 1200,
   height = 300,
+  quality: { rotation?: number; ink?: string } = {},
 ) {
   const data = await page.evaluate(
-    ({ text, mime, width, height }) => {
+    ({ text, mime, width, height, quality }) => {
       const canvas = window.document.createElement('canvas');
       canvas.width = width;
       canvas.height = height;
       const context = canvas.getContext('2d')!;
       context.fillStyle = '#fff';
       context.fillRect(0, 0, width, height);
-      context.fillStyle = '#000';
+      context.fillStyle = quality.ink ?? '#000';
       context.font = 'bold 64px Arial';
-      if (text) context.fillText(text, 50, 150);
+      context.translate(width / 2, height / 2);
+      context.rotate(((quality.rotation ?? 0) * Math.PI) / 180);
+      if (text) context.fillText(text, 50 - width / 2, 150 - height / 2);
       return canvas.toDataURL(mime, 0.95).split(',')[1]!;
     },
-    { text, mime, width, height },
+    { text, mime, width, height, quality },
   );
   return Buffer.from(data, 'base64');
 }
@@ -616,3 +619,60 @@ test('worker asset allowlist blocks remote transports before making a request', 
   await expect(dialog(page)).toContainText('All remote transports blocked');
   expect(api.external).toEqual([]);
 });
+
+// These fixed generic printed samples are not clinical or handwriting accuracy evidence.
+for (const sample of [
+  { name: 'clockwise rotation', rotation: 3, ink: '#000' },
+  { name: 'counterclockwise rotation', rotation: -3, ink: '#000' },
+  { name: 'reduced print contrast', rotation: 0, ink: '#888' },
+]) {
+  test(`scan-quality ${sample.name} preserves ground truth without trusted or external actions`, async ({
+    page,
+  }, info) => {
+    test.setTimeout(90_000);
+    const text = 'FAMILY VAULT TEST';
+    const source = await image(page, text, 'image/png', 1200, 300, sample);
+    const writes: string[] = [];
+    page.on('request', (request) => {
+      if (
+        request.url().includes('/api/') &&
+        !['GET', 'HEAD', 'OPTIONS'].includes(request.method())
+      )
+        writes.push(request.method());
+    });
+    const api = await setup(page, { source });
+    expect(api.reads).toEqual([]);
+    await start(page);
+    await recognized(page);
+    await expect(dialog(page)).toContainText(/unverified/i);
+    expect(api.external).toEqual([]);
+    expect(api.errors).toEqual([]);
+    expect(api.logs.join('\n')).not.toContain(text);
+    expect(writes).toEqual([]);
+    expect(
+      await page.evaluate(() =>
+        JSON.stringify({
+          local: { ...localStorage },
+          session: { ...sessionStorage },
+        }),
+      ),
+    ).not.toContain(text);
+    info.annotations.push({
+      type: 'Fixed synthetic scan',
+      description: `${sample.name}; rotation ${sample.rotation} degrees; ink ${sample.ink}; 1200x300; expected literal ${text}`,
+    });
+    await dialog(page)
+      .getByRole('button', { name: 'Close dialog', exact: true })
+      .click();
+    await expect(action(page)).toBeFocused();
+    await expect(
+      page.getByRole('button', { name: `Preview ${sourceTitle}`, exact: true }),
+    ).toBeEnabled();
+    await expect(
+      page.getByRole('button', {
+        name: `Download ${sourceTitle}`,
+        exact: true,
+      }),
+    ).toBeEnabled();
+  });
+}
