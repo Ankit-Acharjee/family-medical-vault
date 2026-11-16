@@ -1,3 +1,4 @@
+import { isConfirmedMeasurement } from './measurements.js';
 import type { ConfirmedMeasurement } from './measurements.js';
 
 export type MeasurementComparisonMember = {
@@ -130,4 +131,60 @@ export function canonicalComparisonMembers(
         a.documentId.localeCompare(b.documentId) ||
         a.candidateId.localeCompare(b.candidateId),
     );
+}
+
+export function isMeasurementComparisonResult(
+  v: unknown,
+): v is MeasurementComparisonResult {
+  if (
+    !record(v) ||
+    !exact(v, [
+      'setId',
+      'revision',
+      'status',
+      'canConfirm',
+      'members',
+      'measurements',
+    ]) ||
+    typeof v.setId !== 'string' ||
+    v.setId.length !== 36 ||
+    !uuid.test(v.setId) ||
+    !integer(v.revision, 0) ||
+    typeof v.canConfirm !== 'boolean' ||
+    !Array.isArray(v.measurements)
+  )
+    return false;
+  if (v.status === 'missing')
+    return (
+      v.revision === 0 &&
+      Array.isArray(v.members) &&
+      v.members.length === 0 &&
+      v.measurements.length === 0 &&
+      v.canConfirm
+    );
+  if (
+    !['current', 'invalid', 'withdrawn'].includes(v.status as string) ||
+    v.revision === 0 ||
+    !isMeasurementComparisonMembers(v.members)
+  )
+    return false;
+  if (v.status !== 'current') return v.measurements.length === 0;
+  return (
+    v.measurements.length === v.members.length &&
+    v.measurements.every((m: unknown, i: number) => {
+      if (!isConfirmedMeasurement(m)) return false;
+      const r = (v.members as MeasurementComparisonMember[])[i]!;
+      const p = m.provenance;
+      return (
+        p.patientId ===
+          (v.measurements as ConfirmedMeasurement[])[0]!.provenance.patientId &&
+        p.documentId.toLowerCase() === r.documentId.toLowerCase() &&
+        m.source.id === r.candidateId &&
+        p.reviewRevision === r.reviewRevision &&
+        p.sourceRevision === r.sourceRevision &&
+        p.sourceSha256 === r.sourceSha256 &&
+        p.lifecycleVersion === r.lifecycleVersion
+      );
+    })
+  );
 }

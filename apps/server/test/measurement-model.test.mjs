@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  isConfirmedMeasurement,
+  isMeasurementWorkspace,
+  isMeasurementComparisonResult,
+  measurementMember,
   classifyMeasurementDate,
   classifyMeasurementResult,
   projectConfirmedMeasurements,
@@ -252,5 +256,125 @@ test('invalid IDs, malformed review and stale or mismatched source cannot produc
   assert.deepEqual(
     projectConfirmedMeasurements(patientId, documentId, malformed),
     [],
+  );
+});
+
+test('measurement workspace guards preserve provenance, precision and bounded disclosure', () => {
+  const measurement = projectConfirmedMeasurements(
+    patientId,
+    documentId,
+    review(),
+  )[0];
+  const option = {
+    member: measurementMember(measurement),
+    measurement,
+    title: 'Synthetic source.pdf',
+  };
+  const workspace = {
+    patientId,
+    canConfirm: true,
+    measurements: [option],
+    measurementsLimited: false,
+    comparisons: [],
+    comparisonsLimited: false,
+    sources: [
+      {
+        documentId,
+        title: option.title,
+        bytes: 100,
+        mimeType: 'application/pdf',
+      },
+    ],
+  };
+  assert.equal(isConfirmedMeasurement(measurement), true);
+  assert.equal(isMeasurementWorkspace(workspace), true);
+  for (const patch of [
+    { sources: [] },
+    { measurements: [option, option] },
+    { patientId: documentId },
+    { extra: true },
+    { sources: [{ ...workspace.sources[0], title: 'Different title' }] },
+    { sources: [{ ...workspace.sources[0], bytes: 0 }] },
+    { sources: [{ ...workspace.sources[0], title: 'bad\ud800' }] },
+    { measurementsLimited: 'true' },
+  ])
+    assert.equal(isMeasurementWorkspace({ ...workspace, ...patch }), false);
+  for (const patch of [
+    {
+      result: {
+        kind: 'numeric',
+        raw: measurement.fields.result,
+        decimal: '1.23',
+      },
+    },
+    { comparability: { status: 'confirmed' } },
+    { provenance: { ...measurement.provenance, reviewRevision: 0 } },
+    {
+      provenance: {
+        ...measurement.provenance,
+        verifiedAt: '2026-02-30T00:00:00.000Z',
+      },
+    },
+    { source: { ...measurement.source, unverified: false } },
+    { extra: true },
+  ])
+    assert.equal(isConfirmedMeasurement({ ...measurement, ...patch }), false);
+  const summary = {
+    setId: documentId,
+    revision: 1,
+    status: 'current',
+    analyte: 'Synthetic analyte',
+    recordedAt: '2026-11-16T00:00:00.000Z',
+    memberCount: 2,
+  };
+  assert.equal(
+    isMeasurementWorkspace({ ...workspace, comparisons: [summary] }),
+    true,
+  );
+  for (const comparisons of [
+    [summary, summary],
+    [{ ...summary, status: 'invalid' }],
+    [{ ...summary, recordedAt: '2026-02-30T00:00:00.000Z' }],
+    Array(11).fill(summary),
+  ])
+    assert.equal(isMeasurementWorkspace({ ...workspace, comparisons }), false);
+  const second = globalThis.structuredClone(measurement);
+  second.provenance.documentId = '33333333-3333-4333-8333-333333333333';
+  const set = {
+    setId: documentId,
+    revision: 1,
+    status: 'current',
+    canConfirm: true,
+    members: [measurementMember(measurement), measurementMember(second)],
+    measurements: [measurement, second],
+  };
+  assert.equal(isMeasurementComparisonResult(set), true);
+  const crossPatient = globalThis.structuredClone(second);
+  crossPatient.provenance.patientId = documentId;
+  assert.equal(
+    isMeasurementComparisonResult({
+      ...set,
+      measurements: [measurement, crossPatient],
+    }),
+    false,
+  );
+  assert.equal(
+    isMeasurementComparisonResult({
+      ...set,
+      measurements: [second, measurement],
+    }),
+    false,
+  );
+  assert.equal(
+    isMeasurementComparisonResult({ ...set, status: 'withdrawn' }),
+    false,
+  );
+  assert.equal(
+    isMeasurementComparisonResult({
+      ...set,
+      status: 'withdrawn',
+      measurements: [],
+    }),
+    true,
   );
 });

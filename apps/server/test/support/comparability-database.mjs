@@ -137,6 +137,21 @@ export async function verifyComparability(runtimeUrl, owner, insertGrant) {
     const comparisons = new MeasurementComparisonsService(runtimeUrl.href);
     const concurrent = new MeasurementComparisonsService(runtimeUrl.href);
     try {
+      const workspace = () => comparisons.workspace(principal, patient.id);
+      const initialWorkspace = await workspace();
+      assert.equal(initialWorkspace.canConfirm, true);
+      assert.equal(initialWorkspace.measurements.length, 2);
+      assert.equal(initialWorkspace.sources.length, 2);
+      assert.deepEqual(initialWorkspace.comparisons, []);
+      assert.equal(initialWorkspace.measurementsLimited, false);
+      assert.equal(
+        initialWorkspace.measurements[0].measurement.fields.result,
+        '1.230000000000000001',
+      );
+      await assert.rejects(
+        comparisons.workspace(reader, patient.id),
+        (e) => e.getStatus?.() === 404,
+      );
       const setId = randomUUID();
       const read = (actor = principal, patientId = patient.id) =>
         comparisons.read(actor, patientId, setId);
@@ -262,13 +277,14 @@ export async function verifyComparability(runtimeUrl, owner, insertGrant) {
       );
       // A failed audit must roll back both immutable ledger and source links.
       await owner.query(
-        "CREATE FUNCTION fmv.synthetic_comparison_audit_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.kind='measurement.comparability_confirmed' AND NEW.patient_id::text=TG_ARGV[0] THEN RAISE EXCEPTION 'Synthetic audit failure' USING ERRCODE='23514'; END IF; RETURN NEW; END $$",
+        "CREATE FUNCTION fmv.synthetic_comparison_audit_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.kind IN ('measurement.comparability_confirmed','document.viewed') AND NEW.patient_id::text=TG_ARGV[0] THEN RAISE EXCEPTION 'Synthetic audit failure' USING ERRCODE='23514'; END IF; RETURN NEW; END $$",
       );
       const rollbackId = randomUUID();
       try {
         await owner.query(
           `CREATE TRIGGER synthetic_comparison_audit_failure BEFORE INSERT ON fmv.document_events FOR EACH ROW EXECUTE FUNCTION fmv.synthetic_comparison_audit_failure('${patient.id}')`,
         );
+        await assert.rejects(workspace(), status(503));
         await assert.rejects(
           comparisons.confirm(principal, patient.id, rollbackId, make(0)),
           status(503),
@@ -364,11 +380,33 @@ export async function verifyComparability(runtimeUrl, owner, insertGrant) {
         documentId: ids[0],
       });
       await assert.rejects(read(reader), status(404));
+      const scopedWorkspace = await comparisons.workspace(reader, patient.id);
+      assert.deepEqual(
+        scopedWorkspace.measurements.map((o) => o.member.documentId),
+        [ids[0]],
+      );
+      assert.deepEqual(
+        scopedWorkspace.sources.map((s) => s.documentId),
+        [ids[0]],
+      );
+      assert.deepEqual(scopedWorkspace.comparisons, []);
       const secondGrant = await insertGrant(runtime, fixture, {
         actions: ['view'],
         scopeKind: 'document',
         documentId: ids[1],
       });
+      const ownerWorkspace = await workspace();
+      assert.equal(
+        ownerWorkspace.comparisons.find((s) => s.setId === setId).status,
+        'current',
+      );
+      const readerWorkspace = await comparisons.workspace(reader, patient.id);
+      assert.equal(readerWorkspace.canConfirm, false);
+      assert.equal(readerWorkspace.measurements.length, 2);
+      assert.equal(
+        readerWorkspace.comparisons.some((s) => s.setId === setId),
+        true,
+      );
       assert.equal((await read(reader)).status, 'current');
       assert.equal((await read(reader)).canConfirm, false);
       await assert.rejects(confirm(make(1), reader), status(404));
@@ -409,6 +447,10 @@ export async function verifyComparability(runtimeUrl, owner, insertGrant) {
         saved: true,
         revision: 3,
       });
+      assert.equal(
+        (await workspace()).comparisons.find((s) => s.setId === setId).status,
+        'withdrawn',
+      );
       assert.equal((await read()).status, 'withdrawn');
       assert.deepEqual((await read()).measurements, []);
       await assert.rejects(confirm(first), status(409));
@@ -424,8 +466,27 @@ export async function verifyComparability(runtimeUrl, owner, insertGrant) {
         }),
         { saved: true, revision: 2 },
       );
+      const trashedWorkspace = await workspace();
+      assert.equal(
+        trashedWorkspace.measurements.some(
+          (o) => o.member.documentId === ids[0],
+        ),
+        false,
+      );
+      assert.equal(
+        trashedWorkspace.sources.some((s) => s.documentId === ids[0]),
+        false,
+      );
+      assert.equal(
+        trashedWorkspace.comparisons.some((s) => s.setId === setId),
+        false,
+      );
       await assert.rejects(read(), status(404));
       await service.changeTrash(principal, patient.id, ids[0], 'restore', {});
+      assert.equal(
+        (await workspace()).comparisons.find((s) => s.setId === setId).status,
+        'invalid',
+      );
       assert.equal((await read()).status, 'invalid');
       await assert.rejects(confirm(make(4)), status(409));
       await extraction(
@@ -449,6 +510,17 @@ export async function verifyComparability(runtimeUrl, owner, insertGrant) {
       });
       assert.equal((await read()).status, 'invalid');
       assert.deepEqual((await read()).measurements, []);
+      const withdrawnWorkspace = await workspace();
+      assert.equal(
+        withdrawnWorkspace.measurements.some(
+          (o) => o.member.documentId === ids[1],
+        ),
+        false,
+      );
+      assert.equal(
+        withdrawnWorkspace.comparisons.find((s) => s.setId === setId).analyte,
+        null,
+      );
       await assert.rejects(confirm(make(5)), status(409));
       refs[1] = await confirmClinical(ids[1]);
       assert.deepEqual(await confirm(make(5)), { saved: true, revision: 6 });
@@ -532,6 +604,60 @@ export async function verifyComparability(runtimeUrl, owner, insertGrant) {
       await owner.query(
         'UPDATE fmv.access_grants SET revoked_at=clock_timestamp() WHERE id=$1::uuid',
         [firstGrant.id],
+      );
+      // Cap actual authorized SQL results, not just the output contract. More
+      // recent hidden sets/documents must not affect scoped discovery flags.
+      const editOnly = await insertGrant(runtime, fixture, {
+        actions: ['edit'],
+      });
+      await assert.rejects(
+        comparisons.workspace(reader, patient.id),
+        status(404),
+      );
+      await owner.query(
+        'UPDATE fmv.access_grants SET revoked_at=clock_timestamp() WHERE id=$1::uuid',
+        [editOnly.id],
+      );
+      const capRefs = [];
+      for (let i = 0; i < 26; i++) {
+        const id = await upload();
+        await extraction(
+          id,
+          [0, 1, 2]
+            .map(
+              (j) =>
+                `Test: Synthetic analyte\nResult: ${i}.${j}\nUnit: synthetic/unit\nCollection date: 2024-02-29`,
+            )
+            .join('\n\n'),
+        );
+        capRefs.push(await confirmClinical(id));
+      }
+      for (let i = 0; i < 11; i++)
+        await comparisons.confirm(
+          principal,
+          patient.id,
+          randomUUID(),
+          make(0, [capRefs[0], capRefs[1]]),
+        );
+      const bounded = await workspace();
+      assert.equal(bounded.measurements.length, 50);
+      assert.equal(bounded.measurementsLimited, true);
+      assert.equal(bounded.comparisons.length, 10);
+      assert.equal(bounded.comparisonsLimited, true);
+      const allowed = capRefs[25].documentId;
+      await insertGrant(runtime, fixture, {
+        actions: ['view'],
+        scopeKind: 'document',
+        documentId: allowed,
+      });
+      const scoped = await comparisons.workspace(reader, patient.id);
+      assert.equal(scoped.measurements.length, 3);
+      assert.equal(scoped.measurementsLimited, false);
+      assert.deepEqual(scoped.comparisons, []);
+      assert.equal(scoped.comparisonsLimited, false);
+      assert.deepEqual(
+        scoped.sources.map((s) => s.documentId),
+        [allowed],
       );
     } finally {
       await comparisons.onModuleDestroy();

@@ -26,6 +26,8 @@ import {
 } from '../access/transaction-access.store.js';
 import { PermissionService, isUuid } from '../access/permission.service.js';
 
+import { readMeasurementWorkspace } from './measurement-workspace.store.js';
+
 type Tx = Prisma.TransactionClient;
 type Row = {
   revision: number;
@@ -229,6 +231,10 @@ export class MeasurementComparisonsService implements OnModuleDestroy {
           ).size <= 1,
       )
     );
+  }
+  async workspace(principal: Principal, p: string) {
+    p = p.toLowerCase();
+    return this.tx(p, p, (db) => readMeasurementWorkspace(db, principal, p));
   }
   async read(principal: Principal, p: string, id: string) {
     p = p.toLowerCase();

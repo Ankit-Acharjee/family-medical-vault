@@ -50,3 +50,19 @@ export class MeasurementComparisonsController {
     return this.comparisons.withdraw(await this.principal(req), p, id, body);
   }
 }
+
+@Controller('api/patients/:patientId/measurement-workspace')
+@UseGuards(AuthBoundaryGuard)
+export class MeasurementWorkspaceController {
+  constructor(
+    private readonly auth: AuthService,
+    private readonly comparisons: MeasurementComparisonsService,
+  ) {}
+  @Get() async read(@Req() req: Request, @Param('patientId') p: string) {
+    const principal = await this.auth.principal(
+      cookie(req, cookieName(this.auth.config!.secure, 'session')),
+      true,
+    );
+    return this.comparisons.workspace(principal, p);
+  }
+}

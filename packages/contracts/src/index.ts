@@ -128,3 +128,4 @@ export * from './related-documents.js';
 export * from './measurements.js';
 
 export * from './comparability.js';
+export * from './measurement-workspace.js';

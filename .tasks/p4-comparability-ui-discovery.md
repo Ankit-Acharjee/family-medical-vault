@@ -8,3 +8,7 @@ The backend foundation provides per-set confirm/read/withdraw endpoints. It does
 4. Verify real desktop/mobile flows in both themes, keyboard/focus, patient switching, permission expiry/revocation, source/clinical withdrawal and Trash/Restore. Native workers are currently quota-limited; continue supervisor planning or available authorized native execution, with no OpenCode fallback or invented final model review.
 
 Actual chart rendering is a subsequent integration: numeric precision, qualified/text results, date precision, source-specific references and a readable tabular alternative must remain explicit. Existing hard-delete retention constraints and the full P6 purge/backup workflow remain separate work.
+
+## Delivered follow-up
+
+The bounded workspace and existing Trends owner workflow are implemented; see `p4-comparability-ui-report.md` for actual verification and limits. Current ordinary discovery excludes unavailable/trashed sets; metadata-only owner discovery remains separate. The next ready dependency is chart projection/rendering from current explicitly confirmed sets, with raw values and per-source reference context retained.

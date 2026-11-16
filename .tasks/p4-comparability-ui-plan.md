@@ -1,0 +1,11 @@
+# P4 measurement selection and owner confirmation UI
+
+LAB-01/02/03, UX-05/06: implement the already approved comparison policy through the existing Trends route. No chart, automatic grouping, unit conversion, new dependency or global/Overview redesign.
+
+Backend prerequisite: a single bounded workspace read under the existing patient access lock. Discover up to50 current verified entries from25 recent View-eligible originals and up to10 all-member-View comparison summaries, with separately authorized sentinels and truthful incomplete-coverage flags. Lock original rows deterministically before loading current source/clinical metadata; do not load full extraction texts. Final authoritative checks and transactional access audit protect every disclosed member. No schema/hosted write is required.
+
+Presentation: retain Inter and approved Arctic Blue/Obsidian tokens, existing surface/radius/Button/Dialog primitives. Use a compact saved-comparison list followed by a search/filterable, vertically scannable result list, exact raw values/units/dates and expandable source evidence. Owner can select2–20 entries across multiple documents, inspect literal compatibility/unknown fields, explicitly confirm, retry safely and withdraw confirmation. Delegates remain read-only. No illustrated hero, decorative statistics or clinical interpretation.
+
+Lifecycle: preserve same-context selection and captured idempotent requests across focus revalidation; hide protected content until authorized again. Clear on patient/session/permission changes, reject changed source versions, avoid automatic write retries, dismiss on confirmed success and restore focus. Loading/empty/no matches/failure/retry/conflict/pending/uncertain states and narrow layouts are required. Existing originals and review/history flows remain accessible.
+
+Verification: strict response guards; real native PostgreSQL authorization, caps, source/lifecycle and audit tests; actual synthetic Chrome desktop/mobile/both themes,320px overflow, keyboard/focus, reduced motion, axe, success/uncertain/conflict/revocation/patient switch. Existing native workers are quota-limited; supervisor executes and reviews without OpenCode fallback or claiming unavailable independent model review. Local UI skills/toolchain and current public interface guidelines apply under canonical design precedence.

@@ -32,6 +32,7 @@ import { useTheme } from './hooks/use-theme';
 import { MedicalDocumentArt } from './components/overview/MedicalDocumentArt';
 import { PatientPicker, usePatientContext } from './features/patients';
 import { DocumentUploadForm, DocumentsPanel } from './features/documents';
+import { TrendsPanel } from './features/measurements';
 import { FamilyAccessPanel } from './features/access';
 import { captureIncomingLink } from './features/access/incoming-link';
 import { DuplicateUploadNotice } from './features/documents/DuplicateUploadNotice';
@@ -218,7 +219,7 @@ export default function App() {
             </Button>
           </div>
         </header>
-        {destination !== 'documents' && (
+        {destination !== 'documents' && destination !== 'trends' && (
           <div className="search-strip">
             <div className="search-field">
               <Search size={18} aria-hidden="true" />
@@ -336,6 +337,8 @@ export default function App() {
               refreshRevision={listRevision}
               onRequestUpload={() => openDialog('upload')}
             />
+          ) : destination === 'trends' ? (
+            <TrendsPanel onRequestPatient={() => openDialog('patient')} />
           ) : currentState ? (
             <ResourceState
               state="empty"
@@ -396,7 +399,7 @@ export default function App() {
           </DialogHeader>
           {dialog === 'patient' ? (
             <PatientPicker onSelected={() => setDialog(null)} />
-          ) : selectedPatient || patientsLoading ? (
+          ) : dialog === 'upload' && (selectedPatient || patientsLoading) ? (
             <DocumentUploadForm
               onComplete={(allStored, completion) => {
                 if (

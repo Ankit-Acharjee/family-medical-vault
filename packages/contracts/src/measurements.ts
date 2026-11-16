@@ -1,4 +1,8 @@
-import { isClinicalReviewResult } from './clinical-review.js';
+import {
+  isClinicalReviewResult,
+  isReviewedLabFields,
+  isLabFieldCandidate,
+} from './clinical-review.js';
 import type { ReviewedLabFields } from './clinical-review.js';
 import type { LabFieldCandidate } from './lab-fields.js';
 
@@ -130,4 +134,65 @@ export function projectConfirmedMeasurements(
     collectionDate: classifyMeasurementDate(fields.date),
     comparability: { status: 'unconfirmed' },
   }));
+}
+
+/** A response shape check, never a substitute for current source authorization. */
+export function isConfirmedMeasurement(
+  value: unknown,
+): value is ConfirmedMeasurement {
+  const object = (v: unknown): v is Record<string, unknown> =>
+    !!v && typeof v === 'object' && !Array.isArray(v);
+  const exact = (v: Record<string, unknown>, keys: string[]) =>
+    Object.keys(v).length === keys.length &&
+    keys.every((k) => Object.hasOwn(v, k));
+  const integer = (v: unknown, min: number) =>
+    typeof v === 'number' && Number.isInteger(v) && v >= min && v <= 2147483647;
+  const id = (v: unknown) =>
+    typeof v === 'string' && v.length === 36 && uuid.test(v);
+  const equal = (v: unknown, expected: object) =>
+    object(v) &&
+    exact(v, Object.keys(expected)) &&
+    Object.entries(expected).every(([k, x]) => v[k] === x);
+  if (
+    !object(value) ||
+    !exact(value, [
+      'fields',
+      'source',
+      'provenance',
+      'result',
+      'collectionDate',
+      'comparability',
+    ]) ||
+    !isReviewedLabFields(value.fields) ||
+    !isLabFieldCandidate(value.source) ||
+    !object(value.provenance)
+  )
+    return false;
+  const p = value.provenance;
+  return (
+    exact(p, [
+      'patientId',
+      'documentId',
+      'reviewRevision',
+      'sourceRevision',
+      'sourceSha256',
+      'lifecycleVersion',
+      'verifiedAt',
+    ]) &&
+    id(p.patientId) &&
+    id(p.documentId) &&
+    integer(p.reviewRevision, 1) &&
+    integer(p.sourceRevision, 1) &&
+    integer(p.lifecycleVersion, 0) &&
+    typeof p.sourceSha256 === 'string' &&
+    p.sourceSha256.length === 64 &&
+    /^[a-f0-9]{64}$/.test(p.sourceSha256) &&
+    typeof p.verifiedAt === 'string' &&
+    /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(p.verifiedAt) &&
+    Number.isFinite(Date.parse(p.verifiedAt)) &&
+    new Date(p.verifiedAt).toISOString() === p.verifiedAt &&
+    equal(value.result, classifyMeasurementResult(value.fields.result)) &&
+    equal(value.collectionDate, classifyMeasurementDate(value.fields.date)) &&
+    equal(value.comparability, { status: 'unconfirmed' })
+  );
 }
