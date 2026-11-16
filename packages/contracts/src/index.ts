@@ -124,3 +124,5 @@ export * from './medication-fields.js';
 export * from './medication-review.js';
 export * from './processing-consent.js';
 export * from './related-documents.js';
+
+export * from './measurements.js';

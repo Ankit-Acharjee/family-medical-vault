@@ -1,0 +1,11 @@
+# P4 measurement representation foundation — 16 November 2026
+
+LAB-01/02/03, roadmap P4 work package1: added a pure shared representation of owner-confirmed lab entries, preserving corrected fields, original candidate evidence, source/review revisions, SHA, lifecycle context and verification timestamp. Projection accepts current active confirmed items only; malformed/stale snapshots, withdrawn items and provisional candidates cannot supply measurements. Returned nested records are independent copies. The caller still must enforce current document View, source identity and lifecycle: this converter does not establish authorization or hosted freshness.
+
+Numeric decimals remain exact strings; no floating-point coercion or rounding. Qualified values retain the operator and raw representation, including allowed ASCII spacing. Scientific notation, commas, ranges, Unicode digits and other unsupported formats remain literal text. Dates recognize a conservative exact ISO calendar-day subset (years1000–9999); other forms retain their raw text and unknown stays unknown. No unit/date inference, conversions, thresholds or diagnosis interpretation.
+
+The user approved explicit owner confirmation before cross-report comparability. The canonical medical-data document records the decision. Every projected entry starts unconfirmed for comparability, including identical entries; no cross-report grouping is performed.
+
+Two native Terra workers implemented the focused contracts module and adversarial tests; supervisor independently reviewed and refined qualifier spacing/calendar boundaries, then verified the final implementation. Six focused test groups cover precision, ambiguous formats, leap/calendar bounds, corrections/provenance/deep copies, withdrawal/stale rejection and no automatic comparability. Contracts build, workspace types, lint, formatting, secret and whitespace checks pass. Astra remained usage-limited; no unavailable Astra review or OpenCode fallback is claimed.
+
+No API, database schema, existing clinical verification flow, UI or chart changed. Browser/database reruns were unnecessary for this pure model definition. Persistent comparability confirmation, patient-wide measurement access and usable charts remain subsequent P4 work; this is not the finished Trends feature.

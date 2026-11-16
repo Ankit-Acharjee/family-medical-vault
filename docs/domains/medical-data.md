@@ -26,3 +26,7 @@
 **Requirement:** Use replaceable data ingestion interfaces for potential wearable/device sources without initial native app requirement.
 
 **Acceptance check:** Baseline works without third-party health connectors.
+
+### Approved cross-report comparability policy — November 2026
+
+Source-field verification and cross-report comparability are separate decisions. Results from different reports may share a trusted trend only after explicit profile-owner confirmation of comparability; unmatched results remain separate. Matching analyte/unit/specimen/method labels alone do not confirm comparability. This does not authorize silently combining incompatible units or methods, inferring missing fields, or applying unreviewed conversions. Comparability must retain exact source/version references and be rechecked when those sources or confirmations change.
