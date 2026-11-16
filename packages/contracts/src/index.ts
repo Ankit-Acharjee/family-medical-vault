@@ -46,6 +46,7 @@ export type DocumentSummary = {
   originalTitle?: string;
   categoryName?: string;
   canEdit?: boolean;
+  canManageConsent?: boolean;
   mimeType: DocumentMimeType;
   bytes: number;
   createdAt: string;

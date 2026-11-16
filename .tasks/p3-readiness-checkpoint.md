@@ -1,0 +1,12 @@
+# P3 readiness checkpoint — 15 November 2026
+
+Read-only native Codex audit after consent backend9bcd961; this is not a declaration that all P3 work is complete.
+
+1. Browser extraction: PDF.js digital text, real image OCR and one selected PDF page OCR exist with their dedicated E2E suites. Whole-document OCR batching is unsupported; current extraction contracts deliberately accept one OCR page.
+2. Lifecycle: local progress/failure/retry, abort/worker teardown and persisted SHA/revision/lifecycle/CAS fences exist. There is no durable extraction job queue or automatic resumable pipeline; do not claim every planned lifecycle workflow is delivered.
+3. Organization/search: conservative source-linked type/date/provider hints, hint persistence and GIN saved-text search exist. Related-page/document inference and accepted/corrected canonical organization remain gaps.
+4. Verification: source-linked lab correction/confirmation/history plus diagnosis source-only and prescription source-fields-only review exist. General clinical tables/free prose/handwriting, normalized reconciliation and P4 trusted downstream workflows are not delivered by these narrow parsers.
+5. External processing: owner-only immutable backend ledger and empty policy catalog exist; migration18 was separately approved/applied with read-only postflight verification. No provider, submission adapter or processor-side deletion handling is enabled. Document-level owner status/history/withdrawal UI is now implemented and synthetically browser-verified, including original-only sourceRevision0 and no-vetted-provider state; see p3-consent-ui-report.md. Hosted authenticated user-flow verification is not claimed. Actual dispatch requires separately reviewed revocation-safe submission ordering and vetted provider privacy terms.
+6. Accuracy/safety: synthetic parser, prompt injection/leak, cancellation and actual printed OCR happy paths exist. This is not clinical accuracy evidence for real reports or handwriting. A degraded/rotated synthetic printed-scan corpus is a further validation slice, not a new medical interpretation feature.
+
+Audit evidence: existing pdfText/imageOcr/pdfOcr implementation, dedicated pdf-extraction/image-ocr/pdf-ocr E2E, extraction.store native/HTTP tests, metadata/search modules, clinical/diagnosis/medication review reports, extraction-safety report and consent-boundary report. No real records, external models or hosted writes were used for the audit.

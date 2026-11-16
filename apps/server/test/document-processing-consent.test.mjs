@@ -146,11 +146,26 @@ test('processing consent HTTP requires owner/current View, explicit source refer
       ).status,
       409,
     );
+    const ownList = await f.request('GET', f.path('documents'), x.session);
+    assert.equal(ownList.status, 200);
+    assert.equal(
+      (await ownList.json()).documents.find((d) => d.id === x.upload.documentId)
+        .canManageConsent,
+      true,
+    );
     const reader = await f.login(principals.caregiver.subject);
     f.access.grant({
       actions: ['view', 'edit', 'manage', 'upload', 'export'],
       scope: { kind: 'document', documentId: x.upload.documentId },
     });
+    const delegatedList = await f.request('GET', f.path('documents'), reader);
+    assert.equal(delegatedList.status, 200);
+    assert.equal(
+      (await delegatedList.json()).documents.find(
+        (d) => d.id === x.upload.documentId,
+      ).canManageConsent,
+      false,
+    );
     for (const [method, path, body] of [
       ['GET', x.path],
       ['GET', `${x.path}/history?beforeRevision=2`],

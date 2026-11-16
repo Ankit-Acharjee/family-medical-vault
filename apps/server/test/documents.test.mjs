@@ -142,6 +142,7 @@ test('authenticated owner intake preserves exact original through begin/content/
       'bytes',
       'canEdit',
       'canExport',
+      'canManageConsent',
       'canView',
       'categoryId',
       'categoryName',

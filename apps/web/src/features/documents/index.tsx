@@ -1,3 +1,5 @@
+import { ProcessingConsentDialog } from './ProcessingConsentDialog';
+import type { ProcessingConsentSource } from './ProcessingConsentDialog';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FileText, UploadCloud, UserRound } from 'lucide-react';
 import './upload.css';
@@ -92,6 +94,8 @@ function documents(
         typeof d.canView === 'boolean' &&
         typeof d.canExport === 'boolean' &&
         (d.canEdit === undefined || typeof d.canEdit === 'boolean') &&
+        (d.canManageConsent === undefined ||
+          typeof d.canManageConsent === 'boolean') &&
         (d.originalTitle === undefined ||
           typeof d.originalTitle === 'string') &&
         (d.categoryName === undefined || typeof d.categoryName === 'string'),
@@ -187,6 +191,9 @@ export function DocumentsPanel({
   const [extraction, setExtraction] = useState<
     DocumentTextSource | SavedTextSource | null
   >(null);
+  const [consent, setConsent] = useState<ProcessingConsentSource | null>(null);
+  const consentTrigger = useRef<HTMLButtonElement | null>(null);
+  const consentRestoreFocus = useRef(false);
   const extractionTrigger = useRef<HTMLButtonElement | null>(null);
   const extractionRestoreFocus = useRef(false);
   const [actionError, setActionError] = useState('');
@@ -215,6 +222,14 @@ export function DocumentsPanel({
   const active = useRef(patientId);
   active.current = patientId;
   const action = useRef<AbortController | null>(null);
+  useEffect(() => {
+    if (!consentRestoreFocus.current || busy || patientsLoading) return;
+    consentRestoreFocus.current = false;
+    (consentTrigger.current?.isConnected && !consentTrigger.current.disabled
+      ? consentTrigger.current
+      : panel.current
+    )?.focus();
+  }, [list, busy, patientsLoading]);
   useEffect(() => {
     if (!extractionRestoreFocus.current || busy || patientsLoading) return;
     extractionRestoreFocus.current = false;
@@ -282,6 +297,7 @@ export function DocumentsPanel({
       setLifecycle(null);
       setPreview(null);
       setExtraction(null);
+      setConsent(null);
       setFilters({ query: '', category: '', from: '', to: '' });
       setNotice('');
       listPatient.current = patientId;
@@ -326,6 +342,17 @@ export function DocumentsPanel({
                 ? previous
                 : null,
             );
+            setConsent((previous) =>
+              previous &&
+              result.documents.some(
+                (d) =>
+                  d.id === previous.documentId &&
+                  d.canView &&
+                  d.canManageConsent === true,
+              )
+                ? previous
+                : null,
+            );
             setEditing((previous) =>
               previous &&
               result.documents.some(
@@ -347,6 +374,7 @@ export function DocumentsPanel({
             setList({ id: patientId, view: 'trash', value: result });
             setPreview(null);
             setExtraction(null);
+            setConsent(null);
             setEditing(null);
             setLifecycle((previous) =>
               previous &&
@@ -366,6 +394,7 @@ export function DocumentsPanel({
           setList(null);
           setPreview(null);
           setExtraction(null);
+          setConsent(null);
           setEditing(null);
           setLifecycle(null);
         }
@@ -782,6 +811,24 @@ export function DocumentsPanel({
                       Preview
                     </Button>
                   )}{' '}
+                  {doc.canView && doc.canManageConsent === true && (
+                    <Button
+                      variant="ghost"
+                      disabled={busy || patientsLoading}
+                      aria-label={`Processing consent ${doc.title}`}
+                      onClick={(event) => {
+                        consentTrigger.current = event.currentTarget;
+                        setConsent({
+                          patientId: displayPatient.id,
+                          documentId: doc.id,
+                          patientName: displayPatient.displayName,
+                          title: doc.title,
+                        });
+                      }}
+                    >
+                      Processing consent
+                    </Button>
+                  )}
                   {doc.canView && doc.mimeType === 'application/pdf' && (
                     <Button
                       variant="ghost"
@@ -1015,6 +1062,35 @@ export function DocumentsPanel({
           )}
         </DialogContent>
       </Dialog>
+      {consent && consent.patientId === displayPatient.id && (
+        <ProcessingConsentDialog
+          key={`${consent.patientId}:${consent.documentId}`}
+          source={consent}
+          enabled={!busy && !patientsLoading && patientId === consent.patientId}
+          canManage={
+            list?.view === 'active' &&
+            list.id === consent.patientId &&
+            list.value.documents.some(
+              (d) =>
+                d.id === consent.documentId &&
+                d.canView &&
+                d.canManageConsent === true,
+            )
+          }
+          onClose={() => setConsent(null)}
+          restoreFocus={() => {
+            if (busy || patientsLoading) {
+              consentRestoreFocus.current = true;
+              return;
+            }
+            (consentTrigger.current?.isConnected &&
+            !consentTrigger.current.disabled
+              ? consentTrigger.current
+              : panel.current
+            )?.focus();
+          }}
+        />
+      )}
       {extraction &&
         extraction.patientId === displayPatient.id &&
         (extraction.kind === 'saved' ? (

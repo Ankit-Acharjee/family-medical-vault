@@ -95,7 +95,12 @@ test('Trash lifecycle hides all ordinary operations, preserves original objects 
       new Date(deletedAt.getTime() + 30 * 86400000).toISOString(),
     );
     assert.equal(entry.canRestore, true);
-    for (const action of ['canView', 'canExport', 'canEdit'])
+    for (const action of [
+      'canView',
+      'canExport',
+      'canEdit',
+      'canManageConsent',
+    ])
       assert.equal(entry[action], false);
     const ordinary = await (
       await expect(await f.request('GET', f.path('documents'), session), 200)

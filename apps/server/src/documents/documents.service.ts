@@ -170,6 +170,11 @@ export class DocumentsService {
       bytes: r.bytes,
       createdAt: r.createdAt.toISOString(),
       categoryId: r.categoryId,
+      canManageConsent:
+        !includeTrashed &&
+        !!current.accountId &&
+        current.patient?.ownerAccountId === current.accountId &&
+        this.permissions.allows(current, 'view', target, resource),
       canEdit: this.permissions.allows(
         current,
         'edit',
@@ -224,6 +229,7 @@ export class DocumentsService {
           {
             ...summary,
             canView: false,
+            canManageConsent: false,
             canExport: false,
             canEdit: false,
             deletedAt: r.deletedAt.toISOString(),
