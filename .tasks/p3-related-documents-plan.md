@@ -17,4 +17,4 @@ Opt-in, read-only possible-related-document suggestions from separately saved un
 
 Use a bounded Codex backend/contracts worker, separate UI worker after the response contract is fixed, and independent Astra review/tests. Supervisor owns permission/query boundaries, integration, final fixes and push. Do not silently substitute OpenCode if workers are unavailable. Persistent grouping/confirmation, canonical date/provider writes and episode identity remain deferred policy work.
 
-Status: architecture reviewed; implementation not started. Approved migration19 is deployed and verified; feature6844054 and rollout9643ad6 are pushed to develop.
+Status: implemented and verified; see p3-related-documents-report.md. Approved migration19 is deployed and verified; feature6844054 and rollout9643ad6 are pushed to develop.

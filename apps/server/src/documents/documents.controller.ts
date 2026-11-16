@@ -253,6 +253,14 @@ export class DocumentsController {
   ) {
     return this.documents.clinical.save(await this.principal(req), p, d, body);
   }
+  @Get('documents/:documentId/related-documents')
+  async relatedDocuments(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('documentId') d: string,
+  ) {
+    return this.documents.relatedDocuments(await this.principal(req), p, d);
+  }
   @Get('documents/:documentId/metadata-suggestions')
   async savedMetadata(
     @Req() req: Request,

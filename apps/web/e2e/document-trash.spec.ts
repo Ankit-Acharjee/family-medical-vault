@@ -280,6 +280,8 @@ test('an unconfirmed Trash mutation releases its pending state and retries only 
   ).toBeDisabled();
   await page.keyboard.press('Escape');
   await expect(dialog).toBeVisible();
+  // Wait for the first request to enter its fixture gate before advancing time.
+  await expect.poll(() => held).toBe(true);
   await page.clock.fastForward(30_001);
   await expect(dialog.getByRole('alert')).toContainText(
     'could not be confirmed',

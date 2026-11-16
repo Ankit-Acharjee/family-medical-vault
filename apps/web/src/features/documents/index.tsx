@@ -1,4 +1,5 @@
 import { ProcessingConsentDialog } from './ProcessingConsentDialog';
+import { RelatedDocumentsDialog } from './RelatedDocumentsDialog';
 import type { ProcessingConsentSource } from './ProcessingConsentDialog';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FileText, UploadCloud, UserRound } from 'lucide-react';
@@ -192,6 +193,9 @@ export function DocumentsPanel({
     DocumentTextSource | SavedTextSource | null
   >(null);
   const [consent, setConsent] = useState<ProcessingConsentSource | null>(null);
+  const [related, setRelated] = useState<ProcessingConsentSource | null>(null);
+  const relatedTrigger = useRef<HTMLButtonElement | null>(null);
+  const relatedRestoreFocus = useRef(false);
   const consentTrigger = useRef<HTMLButtonElement | null>(null);
   const consentRestoreFocus = useRef(false);
   const extractionTrigger = useRef<HTMLButtonElement | null>(null);
@@ -222,6 +226,14 @@ export function DocumentsPanel({
   const active = useRef(patientId);
   active.current = patientId;
   const action = useRef<AbortController | null>(null);
+  useEffect(() => {
+    if (!relatedRestoreFocus.current || busy || patientsLoading) return;
+    relatedRestoreFocus.current = false;
+    (relatedTrigger.current?.isConnected && !relatedTrigger.current.disabled
+      ? relatedTrigger.current
+      : panel.current
+    )?.focus();
+  }, [list, busy, patientsLoading]);
   useEffect(() => {
     if (!consentRestoreFocus.current || busy || patientsLoading) return;
     consentRestoreFocus.current = false;
@@ -298,6 +310,7 @@ export function DocumentsPanel({
       setPreview(null);
       setExtraction(null);
       setConsent(null);
+      setRelated(null);
       setFilters({ query: '', category: '', from: '', to: '' });
       setNotice('');
       listPatient.current = patientId;
@@ -342,6 +355,14 @@ export function DocumentsPanel({
                 ? previous
                 : null,
             );
+            setRelated((previous) =>
+              previous &&
+              result.documents.some(
+                (d) => d.id === previous.documentId && d.canView,
+              )
+                ? previous
+                : null,
+            );
             setConsent((previous) =>
               previous &&
               result.documents.some(
@@ -375,6 +396,7 @@ export function DocumentsPanel({
             setPreview(null);
             setExtraction(null);
             setConsent(null);
+            setRelated(null);
             setEditing(null);
             setLifecycle((previous) =>
               previous &&
@@ -395,6 +417,7 @@ export function DocumentsPanel({
           setPreview(null);
           setExtraction(null);
           setConsent(null);
+          setRelated(null);
           setEditing(null);
           setLifecycle(null);
         }
@@ -418,6 +441,7 @@ export function DocumentsPanel({
   );
   const denyExtraction = useCallback(() => {
     setExtraction(null);
+    setRelated(null);
     setPreview(null);
     setList(null);
     setError('Document access is no longer available. Refresh and try again.');
@@ -811,6 +835,24 @@ export function DocumentsPanel({
                       Preview
                     </Button>
                   )}{' '}
+                  {doc.canView && (
+                    <Button
+                      variant="ghost"
+                      disabled={busy || patientsLoading}
+                      aria-label={`Possible related documents ${doc.title}`}
+                      onClick={(event) => {
+                        relatedTrigger.current = event.currentTarget;
+                        setRelated({
+                          patientId: displayPatient.id,
+                          patientName: displayPatient.displayName,
+                          documentId: doc.id,
+                          title: doc.title,
+                        });
+                      }}
+                    >
+                      Possible related documents
+                    </Button>
+                  )}
                   {doc.canView && doc.canManageConsent === true && (
                     <Button
                       variant="ghost"
@@ -1062,6 +1104,39 @@ export function DocumentsPanel({
           )}
         </DialogContent>
       </Dialog>
+      {related && related.patientId === displayPatient.id && (
+        <RelatedDocumentsDialog
+          key={`${related.patientId}:${related.documentId}`}
+          source={related}
+          enabled={!busy && !patientsLoading && patientId === related.patientId}
+          onClose={() => setRelated(null)}
+          onDenied={denyExtraction}
+          restoreFocus={() => {
+            if (busy || patientsLoading) {
+              relatedRestoreFocus.current = true;
+              return;
+            }
+            (relatedTrigger.current?.isConnected &&
+            !relatedTrigger.current.disabled
+              ? relatedTrigger.current
+              : panel.current
+            )?.focus();
+          }}
+          onView={(id) => {
+            const candidate =
+              list?.view === 'active'
+                ? list.value.documents.find((d) => d.id === id && d.canView)
+                : undefined;
+            if (candidate) {
+              setRelated(null);
+              void read(candidate, false);
+            } else {
+              setRelated(null);
+              setVersion((n) => n + 1);
+            }
+          }}
+        />
+      )}
       {consent && consent.patientId === displayPatient.id && (
         <ProcessingConsentDialog
           key={`${consent.patientId}:${consent.documentId}`}

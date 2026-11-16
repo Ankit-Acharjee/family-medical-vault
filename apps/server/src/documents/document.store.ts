@@ -1,3 +1,6 @@
+import { readRelatedDocuments } from './related-documents.store.js';
+import type { RelatedScopes } from './related-documents.store.js';
+import type { RelatedDocumentsResult } from '@fmv/contracts';
 import type {
   ProcessingConsentResult,
   ProcessingConsentHistoryResult,
@@ -92,6 +95,12 @@ export type SearchAuthorization = (
 
 export type TrashChangeResult = 'changed' | 'unchanged' | 'missing' | 'expired';
 export abstract class DocumentStore {
+  abstract readRelatedDocuments(
+    p: string,
+    d: string,
+    scopes: RelatedScopes,
+    authorize: SearchAuthorization,
+  ): Promise<RelatedDocumentsResult | null>;
   abstract readProcessingConsent(
     p: string,
     d: string,
@@ -263,6 +272,14 @@ export class PrismaDocumentStore
       }),
       log: [],
     });
+  }
+  readRelatedDocuments(
+    p: string,
+    d: string,
+    scopes: RelatedScopes,
+    authorize: SearchAuthorization,
+  ) {
+    return readRelatedDocuments(this.db, p, d, scopes, authorize);
   }
   readProcessingConsent(
     p: string,

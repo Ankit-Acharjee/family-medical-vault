@@ -102,6 +102,73 @@ export class DocumentsService {
       .filter((r) => r.canView || r.canExport);
     return { documents, storageReady: this.objects.ready };
   }
+  async relatedDocuments(
+    principal: Principal,
+    patientId: string,
+    documentId: string,
+  ) {
+    if (!isUuid(patientId) || !isUuid(documentId))
+      throw new NotFoundException();
+    documentId = documentId.toLowerCase();
+    patientId = patientId.toLowerCase();
+    const initial = await this.permissions.snapshot(principal, patientId);
+    const grants = initial.grants.filter(
+      (g) =>
+        g.patientId === patientId &&
+        g.granteeAccountId === initial.accountId &&
+        g.revokedAt === null &&
+        (!g.expiresAt || g.expiresAt > initial.now) &&
+        g.actions.includes('view'),
+    );
+    const scopes = {
+      all:
+        initial.patient?.ownerAccountId === initial.accountId ||
+        grants.some((g) => g.scope.kind === 'patient'),
+      categories: grants.flatMap((g) =>
+        g.scope.kind === 'category' && isUuid(g.scope.categoryId)
+          ? [g.scope.categoryId]
+          : [],
+      ),
+      documents: grants.flatMap((g) =>
+        g.scope.kind === 'document' && isUuid(g.scope.documentId)
+          ? [g.scope.documentId]
+          : [],
+      ),
+    };
+    try {
+      const result = await this.store.readRelatedDocuments(
+        patientId,
+        documentId,
+        scopes,
+        async (rows) => {
+          const current = await this.permissions.snapshot(principal, patientId);
+          for (const row of rows)
+            if (
+              row.patientId !== patientId ||
+              row.state !== 'ready' ||
+              row.deletedAt ||
+              !this.permissions.allows(
+                current,
+                'view',
+                { kind: 'document', documentId: row.documentId },
+                { ...row, id: row.documentId },
+              )
+            )
+              throw new NotFoundException();
+          return current.accountId!;
+        },
+      );
+      if (!result) throw new NotFoundException();
+      return result;
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ServiceUnavailableException
+      )
+        throw error;
+      throw new ServiceUnavailableException();
+    }
+  }
   async search(
     principal: Principal,
     patientId: string,
