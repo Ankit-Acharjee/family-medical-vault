@@ -1,6 +1,6 @@
 # Next dependency — comparison discovery and owner UI
 
-The backend foundation provides per-set confirm/read/withdraw endpoints. It does not yet expose a finished Trends workflow. Migration20 requires separate hosted approval; no further policy question is needed for the already approved explicit owner comparability rule.
+The backend foundation provides per-set confirm/read/withdraw endpoints. It does not yet expose a finished Trends workflow. Migration20 was separately approved and applied with all20 checksums and restricted-role postflight verified; no further policy question is needed for the already approved explicit owner comparability rule.
 
 1. Build bounded current verified-measurement discovery under current per-document View, preserving exact source/review/lifecycle refs. Do not fetch all full extraction texts or assume patient membership grants access. Disclose incomplete coverage without counts from denied resources.
 2. Add discoverability for current comparison sets, authorizing every disclosed member. Avoid silent partial sets or fallback to older confirmations. Plan owner metadata-only access for withdrawal of unavailable sets without exposing trashed clinical contents; keep ordinary delegate reads strictly all-member View.
