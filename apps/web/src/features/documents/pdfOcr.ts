@@ -11,6 +11,7 @@ import rendererUrl from 'pdfjs-dist/build/pdf.renderer.mjs?url&no-inline';
 import { recognizeImage } from './imageOcr';
 import { ocrByteLimit } from './ocrTypes';
 import type { OcrProgress, OcrState } from './ocrTypes';
+import type { PdfOcrRangeResult } from './pdfOcrTypes';
 
 // Publisher assets only. Keep embedded-text extraction's configuration separate.
 const assets = import.meta.glob(
@@ -29,7 +30,9 @@ export function renderPdfPagePreview(
   pageNumber: number,
   signal: AbortSignal,
 ): Promise<PdfPagePreview> {
-  return processPdfPage(data, pageNumber, signal, () => {}, true);
+  return withPdfLease(() =>
+    processPdfPage(data, pageNumber, signal, () => {}, true),
+  );
 }
 /** The caller's 60-second signal includes original acquisition and this entire job. */
 export function recognizePdfPage(
@@ -38,7 +41,95 @@ export function recognizePdfPage(
   signal: AbortSignal,
   progress: OcrProgress,
 ): Promise<OcrState> {
-  return processPdfPage(data, pageNumber, signal, progress, false);
+  return withPdfLease(() =>
+    processPdfPage(data, pageNumber, signal, progress, false),
+  );
+}
+async function withPdfLease<
+  T extends OcrState | PdfPagePreview | PdfOcrRangeResult,
+>(run: () => Promise<T>): Promise<T | Extract<OcrState, { kind: 'failed' }>> {
+  if (running) return { kind: 'failed', reason: 'unavailable' };
+  running = true;
+  try {
+    return await run();
+  } finally {
+    running = false;
+  }
+}
+
+/** The input is retained as an immutable master; PDF.js transfers each copy. */
+export function recognizePdfPages(
+  data: Uint8Array<ArrayBuffer>,
+  start: number,
+  end: number,
+  signal: AbortSignal,
+  progress: (
+    page: number,
+    count: number,
+    stage: Parameters<OcrProgress>[0],
+  ) => void,
+): Promise<PdfOcrRangeResult> {
+  return withPdfLease<PdfOcrRangeResult>(async () => {
+    signal.throwIfAborted();
+    if (data.byteLength > ocrByteLimit)
+      return { kind: 'failed', reason: 'size' };
+    if (
+      !Number.isInteger(start) ||
+      !Number.isInteger(end) ||
+      start < 1 ||
+      end > 50 ||
+      end < start ||
+      end - start >= 5
+    )
+      return { kind: 'failed', reason: 'page' };
+    const pages: { page: number; text: string }[] = [];
+    let length = 0;
+    let downsized = false;
+    let partialReason: 'selected-pages' | 'characters' = 'selected-pages';
+    for (let page = start; page <= end; page++) {
+      signal.throwIfAborted();
+      const result = await processPdfPage(
+        data.slice(),
+        page,
+        signal,
+        (stage) => progress(page, end - start + 1, stage),
+        false,
+        end,
+      );
+      signal.throwIfAborted();
+      if (result.kind === 'failed') return result;
+      if (result.kind !== 'ready' && result.kind !== 'empty')
+        return { kind: 'failed', reason: 'unavailable' };
+      downsized ||= result.downsized;
+      const recognized = result.kind === 'ready' ? result.text : '';
+      const text = recognized.trim() ? recognized : '';
+      const remaining = 100_000 - length;
+      let prefixEnd = Math.min(text.length, remaining);
+      if (
+        prefixEnd > 0 &&
+        prefixEnd < text.length &&
+        text.charCodeAt(prefixEnd - 1) >= 0xd800 &&
+        text.charCodeAt(prefixEnd - 1) <= 0xdbff &&
+        text.charCodeAt(prefixEnd) >= 0xdc00 &&
+        text.charCodeAt(prefixEnd) <= 0xdfff
+      )
+        prefixEnd--;
+      const prefix = text.slice(0, prefixEnd);
+      pages.push({ page, text: prefix });
+      length += prefix.length;
+      if (
+        (result.kind === 'ready' && result.partial) ||
+        text.length > remaining ||
+        (length === 100_000 && page < end)
+      ) {
+        partialReason = 'characters';
+        break;
+      }
+    }
+    return pages.some((page) => page.text)
+      ? { kind: 'ready', pages, partialReason, downsized }
+      : { kind: 'empty', downsized };
+  });
 }
 function processPdfPage(
   data: Uint8Array<ArrayBuffer>,
@@ -46,6 +137,7 @@ function processPdfPage(
   signal: AbortSignal,
   progress: OcrProgress,
   preview: true,
+  requiredEnd?: number,
 ): Promise<PdfPagePreview>;
 function processPdfPage(
   data: Uint8Array<ArrayBuffer>,
@@ -53,6 +145,7 @@ function processPdfPage(
   signal: AbortSignal,
   progress: OcrProgress,
   preview: false,
+  requiredEnd?: number,
 ): Promise<OcrState>;
 async function processPdfPage(
   data: Uint8Array<ArrayBuffer>,
@@ -60,13 +153,13 @@ async function processPdfPage(
   signal: AbortSignal,
   progress: OcrProgress,
   preview: boolean,
+  requiredEnd = pageNumber,
 ): Promise<OcrState | PdfPagePreview> {
   signal.throwIfAborted();
   if (data.byteLength > (preview ? maximumDocumentBytes : ocrByteLimit))
     return { kind: 'failed', reason: 'size' };
   if (!Number.isInteger(pageNumber) || pageNumber < 1 || pageNumber > 50)
     return { kind: 'failed', reason: 'page' };
-  if (running) return { kind: 'failed', reason: 'unavailable' };
   if (
     typeof Worker !== 'function' ||
     typeof OffscreenCanvas !== 'function' ||
@@ -74,7 +167,6 @@ async function processPdfPage(
   )
     return { kind: 'failed', reason: 'unsupported' };
 
-  running = true;
   const callerSignal = signal;
   const lifetime = new AbortController();
   const forwardAbort = () => lifetime.abort(callerSignal.reason);
@@ -254,7 +346,7 @@ async function processPdfPage(
     signal.throwIfAborted();
     if (!preview && pdf.numPages > 50)
       return { kind: 'failed', reason: 'pages' };
-    if (pageNumber > pdf.numPages) return { kind: 'failed', reason: 'page' };
+    if (requiredEnd > pdf.numPages) return { kind: 'failed', reason: 'page' };
     if (pdf.isPureXfa) return { kind: 'failed', reason: 'unsupported' };
     const page = await pdf.getPage(pageNumber);
     signal.throwIfAborted();
@@ -350,6 +442,5 @@ async function processPdfPage(
     callerSignal.removeEventListener('abort', forwardAbort);
     signal.removeEventListener('abort', cancel);
     releasePdf();
-    running = false;
   }
 }

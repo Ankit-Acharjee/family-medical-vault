@@ -1,3 +1,4 @@
+import { verifyPdfPagesOcr } from './pdf-pages-ocr-database.mjs';
 import { verifyProcessingConsent } from './processing-consent-database.mjs';
 import { verifyMedicationStatements } from './medication-review-database.mjs';
 import { verifyDiagnosisStatements } from './diagnosis-review-database.mjs';
@@ -713,6 +714,18 @@ export async function verifyClinicalReview(runtimeUrl, owner, insertGrant) {
       intake,
       authorize,
       categoryId,
+    });
+    await verifyPdfPagesOcr({
+      service,
+      runtime,
+      owner,
+      principal,
+      reader,
+      patient,
+      id,
+      insertGrant,
+      ownerAccountId,
+      readerAccountId,
     });
     assert.deepEqual(await immutable(), original);
     assert.deepEqual(

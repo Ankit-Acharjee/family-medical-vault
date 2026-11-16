@@ -1,3 +1,4 @@
+import { isSaveExtraction } from '@fmv/contracts';
 import { mockExtractionContext } from './support/extraction-context';
 import { deflateSync } from 'node:zlib';
 import { expect, test, type Page } from '@playwright/test';
@@ -953,5 +954,384 @@ for (const theme of ['light', 'dark']) {
     await page.keyboard.press('Escape');
     await expect(dialog(page)).toHaveCount(0);
     await expect(action(page)).toBeFocused();
+  });
+}
+
+async function openRange(page: Page, from = '1', to = '2') {
+  await open(page);
+  await dialog(page)
+    .getByLabel('Recognize a page range (up to 5 pages)')
+    .check();
+  await dialog(page).getByLabel('Start page', { exact: true }).fill(from);
+  await dialog(page).getByLabel('End page', { exact: true }).fill(to);
+}
+
+async function startRange(page: Page, from = '1', to = '2') {
+  await openRange(page, from, to);
+  await dialog(page)
+    .getByRole('button', { name: 'Start OCR', exact: true })
+    .click();
+}
+
+test('explicit range recognizes both local scanned pages and reports selected scope', async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const api = await setup(page);
+  await openRange(page);
+  expect(api.reads).toEqual([]);
+  await dialog(page)
+    .getByRole('button', { name: 'Start OCR', exact: true })
+    .click();
+  await recognized(page, firstText);
+  await expect(dialog(page)).toContainText(secondText);
+  await expect(
+    dialog(page).getByRole('heading', { name: 'Page 1', exact: true }),
+  ).toBeVisible();
+  await expect(
+    dialog(page).getByRole('heading', { name: 'Page 2', exact: true }),
+  ).toBeVisible();
+  await expect(dialog(page)).toContainText(/only the selected page range/i);
+  expect(api.external).toEqual([]);
+  expect(api.errors).toEqual([]);
+  await expect.poll(() => ownedWorkers(page).length).toBe(0);
+});
+
+for (const [from, to] of [
+  ['0', '2'],
+  ['1', '51'],
+  ['3', '2'],
+  ['1', '6'],
+]) {
+  test(`invalid range ${from}–${to} does not fetch or start`, async ({
+    page,
+  }) => {
+    const api = await setup(page);
+    await openRange(page, from, to);
+    await expect(
+      dialog(page).getByRole('button', { name: 'Start OCR', exact: true }),
+    ).toBeDisabled();
+    await expect(dialog(page)).toContainText(/valid range.*1 to 50.*5 pages/i);
+    expect(api.reads).toEqual([]);
+  });
+}
+
+test('range beyond actual page count fails before OCR and cannot be saved', async ({
+  page,
+}) => {
+  await setup(page);
+  test.setTimeout(90_000);
+  let workers = 0;
+  page.on('worker', (worker) => {
+    if (worker.url().includes('/ocr-assets/v7/worker.js')) workers++;
+  });
+  await startRange(page, '1', '3');
+  await expect(dialog(page)).toContainText(/outside.*page range/i);
+  await expect(
+    dialog(page).getByRole('button', { name: 'Save text' }),
+  ).toHaveCount(0);
+  expect(workers).toBe(0);
+});
+
+for (const operation of ['cancel', 'timeout', 'VIEW revoked'] as const) {
+  test(`range ${operation} during acquisition discards late source`, async ({
+    page,
+  }) => {
+    const api = await setup(page);
+    api.hold();
+    if (operation === 'timeout') await page.clock.install();
+    await startRange(page);
+    await expect.poll(() => api.reads.length).toBeGreaterThanOrEqual(1);
+    if (operation === 'cancel') {
+      await dialog(page)
+        .getByRole('button', { name: 'Cancel OCR', exact: true })
+        .click();
+      await expect(action(page)).toBeFocused();
+    } else if (operation === 'timeout') {
+      await page.clock.fastForward(60_001);
+      await expect(dialog(page)).toContainText(/timed out/i);
+    } else {
+      api.revoke();
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+      await expect(dialog(page)).toHaveCount(0);
+    }
+    api.release();
+    await expect(page.getByText(firstText, { exact: true })).toHaveCount(0);
+    await expect.poll(() => ownedWorkers(page).length).toBe(0);
+  });
+}
+
+for (const theme of ['light', 'dark']) {
+  for (const width of [320, 390, 1440]) {
+    test(`${theme} range controls are accessible at ${width}px`, async ({
+      page,
+    }, testInfo) => {
+      await page.setViewportSize({ width, height: 1000 });
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await page.addInitScript(
+        (theme) => localStorage.setItem('fmv.theme', theme),
+        theme,
+      );
+      await setup(page);
+      await action(page).focus();
+      await page.keyboard.press('Enter');
+      const toggle = dialog(page).getByLabel(
+        'Recognize a page range (up to 5 pages)',
+      );
+      await toggle.focus();
+      await page.keyboard.press('Space');
+      await expect(toggle).toBeChecked();
+      await expect(
+        dialog(page).getByLabel('End page', { exact: true }),
+      ).toBeVisible();
+      expect(
+        (await new AxeBuilder({ page }).include('[role="dialog"]').analyze())
+          .violations,
+      ).toEqual([]);
+      expect(
+        await page.evaluate(
+          () =>
+            window.document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      ).toBe(true);
+      await page.screenshot({
+        path: testInfo.outputPath(`range-${theme}-${width}.png`),
+      });
+      await page.keyboard.press('Escape');
+      await expect(action(page)).toBeFocused();
+    });
+  }
+}
+
+// Controlled publisher responses exercise otherwise impractical blank and limit cases.
+async function mockRangeEngine(page: Page, outputs: (string | null)[]) {
+  let requests = 0;
+  await page.route('**/ocr-assets/v7/engine.min.js', (route) => {
+    const output = outputs[Math.min(requests++, outputs.length - 1)];
+    return route.fulfill({
+      contentType: 'text/javascript',
+      body: `globalThis.addEventListener('message', ({data}) => {
+        if (data.action === 'recognize' && ${JSON.stringify(output)} === null) {
+          globalThis.postMessage({jobId:data.jobId, action:data.action, status:'reject'}); return;
+        }
+        globalThis.postMessage({jobId:data.jobId, action:data.action, status:'resolve', data:{text:${JSON.stringify(output)}}});
+      });`,
+    });
+  });
+  return () => requests;
+}
+
+for (const scenario of ['blank', 'mixed', 'failed'] as const) {
+  test(`range ${scenario} pages do not publish a misleading result`, async ({
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    await setup(page);
+    const calls = await mockRangeEngine(
+      page,
+      scenario === 'blank'
+        ? ['', '']
+        : scenario === 'mixed'
+          ? ['SYNTHETIC FIRST', '']
+          : ['SYNTHETIC FIRST', null],
+    );
+    await startRange(page);
+    if (scenario === 'blank') {
+      await expect(dialog(page)).toContainText(/no text was recognized/i);
+      await expect(
+        dialog(page).getByRole('button', { name: 'Save text' }),
+      ).toHaveCount(0);
+    } else if (scenario === 'mixed') {
+      await expect(dialog(page)).toContainText('SYNTHETIC FIRST', {
+        timeout: 60_000,
+      });
+      await expect(
+        dialog(page).getByRole('heading', { name: 'Page 2', exact: true }),
+      ).toBeVisible();
+    } else {
+      await expect(dialog(page)).toContainText(
+        /recognition did not complete/i,
+        { timeout: 60_000 },
+      );
+      await expect(dialog(page)).not.toContainText('SYNTHETIC FIRST');
+      await expect(
+        dialog(page).getByRole('button', { name: 'Save text' }),
+      ).toHaveCount(0);
+    }
+    expect(calls()).toBe(2);
+    await expect.poll(() => ownedWorkers(page).length).toBe(0);
+  });
+}
+
+test('character limit stops range before recognizing its second page', async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await setup(page);
+  const calls = await mockRangeEngine(page, [
+    'X'.repeat(100_001),
+    'SECOND PAGE',
+  ]);
+  await startRange(page);
+  await expect(dialog(page)).toContainText(/stopped at the character limit/i, {
+    timeout: 60_000,
+  });
+  await expect(
+    dialog(page).getByRole('heading', { name: 'Page 2', exact: true }),
+  ).toHaveCount(0);
+  expect(calls()).toBe(1);
+});
+
+async function rangeSaveContext(page: Page) {
+  await page.route(
+    '**/api/patients/*/documents/*/extraction/context',
+    (route) =>
+      route.fulfill({
+        json: {
+          context: {
+            sourceSha256: 'a'.repeat(64),
+            lifecycleVersion: 2,
+            revision: 3,
+            canSave: true,
+          },
+        },
+      }),
+  );
+  const writes: Record<string, unknown>[] = [];
+  await page.route(
+    '**/api/patients/*/documents/*/extraction',
+    async (route) => {
+      if (route.request().method() !== 'PUT')
+        return route.fulfill({ status: 404 });
+      writes.push(route.request().postDataJSON());
+      await route.fulfill({ json: { saved: true, revision: 4 } });
+    },
+  );
+
+  return writes;
+}
+
+test('range save is explicit and carries source context and selected pages', async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await setup(page);
+  const writes = await rangeSaveContext(page);
+  await mockRangeEngine(page, ['SYNTHETIC FIRST', 'SYNTHETIC SECOND']);
+  await startRange(page);
+  await expect(dialog(page)).toContainText('SYNTHETIC SECOND', {
+    timeout: 60_000,
+  });
+  expect(writes).toEqual([]);
+  await expect(dialog(page)).toContainText(/replaces.*selected page range/i);
+  await dialog(page)
+    .getByRole('button', { name: 'Save text', exact: true })
+    .click();
+  await expect(dialog(page)).toContainText(/unverified text saved/i);
+  expect(writes).toHaveLength(1);
+  expect(writes[0]).toMatchObject({
+    expectedRevision: 3,
+    lifecycleVersion: 2,
+    sourceSha256: 'a'.repeat(64),
+    result: {
+      method: 'pdf-pages-ocr',
+      partial: true,
+      partialReason: 'selected-pages',
+      pages: [
+        { page: 1, text: 'SYNTHETIC FIRST' },
+        { page: 2, text: 'SYNTHETIC SECOND' },
+      ],
+    },
+  });
+});
+
+test('range progress tracks completed selected pages and cancellation releases its lease', async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const api = await setup(page);
+  let calls = 0;
+  await page.route('**/ocr-assets/v7/engine.min.js', (route) => {
+    const stall = ++calls === 2;
+    return route.fulfill({
+      contentType: 'text/javascript',
+      body: `
+      globalThis.addEventListener('message', ({data}) => {
+        if (data.action === 'recognize' && ${stall}) return;
+        globalThis.postMessage({jobId:data.jobId, action:data.action, status:'resolve', data:{text:'SYNTHETIC PAGE'}});
+      });`,
+    });
+  });
+  await startRange(page);
+  await expect.poll(() => calls, { timeout: 60_000 }).toBe(2);
+  await expect(dialog(page)).toContainText(
+    /PDF page 2\. 1 of 2 selected pages completed/i,
+  );
+  await expect(dialog(page).getByLabel('OCR progress')).toHaveCount(0);
+  await expect(dialog(page)).not.toContainText('SYNTHETIC PAGE');
+  await dialog(page)
+    .getByRole('button', { name: 'Cancel OCR', exact: true })
+    .click();
+  await expect(dialog(page)).toHaveCount(0);
+  await expect(action(page)).toBeFocused();
+  await expect.poll(() => ownedWorkers(page).length).toBe(0);
+  await startRange(page);
+  await expect(dialog(page)).toContainText('SYNTHETIC PAGE', {
+    timeout: 60_000,
+  });
+  expect(calls).toBe(4);
+  expect(api.external).toEqual([]);
+  expect(api.errors).toEqual([]);
+});
+
+for (const boundary of ['publisher', 'aggregate', 'exact-final'] as const) {
+  test(`range Unicode ${boundary} boundary stays savable and does not split a character`, async ({
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    await setup(page);
+    const writes = await rangeSaveContext(page);
+    const outputs =
+      boundary === 'publisher'
+        ? ['X'.repeat(99999) + '🧊', 'SHOULD NOT RUN']
+        : [
+            'X'.repeat(60000),
+            'Y'.repeat(boundary === 'aggregate' ? 39999 : 40000) +
+              (boundary === 'aggregate' ? '🧊' : ''),
+          ];
+    const calls = await mockRangeEngine(page, outputs);
+    await startRange(page);
+    if (boundary !== 'exact-final')
+      await expect(dialog(page)).toContainText(
+        /stopped at the character limit/i,
+        { timeout: 60_000 },
+      );
+    else
+      await expect(dialog(page)).toContainText(
+        /only the selected page range/i,
+        { timeout: 60_000 },
+      );
+    await dialog(page)
+      .getByRole('button', { name: 'Save text', exact: true })
+      .click();
+    await expect(dialog(page)).toContainText(/unverified text saved/i);
+    expect(writes).toHaveLength(1);
+    const saved = writes[0]!;
+    expect(isSaveExtraction(saved)).toBe(true);
+    const result = saved.result as {
+      pages: { page: number; text: string }[];
+      partialReason: string;
+    };
+    expect(result.pages.reduce((n, p) => n + p.text.length, 0)).toBe(
+      boundary === 'exact-final' ? 100000 : 99999,
+    );
+    expect(result.partialReason).toBe(
+      boundary === 'exact-final' ? 'selected-pages' : 'characters',
+    );
+    expect(calls()).toBe(boundary === 'publisher' ? 1 : 2);
+    expect(result.pages.some((p) => /[\uD800-\uDBFF]$/.test(p.text))).toBe(
+      false,
+    );
+    await expect.poll(() => ownedWorkers(page).length).toBe(0);
   });
 }

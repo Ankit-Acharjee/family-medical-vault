@@ -95,6 +95,7 @@ async function setup(
     canView?: boolean;
     initial?: boolean;
     selectedPage?: boolean;
+    selectedRange?: boolean;
     metadataText?: string;
     characterTruncated?: boolean;
     canVerify?: boolean;
@@ -173,30 +174,42 @@ async function setup(
     external: string[] = [];
   let snapshot: Record<string, unknown> | null = options.initial
     ? {
-        method:
-          options.comparison === 'png'
+        method: options.selectedRange
+          ? 'pdf-pages-ocr'
+          : options.comparison === 'png'
             ? 'image-ocr'
             : options.selectedPage
               ? 'pdf-page-ocr'
               : 'pdf-text',
-        engineVersion:
-          options.comparison === 'png'
+        engineVersion: options.selectedRange
+          ? 'pdfjs-6.5.438+tesseract-7.0.0+eng-1.0.0'
+          : options.comparison === 'png'
             ? 'tesseract-7.0.0+eng-1.0.0'
             : options.selectedPage
               ? 'pdfjs-6.5.438+tesseract-7.0.0+eng-1.0.0'
               : 'pdfjs-6.5.438',
-        pages: [
-          {
-            page: options.selectedPage ? 7 : 1,
-            text: options.metadataText ?? text,
-          },
-        ],
-        partial: !!options.selectedPage || !!options.characterTruncated,
+        pages: options.selectedRange
+          ? [
+              { page: 7, text: '' },
+              { page: 8, text: options.metadataText ?? text },
+            ]
+          : [
+              {
+                page: options.selectedPage ? 7 : 1,
+                text: options.metadataText ?? text,
+              },
+            ],
+        partial:
+          !!options.selectedRange ||
+          !!options.selectedPage ||
+          !!options.characterTruncated,
         partialReason: options.characterTruncated
           ? 'characters'
-          : options.selectedPage
-            ? 'selected-page'
-            : null,
+          : options.selectedRange
+            ? 'selected-pages'
+            : options.selectedPage
+              ? 'selected-page'
+              : null,
         downsized: !!options.selectedPage,
         sourceSha256: sourceSha,
         revision: 1,
@@ -3932,4 +3945,28 @@ test('medication committed withdrawal retries only its captured operation and de
     })
     .click();
   await expect(saved(page)).toHaveCount(0);
+});
+
+test('saved OCR range preserves blank page provenance and reopens without original processing', async ({
+  page,
+}) => {
+  const api = await setup(page, { initial: true, selectedRange: true });
+  await action(page, 'Saved text').click();
+  await expect(saved(page)).toContainText(/returned selected page range/);
+  await expect(saved(page)).toContainText(/not whole-document text/);
+  await expect(saved(page)).toContainText(
+    /No text was recognized on this page/,
+  );
+  await expect(
+    saved(page).getByRole('heading', { name: 'Page 7', exact: true }),
+  ).toBeVisible();
+  await expect(
+    saved(page).getByRole('heading', { name: 'Page 8', exact: true }),
+  ).toBeVisible();
+  await expect(saved(page)).not.toContainText('No embedded text on this page.');
+  await expect(saved(page)).toContainText(/unverified/i);
+  expect(api.counts().previews).toBe(0);
+  expect(api.ocrAssets).toEqual([]);
+  expect(api.writes).toEqual([]);
+  expect(api.external).toEqual([]);
 });

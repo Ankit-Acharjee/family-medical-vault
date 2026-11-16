@@ -1,6 +1,6 @@
 # Next P3 functional slice — multi-page PDF OCR discovery
 
-Status: read-only discovery begun after consent UI and fixed scan-quality coverage. No runtime change or product capability is claimed here. Native Codex workers are currently usage-limited; independent architecture review must resume before a material extraction-contract/schema change. OpenCode remains disabled.
+Status: discovery progressed through Astra architecture review and Terra implementation/tests. See p3-pdf-pages-ocr-report.md for delivered code and verification. Hosted migration19 remains separately approval-gated; OpenCode remains disabled.
 
 Roadmap P3 work package1/2: current pdf-page-ocr accepts one selected page. packages/contracts/src/extractions.ts explicitly requires exactly one OCR page and uses selected-page/characters provenance; PDF.js local extraction separately supports up to50pages. pdfOcr.ts enforces page1–50, file limits and a16MP embedded-image bound. Existing source/revision/lifecycle, owner/View and no-external-processing gates must remain intact.
 

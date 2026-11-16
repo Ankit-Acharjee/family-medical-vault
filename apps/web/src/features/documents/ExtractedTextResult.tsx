@@ -14,9 +14,11 @@ import {
 export function ExtractedTextResult({
   pages,
   sourceTarget,
+  emptyPageText = 'No embedded text on this page.',
 }: {
   pages: readonly { page: number; text: string }[];
   sourceTarget?: SourceExcerptTarget | undefined;
+  emptyPageText?: string | undefined;
 }) {
   const inputId = useId();
   const helperId = useId();
@@ -194,7 +196,7 @@ export function ExtractedTextResult({
                 Page {page}
               </h3>
               <p className="text-foreground/90 mt-1 mb-4 min-w-0 whitespace-pre-wrap break-words">
-                {text ? content : 'No embedded text on this page.'}
+                {text ? content : emptyPageText}
               </p>
             </div>
           );

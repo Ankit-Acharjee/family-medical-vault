@@ -223,6 +223,13 @@ export function SavedExtractionDialog({
               Unverified browser-submitted text · Saved{' '}
               {new Date(snapshot.savedAt).toLocaleString()}
             </p>
+            {snapshot.method === 'pdf-pages-ocr' && (
+              <p className="text-sm text-muted-foreground">
+                Only the returned selected page range was recognized; this is
+                not whole-document text. Saving a range replaces the previously
+                saved text.
+              </p>
+            )}
             {snapshot.method === 'pdf-page-ocr' && (
               <p className="text-sm text-muted-foreground">
                 Only the selected page was recognized; other pages were not
@@ -316,6 +323,11 @@ export function SavedExtractionDialog({
               }
             />
             <PdfTextContent
+              emptyPageText={
+                snapshot.method === 'pdf-text'
+                  ? undefined
+                  : 'No text was recognized on this page.'
+              }
               sourceTarget={
                 sourceSelection?.revision === snapshot.revision &&
                 sourceSelection.sourceSha256 === snapshot.sourceSha256

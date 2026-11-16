@@ -7,6 +7,7 @@ const methodNames: Record<SavedExtraction['method'], string> = {
   'pdf-text': 'Embedded PDF text',
   'image-ocr': 'Image OCR',
   'pdf-page-ocr': 'Selected-page PDF OCR',
+  'pdf-pages-ocr': 'Selected-range PDF OCR',
 };
 
 export function MetadataSuggestions({

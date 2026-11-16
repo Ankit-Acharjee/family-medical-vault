@@ -59,13 +59,21 @@ globalThis.postMessage = (packet) => {
       action === 'recognize' && typeof packet.data?.text === 'string'
         ? packet.data.text
         : '';
+    let end = Math.min(text.length, 100000);
+    // Never publish a prefix ending in a split UTF-16 surrogate pair.
+    if (
+      end > 0 &&
+      text.charCodeAt(end - 1) >= 0xd800 &&
+      text.charCodeAt(end - 1) <= 0xdbff
+    )
+      end--;
     send({
       jobId,
       action,
       status,
       data:
         action === 'recognize'
-          ? { text: text.slice(0, 100000), partial: text.length > 100000 }
+          ? { text: text.slice(0, end), partial: text.length > end }
           : {},
     });
   } else if (status === 'reject') send({ jobId, action, status, data: null });

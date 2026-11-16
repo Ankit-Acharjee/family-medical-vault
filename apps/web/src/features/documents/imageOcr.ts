@@ -140,12 +140,20 @@ export async function recognizeImage(
     });
     signal.throwIfAborted();
     if (typeof result.text !== 'string') throw new Error('OCR unavailable');
-    const text = result.text.slice(0, 100000).trim();
+    let end = Math.min(result.text.length, 100000);
+    // Defend independently of the publisher bootstrap's prefix boundary.
+    if (
+      end > 0 &&
+      result.text.charCodeAt(end - 1) >= 0xd800 &&
+      result.text.charCodeAt(end - 1) <= 0xdbff
+    )
+      end--;
+    const text = result.text.slice(0, end).trim();
     return text
       ? {
           kind: 'ready',
           text,
-          partial: result.partial === true || result.text.length > 100000,
+          partial: result.partial === true || result.text.length > end,
           downsized: raster.downsized === true,
         }
       : { kind: 'empty', downsized: raster.downsized === true };

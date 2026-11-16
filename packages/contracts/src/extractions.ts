@@ -1,9 +1,11 @@
 // Browser-submitted source text is always unverified, never clinical facts.
-export type ExtractionMethod = 'pdf-text' | 'image-ocr' | 'pdf-page-ocr';
+export type ExtractionMethod =
+  'pdf-text' | 'image-ocr' | 'pdf-page-ocr' | 'pdf-pages-ocr';
 export const extractionEngineVersions: Record<ExtractionMethod, string> = {
   'pdf-text': 'pdfjs-6.5.438',
   'image-ocr': 'tesseract-7.0.0+eng-1.0.0',
   'pdf-page-ocr': 'pdfjs-6.5.438+tesseract-7.0.0+eng-1.0.0',
+  'pdf-pages-ocr': 'pdfjs-6.5.438+tesseract-7.0.0+eng-1.0.0',
 };
 export const maximumExtractionRequestBytes = 4 * 1024 * 1024;
 export type ExtractionResult = {
@@ -11,7 +13,8 @@ export type ExtractionResult = {
   engineVersion: string;
   pages: { page: number; text: string }[];
   partial: boolean;
-  partialReason: 'pages' | 'characters' | 'selected-page' | null;
+  partialReason:
+    'pages' | 'characters' | 'selected-page' | 'selected-pages' | null;
   downsized: boolean;
 };
 export type ExtractionContext = {
@@ -83,7 +86,8 @@ export function isExtractionResult(value: unknown): value is ExtractionResult {
   if (
     value.method !== 'pdf-text' &&
     value.method !== 'image-ocr' &&
-    value.method !== 'pdf-page-ocr'
+    value.method !== 'pdf-page-ocr' &&
+    value.method !== 'pdf-pages-ocr'
   )
     return false;
   if (
@@ -106,6 +110,13 @@ export function isExtractionResult(value: unknown): value is ExtractionResult {
     )
       return false;
     if (value.partialReason === 'pages' && value.pages.length !== 50)
+      return false;
+  } else if (value.method === 'pdf-pages-ocr') {
+    if (
+      value.pages.length > 5 ||
+      !value.partial ||
+      !['selected-pages', 'characters'].includes(value.partialReason as string)
+    )
       return false;
   } else {
     if (value.pages.length !== 1) return false;
@@ -137,6 +148,12 @@ export function isExtractionResult(value: unknown): value is ExtractionResult {
     )
       return false;
     if (value.method === 'pdf-text' && entry.page !== previous + 1)
+      return false;
+    if (
+      value.method === 'pdf-pages-ocr' &&
+      previous > 0 &&
+      entry.page !== previous + 1
+    )
       return false;
     if (value.method === 'image-ocr' && entry.page !== 1) return false;
     previous = entry.page;

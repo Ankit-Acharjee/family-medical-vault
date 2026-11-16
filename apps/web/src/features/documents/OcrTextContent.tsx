@@ -1,9 +1,12 @@
 import { Button } from '../../components/ui/button';
 import { PdfTextContent } from './PdfTextContent';
 import type { OcrState } from './ocrTypes';
+import type { PdfOcrRangeResult } from './pdfOcrTypes';
+import { ExtractedTextResult } from './ExtractedTextResult';
 
 type OcrTextContentProps = {
-  state: OcrState;
+  state: OcrState | PdfOcrRangeResult;
+  rangeProgress?: { page: number; count: number; completed: number } | null;
   enabled: boolean;
   onStart: () => void;
   onCancel: () => void;
@@ -38,6 +41,7 @@ export function OcrTextContent({
   onStart,
   onCancel,
   page = 1,
+  rangeProgress,
 }: OcrTextContentProps) {
   switch (state.kind) {
     case 'idle':
@@ -61,8 +65,15 @@ export function OcrTextContent({
       const progress = Math.min(1, Math.max(0, state.progress));
       return (
         <div className="min-w-0 space-y-3 text-sm text-muted-foreground">
-          <p role="status">{STAGE_COPY[state.stage]}</p>
-          <progress max={1} value={progress} aria-label="OCR progress" />
+          <p role="status">
+            {rangeProgress
+              ? `PDF page ${rangeProgress.page}. ${rangeProgress.completed} of ${rangeProgress.count} selected pages completed. `
+              : ''}
+            {STAGE_COPY[state.stage]}
+          </p>
+          {!rangeProgress && (
+            <progress max={1} value={progress} aria-label="OCR progress" />
+          )}
           <div>
             <Button variant="secondary" onClick={onCancel}>
               Cancel OCR
@@ -101,9 +112,34 @@ export function OcrTextContent({
         </div>
       );
     case 'ready':
+      if ('pages' in state)
+        return (
+          <div className="min-w-0 space-y-3 text-sm text-muted-foreground">
+            <p role="status">
+              Unverified output from the selected pages. Not medical advice.
+            </p>
+            <ExtractedTextResult
+              pages={state.pages}
+              emptyPageText="No text was recognized on this page."
+            />
+            <p>
+              {state.partialReason === 'characters'
+                ? 'Recognition stopped at the character limit. The final line may be incomplete.'
+                : 'Only the selected page range was recognized.'}
+            </p>
+            <p>
+              {state.downsized
+                ? 'The source was downsized before recognition. '
+                : ''}
+              Only printed English text is recognized; handwriting and other
+              languages may be missed or inaccurate.
+            </p>
+          </div>
+        );
       return (
         <div className="min-w-0 space-y-3 text-sm text-muted-foreground">
           <PdfTextContent
+            emptyPageText="No text was recognized on this page."
             state={{
               kind: 'ready',
               pages: [{ page, text: state.text }],

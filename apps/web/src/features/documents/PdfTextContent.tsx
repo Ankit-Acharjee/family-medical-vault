@@ -8,6 +8,7 @@ export interface PdfTextContentProps {
   onRetry: () => void;
   onCancel: () => void;
   sourceTarget?: SourceExcerptTarget | undefined;
+  emptyPageText?: string | undefined;
 }
 
 const FAILURE_COPY: Record<
@@ -27,6 +28,7 @@ export function PdfTextContent({
   onRetry,
   onCancel,
   sourceTarget,
+  emptyPageText,
 }: PdfTextContentProps) {
   return (
     <section aria-label="Extracted text" className="min-w-0">
@@ -57,6 +59,7 @@ export function PdfTextContent({
           <ExtractedTextResult
             pages={state.pages}
             sourceTarget={sourceTarget}
+            emptyPageText={emptyPageText}
           />
           {state.partial && (
             <p className="text-muted-foreground mt-2 text-sm">

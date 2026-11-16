@@ -21,6 +21,7 @@ import type { SaveExtractionAttempt } from './savedExtraction';
 import { extractionEngineVersions } from '@fmv/contracts';
 import type { OcrState, OcrProgress } from './ocrTypes';
 import type { PdfTextState } from './pdfText';
+import type { PdfOcrRangeResult } from './pdfOcrTypes';
 
 export type DocumentTextSource = {
   patientId: string;
@@ -48,12 +49,29 @@ export function DocumentTextDialog({
   const imageOcr = source.kind === 'ocr';
   const pdfOcr = source.kind === 'ocr' && source.mime === 'application/pdf';
   const [pageNumber, setPageNumber] = useState('1');
+  const [range, setRange] = useState(false);
+  const [endPage, setEndPage] = useState('2');
+  const [rangeProgress, setRangeProgress] = useState<{
+    page: number;
+    count: number;
+    completed: number;
+  } | null>(null);
   const pageValid =
     /^\d+$/.test(pageNumber) &&
     Number(pageNumber) >= 1 &&
-    Number(pageNumber) <= 50;
+    Number(pageNumber) <= 50 &&
+    (!range ||
+      (/^\d+$/.test(endPage) &&
+        Number(endPage) <= 50 &&
+        Number(endPage) >= Number(pageNumber) &&
+        Number(endPage) - Number(pageNumber) < 5));
   type State =
-    { mode: 'pdf'; value: PdfTextState } | { mode: 'ocr'; value: OcrState };
+    | { mode: 'pdf'; value: PdfTextState }
+    | { mode: 'ocr'; value: OcrState }
+    | {
+        mode: 'range';
+        value: PdfOcrRangeResult | Extract<OcrState, { kind: 'loading' }>;
+      };
   const [state, setState] = useState<State | null>(
     imageOcr ? { mode: 'ocr', value: { kind: 'idle' } } : null,
   );
@@ -82,6 +100,15 @@ export function DocumentTextDialog({
     if (!allowed.current || attempt === 0) return;
     const abort = new AbortController();
     setPersistence(null);
+    setRangeProgress(
+      range && pdfOcr
+        ? {
+            page: Number(pageNumber),
+            count: Number(endPage) - Number(pageNumber) + 1,
+            completed: 0,
+          }
+        : null,
+    );
     controller.current = abort;
     const fail = (reason: 'size' | 'timeout' | 'invalid') =>
       setState(
@@ -92,7 +119,7 @@ export function DocumentTextDialog({
     setState(
       imageOcr
         ? {
-            mode: 'ocr',
+            mode: range && pdfOcr ? 'range' : 'ocr',
             value: { kind: 'loading', stage: 'loading', progress: 0 },
           }
         : { mode: 'pdf', value: { kind: 'loading' } },
@@ -178,6 +205,53 @@ export function DocumentTextDialog({
               value: { kind: 'loading', stage, progress },
             });
         };
+        if (source.mime === 'application/pdf' && range) {
+          const result = await (
+            await import('./pdfOcr')
+          ).recognizePdfPages(
+            bytes,
+            Number(pageNumber),
+            Number(endPage),
+            abort.signal,
+            (page, count, stage) => {
+              if (
+                !abort.signal.aborted &&
+                allowed.current &&
+                controller.current === abort
+              ) {
+                setRangeProgress({
+                  page,
+                  count,
+                  completed: page - Number(pageNumber),
+                });
+                setState({
+                  mode: 'range',
+                  value: { kind: 'loading', stage, progress: 0 },
+                });
+              }
+            },
+          );
+          if (
+            !abort.signal.aborted &&
+            allowed.current &&
+            controller.current === abort
+          ) {
+            if (result.kind === 'ready')
+              setPersistence({
+                canSave: context?.canSave ?? null,
+                attempt: createSaveExtractionAttempt(context, {
+                  method: 'pdf-pages-ocr',
+                  engineVersion: extractionEngineVersions['pdf-pages-ocr'],
+                  pages: result.pages,
+                  partial: true,
+                  partialReason: result.partialReason,
+                  downsized: result.downsized,
+                }),
+              });
+            setState({ mode: 'range', value: result });
+          }
+          return;
+        }
         const result =
           source.mime === 'application/pdf'
             ? await (
@@ -266,7 +340,7 @@ export function DocumentTextDialog({
     };
     // Revalidation pauses and clears results; only explicit Retry starts again.
     // source is a stable document identity owned by the authorized list.
-  }, [source, attempt, onDenied, imageOcr, pageNumber]);
+  }, [source, attempt, onDenied, imageOcr, pdfOcr, pageNumber, range, endPage]);
   return (
     <Dialog
       open
@@ -296,6 +370,22 @@ export function DocumentTextDialog({
         {pdfOcr && (
           <PdfOcrPageField
             value={pageNumber}
+            range={range}
+            end={endPage}
+            onRangeChange={(value) => {
+              controller.current?.abort();
+              setRange(value);
+              setAttempt(0);
+              setPersistence(null);
+              setState({ mode: 'ocr', value: { kind: 'idle' } });
+            }}
+            onEndChange={(value) => {
+              controller.current?.abort();
+              setEndPage(value);
+              setAttempt(0);
+              setPersistence(null);
+              setState({ mode: 'ocr', value: { kind: 'idle' } });
+            }}
             onChange={(value) => {
               controller.current?.abort();
               setPageNumber(value);
@@ -305,7 +395,11 @@ export function DocumentTextDialog({
             }}
             disabled={!enabled || state?.value.kind === 'loading'}
             error={
-              pageValid ? undefined : 'Enter a whole page number from 1 to 50.'
+              pageValid
+                ? undefined
+                : range
+                  ? 'Enter a valid range from 1 to 50, containing no more than 5 pages.'
+                  : 'Enter a whole page number from 1 to 50.'
             }
           />
         )}
@@ -323,6 +417,14 @@ export function DocumentTextDialog({
               {imageOcr ? 'Start OCR' : 'Retry extraction'}
             </Button>
           </div>
+        ) : state.mode === 'range' ? (
+          <OcrTextContent
+            state={state.value}
+            enabled={enabled && pageValid}
+            rangeProgress={rangeProgress}
+            onStart={retry}
+            onCancel={onClose}
+          />
         ) : state.mode === 'ocr' ? (
           <OcrTextContent
             state={state.value}
@@ -339,13 +441,21 @@ export function DocumentTextDialog({
           />
         )}
         {enabled && state?.value.kind === 'ready' && (
-          <SaveExtractionPanel
-            path={extractionPath(source.patientId, source.documentId)}
-            attempt={persistence?.attempt ?? null}
-            canSave={persistence?.canSave ?? null}
-            onDenied={onDenied}
-            onSaved={onSaved}
-          />
+          <>
+            {state.mode === 'range' && (
+              <p className="text-sm text-muted-foreground">
+                Saving replaces the latest saved text with text from the
+                selected page range, not the whole file.
+              </p>
+            )}
+            <SaveExtractionPanel
+              path={extractionPath(source.patientId, source.documentId)}
+              attempt={persistence?.attempt ?? null}
+              canSave={persistence?.canSave ?? null}
+              onDenied={onDenied}
+              onSaved={onSaved}
+            />
+          </>
         )}
       </DialogContent>
     </Dialog>
