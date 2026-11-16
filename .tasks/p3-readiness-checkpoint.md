@@ -2,7 +2,7 @@
 
 Read-only native Codex audit after consent backend9bcd961; this is not a declaration that all P3 work is complete.
 
-1. Browser extraction: PDF.js digital text, real image OCR and one selected PDF page OCR exist with their dedicated E2E suites. Whole-document OCR batching is unsupported; current extraction contracts deliberately accept one OCR page.
+1. Browser extraction: PDF.js digital text, real image OCR and one selected PDF page OCR exist with their dedicated E2E suites. Whole-document OCR batching remains unsupported. The separately reviewed bounded pdf-pages-ocr method now accepts up to five consecutive selected pages under a single deadline; migration19 was approved/applied with read-only postflight verification. Existing single-page formats remain valid. See p3-pdf-pages-ocr-report.md.
 2. Lifecycle: local progress/failure/retry, abort/worker teardown and persisted SHA/revision/lifecycle/CAS fences exist. There is no durable extraction job queue or automatic resumable pipeline; do not claim every planned lifecycle workflow is delivered.
 3. Organization/search: conservative source-linked type/date/provider hints, hint persistence and GIN saved-text search exist. Related-page/document inference and accepted/corrected canonical organization remain gaps.
 4. Verification: source-linked lab correction/confirmation/history plus diagnosis source-only and prescription source-fields-only review exist. General clinical tables/free prose/handwriting, normalized reconciliation and P4 trusted downstream workflows are not delivered by these narrow parsers.
