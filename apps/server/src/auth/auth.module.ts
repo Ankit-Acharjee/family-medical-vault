@@ -26,6 +26,8 @@ import { R2ObjectStore } from '../documents/r2-object-store.js';
 import { storageConfig } from '../documents/storage.config.js';
 import { CaregiverController } from '../access/caregiver.controller.js';
 import { CaregiverService } from '../access/caregiver.service.js';
+import { MeasurementComparisonsController } from '../measurements/measurement-comparisons.controller.js';
+import { MeasurementComparisonsService } from '../measurements/measurement-comparisons.service.js';
 
 class DisabledDocumentStore extends DocumentStore {
   async readRelatedDocuments(): Promise<never> {
@@ -128,9 +130,15 @@ class DisabledAccessStore extends AccessStore {
     PatientsController,
     DocumentsController,
     CaregiverController,
+    MeasurementComparisonsController,
   ],
   providers: [
     AuthBoundaryGuard,
+    {
+      provide: MeasurementComparisonsService,
+      useFactory: () =>
+        new MeasurementComparisonsService(authConfig()?.databaseUrl ?? null),
+    },
     PermissionService,
     {
       provide: OBJECT_STORE,

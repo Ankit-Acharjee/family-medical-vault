@@ -126,3 +126,5 @@ export * from './processing-consent.js';
 export * from './related-documents.js';
 
 export * from './measurements.js';
+
+export * from './comparability.js';

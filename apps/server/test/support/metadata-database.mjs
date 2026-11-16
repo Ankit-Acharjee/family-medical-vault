@@ -306,6 +306,7 @@ export async function verifySavedMetadata(runtimeUrl, owner, insertGrant) {
       );
       let waiting = false;
       for (let attempt = 0; attempt < 100 && !waiting; attempt++) {
+        await runtime.query('SELECT pg_stat_clear_snapshot()');
         const probe = await runtime.query(
           `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%FOR NO KEY UPDATE OF d%') AS waiting`,
         );

@@ -372,6 +372,7 @@ export async function documentSetup(run, objects = new TrackedObjects()) {
   try {
     await run({
       ...f,
+      app,
       access,
       metadata,
       objects,
