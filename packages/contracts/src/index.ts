@@ -133,3 +133,4 @@ export * from './measurement-workspace.js';
 export * from './manual-readings.js';
 
 export * from './medication-sources.js';
+export * from './medication-reconciliation.js';

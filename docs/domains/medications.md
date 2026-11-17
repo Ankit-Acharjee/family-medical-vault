@@ -30,3 +30,7 @@
 ## Approved initial reconciliation authority — 17 November 2026
 
 Only the explicit Person owner may initially reconcile an owner-reviewed prescription into the recorded current/history medication list, correct its record or mark it historical. Preserve prior history. Source-field confirmation alone remains insufficient: reconciliation is a separate explicit action. These actions record medication context; the application does not prescribe or recommend starting/stopping treatment. Delegate writes remain deferred.
+
+## Approved source-bound reconciliation lifecycle — 17 November 2026
+
+Each reconciliation binds to the exact owner-reviewed prescription/source version. Source changes, withdrawal or Trash require source review again; invalid sources are excluded from trusted use. Preserve the owner's recorded current/historical status and prior history when a source becomes invalid. Source invalidation never implies that treatment stopped, and restoring a document does not automatically revalidate its old reconciliation. Reconciliation remains a separate owner action after source review.
