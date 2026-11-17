@@ -50,7 +50,19 @@ test('all destinations reachable, with browser history and no clinical fixtures'
     exact: true,
   });
   for (const name of navigationItems) {
-    const link = nav.getByRole('link', { name, exact: true });
+    const link = nav.getByRole('link', {
+      name:
+        isMobile &&
+        ['Overview', 'Documents', 'Medications', 'Family Access'].includes(name)
+          ? {
+              Overview: 'Home (Overview)',
+              Documents: 'Docs (Documents)',
+              Medications: 'Meds (Medications)',
+              'Family Access': 'Family (Family Access)',
+            }[name]!
+          : name,
+      exact: true,
+    });
     await link.click();
     await expect(link).toHaveAttribute('aria-current', 'page');
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(name);
@@ -145,7 +157,36 @@ for (const theme of ['light', 'dark'] as const) {
       exact: true,
     });
     for (const name of navigationItems) {
-      await nav.getByRole('link', { name, exact: true }).click();
+      await nav
+        .getByRole('link', {
+          name:
+            isMobile &&
+            ['Overview', 'Documents', 'Medications', 'Family Access'].includes(
+              name,
+            )
+              ? {
+                  Overview: 'Home (Overview)',
+                  Documents: 'Docs (Documents)',
+                  Medications: 'Meds (Medications)',
+                  'Family Access': 'Family (Family Access)',
+                }[name]!
+              : name,
+          exact: true,
+        })
+        .click();
+      await page
+        .getByRole('button', { name: 'Upload', exact: true })
+        .evaluate(async (element) => {
+          await Promise.all(
+            element
+              .getAnimations({ subtree: true })
+              .filter(
+                (animation) =>
+                  animation.effect?.getTiming().iterations !== Infinity,
+              )
+              .map((animation) => animation.finished.catch(() => undefined)),
+          );
+        });
       const results = await new AxeBuilder({ page })
         .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
         .analyze();
@@ -177,7 +218,24 @@ test('narrow layouts, 200% equivalent zoom, and touch targets remain usable', as
       for (const name of navigationItems) {
         const box = await page
           .getByRole('navigation', { name: 'Mobile navigation' })
-          .getByRole('link', { name, exact: true })
+          .getByRole('link', {
+            name:
+              width < 768 &&
+              [
+                'Overview',
+                'Documents',
+                'Medications',
+                'Family Access',
+              ].includes(name)
+                ? {
+                    Overview: 'Home (Overview)',
+                    Documents: 'Docs (Documents)',
+                    Medications: 'Meds (Medications)',
+                    'Family Access': 'Family (Family Access)',
+                  }[name]!
+                : name,
+            exact: true,
+          })
           .boundingBox();
         expect(box?.width).toBeGreaterThanOrEqual(44);
         expect(box?.height).toBeGreaterThanOrEqual(44);

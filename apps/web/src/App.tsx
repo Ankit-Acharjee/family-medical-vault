@@ -33,6 +33,7 @@ import { MedicalDocumentArt } from './components/overview/MedicalDocumentArt';
 import { PatientPicker, usePatientContext } from './features/patients';
 import { DocumentUploadForm, DocumentsPanel } from './features/documents';
 import { TrendsPanel } from './features/measurements';
+import { MedicationsPanel } from './features/medications';
 import { FamilyAccessPanel } from './features/access';
 import { captureIncomingLink } from './features/access/incoming-link';
 import { DuplicateUploadNotice } from './features/documents/DuplicateUploadNotice';
@@ -129,7 +130,7 @@ export default function App() {
       <a
         key={id}
         href={`#${id}`}
-        aria-label={label}
+        aria-label={mobile && short !== label ? `${short} (${label})` : label}
         aria-current={destination === id ? 'page' : undefined}
         title={label}
         className="nav-link"
@@ -185,7 +186,7 @@ export default function App() {
               <Users size={20} aria-hidden="true" />
             </span>
             <span className="patient-copy">
-              <span className="control-label">Select patient</span>
+              <span className="control-label">Select patient</span>{' '}
               <span className="patient-name">
                 {selectedPatient?.displayName ?? 'No patient selected'}
               </span>
@@ -219,24 +220,26 @@ export default function App() {
             </Button>
           </div>
         </header>
-        {destination !== 'documents' && destination !== 'trends' && (
-          <div className="search-strip">
-            <div className="search-field">
-              <Search size={18} aria-hidden="true" />
-              <Input
-                aria-label="Search documents"
-                aria-describedby="search-help"
-                placeholder="Search documents"
-                disabled
-              />
+        {destination !== 'documents' &&
+          destination !== 'trends' &&
+          destination !== 'medications' && (
+            <div className="search-strip">
+              <div className="search-field">
+                <Search size={18} aria-hidden="true" />
+                <Input
+                  aria-label="Search documents"
+                  aria-describedby="search-help"
+                  placeholder="Search documents"
+                  disabled
+                />
+              </div>
+              <p id="search-help">
+                {selectedPatient
+                  ? 'Document search is not available yet.'
+                  : 'Select a patient to search their documents.'}
+              </p>
             </div>
-            <p id="search-help">
-              {selectedPatient
-                ? 'Document search is not available yet.'
-                : 'Select a patient to search their documents.'}
-            </p>
-          </div>
-        )}
+          )}
         <main id="main-content" tabIndex={-1}>
           <div className="page-heading">
             <div>
@@ -339,6 +342,8 @@ export default function App() {
             />
           ) : destination === 'trends' ? (
             <TrendsPanel onRequestPatient={() => openDialog('patient')} />
+          ) : destination === 'medications' ? (
+            <MedicationsPanel onRequestPatient={() => openDialog('patient')} />
           ) : currentState ? (
             <ResourceState
               state="empty"

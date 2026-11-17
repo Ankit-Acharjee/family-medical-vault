@@ -112,7 +112,21 @@ for (const theme of ['light', 'dark'] as const) {
         exact: true,
       });
       for (const name of navigationItems) {
-        const link = nav.getByRole('link', { name, exact: true });
+        const link = nav.getByRole('link', {
+          name:
+            mobile &&
+            ['Overview', 'Documents', 'Medications', 'Family Access'].includes(
+              name,
+            )
+              ? {
+                  Overview: 'Home (Overview)',
+                  Documents: 'Docs (Documents)',
+                  Medications: 'Meds (Medications)',
+                  'Family Access': 'Family (Family Access)',
+                }[name]!
+              : name,
+          exact: true,
+        });
         const box = await link.boundingBox();
         expect(box, `navigation target missing at ${width}px`).not.toBeNull();
         expect(
