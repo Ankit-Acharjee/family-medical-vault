@@ -42,3 +42,7 @@ The owner may read the recorded current/history list. Other users need patient-w
 ## Approved exact-source record identity — 17 November 2026
 
 Reuse the existing medication record and preserve its history when reconciling the same document, extraction revision, lifecycle and source block again. A new source-attestation review does not create a new medication identity for that exact source. Never merge records automatically based on matching medication names across different prescriptions. Creation/correction must enforce this identity rule atomically; conflicting legacy identities require explicit resolution rather than silent merging or deletion.
+
+## Approved initial inventory authority — 17 November 2026
+
+Optional medication quantity, expiry and refill records use owner-only writes with preserved correction history. Apply the medication record's read permissions: the owner may read; delegates require patient-wide View plus current View of the source. Inventory information remains optional and does not block prescription upload or medication reconciliation. It does not confer permission to change medication status or source confirmation.
