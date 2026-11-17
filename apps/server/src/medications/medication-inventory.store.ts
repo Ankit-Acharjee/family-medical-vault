@@ -14,16 +14,9 @@ import type {
   MedicationInventoryHistory,
 } from '@fmv/contracts';
 import type { Prisma } from '../generated/prisma/client.js';
+import type { MedicationRecordContext } from './medication-record-context.js';
 type Tx = Prisma.TransactionClient;
-export type InventoryContext = {
-  patientId: string;
-  medicationId: string;
-  medicationRevision: number;
-  medicationEntryId: string;
-  accountId: string;
-  owner: boolean;
-  sourceState: 'current-source' | 'source-review-required';
-};
+
 type Row = {
   id: string;
   patientId: string;
@@ -52,7 +45,7 @@ function entry(r: Row): MedicationInventoryEntry {
 }
 async function rows(
   db: Tx,
-  c: InventoryContext,
+  c: MedicationRecordContext,
   before = 2147483647,
   limit = 21,
 ) {
@@ -60,13 +53,18 @@ async function rows(
     Row[]
   >`SELECT id,patient_id AS "patientId",medication_id AS "medicationId",medication_revision AS "medicationRevision",revision,fields,recorded_at AS "recordedAt",request_id AS "requestId",payload_hash AS "payloadHash",actor_account_id AS "actorAccountId" FROM fmv.medication_inventory WHERE patient_id=${c.patientId}::uuid AND medication_id=${c.medicationId}::uuid AND revision<=${before} ORDER BY revision DESC LIMIT ${limit}`;
 }
-async function audit(db: Tx, c: InventoryContext, ids: string[], kind: string) {
+async function audit(
+  db: Tx,
+  c: MedicationRecordContext,
+  ids: string[],
+  kind: string,
+) {
   for (const id of ids)
     await db.$executeRaw`INSERT INTO fmv.medication_inventory_events(id,patient_id,medication_id,entry_id,actor_account_id,kind) VALUES(${randomUUID()}::uuid,${c.patientId}::uuid,${c.medicationId}::uuid,${id}::uuid,${c.accountId}::uuid,${kind})`;
 }
 export async function readInventory(
   db: Tx,
-  c: InventoryContext,
+  c: MedicationRecordContext,
   query: unknown,
 ) {
   if (
@@ -116,7 +114,7 @@ export async function readInventory(
 }
 export async function saveInventory(
   db: Tx,
-  c: InventoryContext,
+  c: MedicationRecordContext,
   input: unknown,
 ) {
   if (!isSaveMedicationInventory(input)) throw new BadRequestException();

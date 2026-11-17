@@ -1,3 +1,4 @@
+import { verifyMedicationSchedule } from './medication-schedule-database.mjs';
 import { verifyMedicationInventory } from './medication-inventory-database.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -103,6 +104,12 @@ export async function verifyMedicationReconciliation(f) {
       { medicationId: reconcileId, revision: 1 },
     );
     await verifyMedicationInventory(f, ledger, other, reconcileId);
+    const scheduleFixture = await verifyMedicationSchedule(
+      f,
+      ledger,
+      other,
+      reconcileId,
+    );
     let list = await ledger.list(principal, patient.id);
     assert.equal(list.entries.length, 1);
     assert.equal(list.entries[0].sourceState, 'current-source');
@@ -206,6 +213,53 @@ export async function verifyMedicationReconciliation(f) {
     );
     history = await ledger.history(principal, patient.id, reconcileId);
     assert.equal(history.current.sourceState, 'source-review-required');
+    const scheduleBody = {
+      requestId: randomUUID(),
+      expectedRevision: 24,
+      medicationRevision: 2,
+      confirmed: true,
+      meaning: 'owner-recorded-informational-schedule',
+      recordedState: 'recorded',
+      definition: scheduleFixture.definition,
+    };
+    assert.equal(
+      (await ledger.schedule(principal, patient.id, reconcileId, 'read'))
+        .sourceState,
+      'source-review-required',
+    );
+    await assert.rejects(
+      ledger.schedule(principal, patient.id, reconcileId, 'save', scheduleBody),
+      status(409),
+    );
+    await assert.rejects(
+      runtime.query(
+        "INSERT INTO fmv.medication_schedules(id,patient_id,medication_id,medication_entry_id,medication_revision,revision,action,recorded_state,definition,request_id,payload_hash,actor_account_id) SELECT $1,$2,$3,id,revision,25,'correction','retired',$4::jsonb,$5,$6,$7 FROM fmv.medication_reconciliations WHERE patient_id=$2 AND medication_id=$3 ORDER BY revision DESC LIMIT 1",
+        [
+          randomUUID(),
+          patient.id,
+          reconcileId,
+          JSON.stringify({
+            ...scheduleFixture.definition,
+            instructions: 'forged change while source invalid',
+          }),
+          randomUUID(),
+          'a'.repeat(64),
+          ownerAccountId,
+        ],
+      ),
+      (e) => e.code === '23514',
+    );
+    await ledger.schedule(principal, patient.id, reconcileId, 'save', {
+      ...scheduleBody,
+      requestId: randomUUID(),
+      recordedState: 'retired',
+    });
+    assert.equal(
+      (await ledger.schedule(principal, patient.id, reconcileId, 'read'))
+        .current.recordedState,
+      'retired',
+    );
+
     assert.equal(
       (await ledger.inventory(principal, patient.id, reconcileId, 'read'))
         .sourceState,
@@ -231,6 +285,22 @@ export async function verifyMedicationReconciliation(f) {
       (await ledger.history(principal, patient.id, reconcileId)).current
         .sourceState,
       'current-source',
+    );
+    assert.equal(
+      (await ledger.schedule(principal, patient.id, reconcileId, 'read'))
+        .current.recordedState,
+      'retired',
+    );
+    await ledger.schedule(principal, patient.id, reconcileId, 'save', {
+      ...scheduleBody,
+      requestId: randomUUID(),
+      expectedRevision: 25,
+      medicationRevision: 3,
+    });
+    assert.equal(
+      (await ledger.schedule(principal, patient.id, reconcileId, 'read'))
+        .current.recordedState,
+      'recorded',
     );
     const { sourceRevision, ...withdraw } = {
       requestId: randomUUID(),

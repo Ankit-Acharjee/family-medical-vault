@@ -98,3 +98,5 @@ Optional quantity, expiry and refill records follow the owner-only write and med
 ## Approved initial informational schedule authority — 17 November 2026
 
 Schedule creation, correction and retirement are owner-only under `docs/domains/medications.md`, with preserved history and medication-equivalent patient/source View for reads. View, Edit or Manage do not grant schedule-write authority. Recheck patient and source permissions for every schedule/history operation.
+
+Schedule use also follows the approved source-bound lifecycle in the medication domain: medication/source changes require explicit owner review, without changing the recorded/retired state or implying that treatment stopped.

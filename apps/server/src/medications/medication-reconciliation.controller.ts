@@ -75,6 +75,34 @@ export class MedicationReconciliationController {
       body,
     );
   }
+  @Get(':medicationId/schedule') async schedule(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('medicationId') id: string,
+    @Query() query: unknown,
+  ) {
+    return this.medications.schedule(
+      await this.principal(req),
+      p,
+      id,
+      'read',
+      query,
+    );
+  }
+  @Put(':medicationId/schedule') async saveSchedule(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('medicationId') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.medications.schedule(
+      await this.principal(req),
+      p,
+      id,
+      'save',
+      body,
+    );
+  }
   @Put(':medicationId') async save(
     @Req() req: Request,
     @Param('patientId') p: string,

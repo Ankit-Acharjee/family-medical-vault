@@ -50,3 +50,7 @@ Optional medication quantity, expiry and refill records use owner-only writes wi
 ## Approved initial schedule authority — 17 November 2026
 
 Creating, correcting or retiring an informational medication schedule is owner-only, with preserved history. Use the medication record's source-authorized read permissions: the owner may read; delegates require patient-wide View plus current View of the source. This authority does not authorize prescribing, changing medication status, dose-taking confirmation or dependable background notification delivery.
+
+## Approved source-bound schedule lifecycle — 17 November 2026
+
+Medication/source changes require explicit owner review before a schedule can be used again. Preserve the recorded or retired schedule state and all history. Source invalidation or schedule retirement never implies that treatment stopped; restoring or re-reviewing a source does not automatically reactivate its previously recorded schedule.

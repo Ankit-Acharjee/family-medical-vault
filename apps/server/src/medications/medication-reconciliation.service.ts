@@ -1,3 +1,5 @@
+import { readSchedule, saveSchedule } from './medication-schedule.store.js';
+import type { MedicationRecordContext } from './medication-record-context.js';
 import { readInventory, saveInventory } from './medication-inventory.store.js';
 import {
   BadRequestException,
@@ -452,17 +454,17 @@ export class MedicationReconciliationService implements OnModuleDestroy {
       return result;
     });
   }
-  async inventory(
+  private async withRecordedMedication<T>(
     principal: Principal,
     patientId: string,
     medicationId: string,
-    mode: 'read' | 'save',
-    input: unknown = {},
+    write: boolean,
+    work: (db: Tx, context: MedicationRecordContext) => Promise<T>,
   ) {
     const p = patientId.toLowerCase(),
       id = medicationId.toLowerCase();
     return this.tx(p, async (db) => {
-      const actor = await this.auth(db, principal, p, [], mode === 'save');
+      const actor = await this.auth(db, principal, p, [], write);
       if (!isUuid(id)) throw new NotFoundException();
       await db.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${'medication:' + id},0))`;
       const [pointer] = await db.$queryRaw<
@@ -470,7 +472,7 @@ export class MedicationReconciliationService implements OnModuleDestroy {
       >`SELECT document_id AS "documentId" FROM fmv.medication_reconciliations WHERE patient_id=${p}::uuid AND medication_id=${id}::uuid ORDER BY revision DESC LIMIT 1`;
       if (!pointer) throw new NotFoundException();
       await this.lockDocs(db, p, [pointer.documentId]);
-      await this.auth(db, principal, p, [pointer.documentId], mode === 'save');
+      await this.auth(db, principal, p, [pointer.documentId], write);
       const row = await this.latest(db, p, id);
       if (!row) throw new NotFoundException();
       const context = {
@@ -484,15 +486,48 @@ export class MedicationReconciliationService implements OnModuleDestroy {
           ? ('current-source' as const)
           : ('source-review-required' as const),
       };
-      const result =
-        mode === 'read'
-          ? await readInventory(db, context, input)
-          : await saveInventory(db, context, input);
-      if (mode === 'read')
+      const result = await work(db, context);
+      if (!write)
         await this.audit(db, p, actor.accountId, [row], 'medication.viewed');
-      await this.auth(db, principal, p, [row.documentId], mode === 'save');
+      await this.auth(db, principal, p, [row.documentId], write);
       return result;
     });
+  }
+  async inventory(
+    principal: Principal,
+    patientId: string,
+    medicationId: string,
+    mode: 'read' | 'save',
+    input: unknown = {},
+  ) {
+    return this.withRecordedMedication(
+      principal,
+      patientId,
+      medicationId,
+      mode === 'save',
+      async (db, context) =>
+        mode === 'read'
+          ? await readInventory(db, context, input)
+          : await saveInventory(db, context, input),
+    );
+  }
+  async schedule(
+    principal: Principal,
+    patientId: string,
+    medicationId: string,
+    mode: 'read' | 'save',
+    input: unknown = {},
+  ) {
+    return this.withRecordedMedication(
+      principal,
+      patientId,
+      medicationId,
+      mode === 'save',
+      async (db, context) =>
+        mode === 'read'
+          ? await readSchedule(db, context, input)
+          : await saveSchedule(db, context, input),
+    );
   }
   async save(
     principal: Principal,

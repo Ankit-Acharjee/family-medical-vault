@@ -188,3 +188,84 @@ test('schedule writes require explicit informational meaning, current medication
   ])
     assert.equal(isSaveMedicationSchedule(invalid), false);
 });
+
+test('schedule history keeps current state authoritative and source changes never silently reactivate it', async () => {
+  const {
+    isMedicationScheduleEntry,
+    isMedicationScheduleHistory,
+    medicationScheduleMatchesCurrent,
+    medicationScheduleDefinitionValue,
+  } = await import('@fmv/contracts');
+  const entry = {
+    patientId: randomUUID(),
+    medicationId: randomUUID(),
+    medicationRevision: 1,
+    revision: 1,
+    action: 'recording',
+    recordedAt: '2026-11-17T00:00:00.000Z',
+    meaning: 'owner-recorded-informational-schedule',
+    recordedState: 'recorded',
+    definition,
+  };
+  const result = {
+    patientId: entry.patientId,
+    medicationId: entry.medicationId,
+    medicationRevision: 1,
+    canWrite: true,
+    sourceState: 'current-source',
+    current: entry,
+    history: [entry],
+    nextBeforeRevision: null,
+  };
+  assert.equal(isMedicationScheduleEntry(entry), true);
+  assert.equal(isMedicationScheduleHistory(result), true);
+  assert.equal(
+    medicationScheduleMatchesCurrent(entry, 1, 'current-source'),
+    true,
+  );
+  assert.equal(
+    medicationScheduleMatchesCurrent(entry, 2, 'current-source'),
+    false,
+  );
+  assert.equal(
+    medicationScheduleMatchesCurrent(entry, 1, 'source-review-required'),
+    false,
+  );
+  const retired = {
+    ...entry,
+    revision: 2,
+    action: 'retirement',
+    recordedState: 'retired',
+  };
+  assert.equal(isMedicationScheduleEntry(retired), true);
+  assert.equal(
+    medicationScheduleMatchesCurrent(retired, 1, 'current-source'),
+    false,
+  );
+  assert.equal(retired.recordedState, 'retired');
+  for (const v of [
+    { ...result, patientId: randomUUID() },
+    { ...result, history: [] },
+    { ...result, current: { ...entry, medicationRevision: 2 } },
+    { ...result, history: [{ ...entry, recordedState: 'retired' }] },
+    { ...result, history: [entry, entry] },
+    { ...result, nextBeforeRevision: 0 },
+  ])
+    assert.equal(isMedicationScheduleHistory(v), false);
+  assert.equal(
+    isMedicationScheduleHistory({ ...result, current: null, history: [] }),
+    true,
+  );
+  assert.equal(
+    isMedicationScheduleEntry({
+      ...entry,
+      revision: 1,
+      recordedState: 'retired',
+    }),
+    false,
+  );
+  const copy = medicationScheduleDefinitionValue(definition);
+  assert.deepEqual(copy, definition);
+  copy.timing.times.push('23:00');
+  assert.deepEqual(definition.timing.times, ['08:00', '20:30']);
+});
