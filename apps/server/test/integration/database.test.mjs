@@ -1,4 +1,5 @@
 import { verifyClinicalReview } from '../support/clinical-review-database.mjs';
+import { verifyManualReadings } from '../support/manual-readings-database.mjs';
 import { verifyComparability } from '../support/comparability-database.mjs';
 import process from 'node:process';
 import { verifyExtractionSearch } from '../support/extraction-search-database.mjs';
@@ -333,15 +334,15 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
         );
         assert.equal(
           result.rowCount,
-          20,
-          'All foundation through measurement comparability migrations must exist',
+          21,
+          'All foundation through manual-reading migrations must exist',
         );
         assert.equal(
           result.rows
             .map((row) => row.migration_name)
             .sort()
             .join(','),
-          '20261105000100_foundation,20261105000300_auth_sessions,20261105000400_person_identity,20261110000100_patient_permissions,20261110000200_document_intake,20261110000300_caregiver_approvals,20261111000100_object_generations,20261111000200_patient_object_layout,20261112000100_document_display_titles,20261112000200_document_trash,20261113000100_saved_extractions,20261113000200_extraction_search,20261114000100_saved_metadata,20261114000200_clinical_review,20261115000100_clinical_withdrawal,20261115000200_diagnosis_statements,20261115000300_medication_source_fields,20261115000400_processing_consent,20261116000100_pdf_pages_ocr,20261116000200_measurement_comparability',
+          '20261105000100_foundation,20261105000300_auth_sessions,20261105000400_person_identity,20261110000100_patient_permissions,20261110000200_document_intake,20261110000300_caregiver_approvals,20261111000100_object_generations,20261111000200_patient_object_layout,20261112000100_document_display_titles,20261112000200_document_trash,20261113000100_saved_extractions,20261113000200_extraction_search,20261114000100_saved_metadata,20261114000200_clinical_review,20261115000100_clinical_withdrawal,20261115000200_diagnosis_statements,20261115000300_medication_source_fields,20261115000400_processing_consent,20261116000100_pdf_pages_ocr,20261116000200_measurement_comparability,20261117000100_manual_readings',
         );
         assert.ok(result.rows.every((row) => row.finished && row.active));
       }
@@ -437,7 +438,7 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
           .map((row) => row.tablename)
           .sort()
           .join(','),
-        'access_events,access_grant_dependencies,access_grants,access_invitations,app_accounts,auth_rate_limits,auth_sessions,comparison_sources,document_categories,document_clinical_reviews,document_diagnosis_reviews,document_events,document_extractions,document_medication_reviews,document_metadata_snapshots,document_object_attempts,document_processing_consents,documents,measurement_comparisons,persons,processing_provider_policies',
+        'access_events,access_grant_dependencies,access_grants,access_invitations,app_accounts,auth_rate_limits,auth_sessions,comparison_sources,document_categories,document_clinical_reviews,document_diagnosis_reviews,document_events,document_extractions,document_medication_reviews,document_metadata_snapshots,document_object_attempts,document_processing_consents,documents,manual_measurement_events,manual_measurements,measurement_comparisons,persons,processing_provider_policies',
         'Only reviewed application tables may exist',
       );
       const permissions = await query(
@@ -3751,6 +3752,11 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
     await stage(
       'comparison sets enforce current source, authorization and immutable history',
       () => verifyComparability(runtimeUrl, owner, insertGrant),
+    );
+
+    await stage(
+      'manual readings preserve exact values, owner authority and immutable history',
+      () => verifyManualReadings(runtimeUrl, owner, insertGrant),
     );
 
     await stage('wrong password is rejected', async () => {

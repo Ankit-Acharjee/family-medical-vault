@@ -30,6 +30,8 @@ import {
   MeasurementComparisonsController,
   MeasurementWorkspaceController,
 } from '../measurements/measurement-comparisons.controller.js';
+import { ManualReadingsService } from '../measurements/manual-readings.service.js';
+import { ManualReadingsController } from '../measurements/manual-readings.controller.js';
 import { MeasurementComparisonsService } from '../measurements/measurement-comparisons.service.js';
 
 class DisabledDocumentStore extends DocumentStore {
@@ -135,6 +137,7 @@ class DisabledAccessStore extends AccessStore {
     CaregiverController,
     MeasurementComparisonsController,
     MeasurementWorkspaceController,
+    ManualReadingsController,
   ],
   providers: [
     AuthBoundaryGuard,
@@ -142,6 +145,11 @@ class DisabledAccessStore extends AccessStore {
       provide: MeasurementComparisonsService,
       useFactory: () =>
         new MeasurementComparisonsService(authConfig()?.databaseUrl ?? null),
+    },
+    {
+      provide: ManualReadingsService,
+      useFactory: () =>
+        new ManualReadingsService(authConfig()?.databaseUrl ?? null),
     },
     PermissionService,
     {

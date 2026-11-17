@@ -30,3 +30,7 @@
 ### Approved cross-report comparability policy — November 2026
 
 Source-field verification and cross-report comparability are separate decisions. Results from different reports may share a trusted trend only after explicit profile-owner confirmation of comparability; unmatched results remain separate. Matching analyte/unit/specimen/method labels alone do not confirm comparability. This does not authorize silently combining incompatible units or methods, inferring missing fields, or applying unreviewed conversions. Comparability must retain exact source/version references and be rechecked when those sources or confirmations change.
+
+### Approved manual-reading authority — 17 November 2026
+
+Only the explicit Person owner may create, correct or withdraw manually entered BP, weight, pulse and glucose observations initially. Corrections and withdrawal preserve prior history; delegates cannot write manual readings even with Edit, View or Manage. Manual entries remain explicitly user-reported and separate from source-document verification and laboratory comparability. This policy does not authorize converting units or inferring clinical interpretation.

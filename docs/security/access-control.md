@@ -82,3 +82,7 @@ Only the explicit Person owner, with current scoped View authority for the sourc
 ## Approved initial consent lifecycle — 15 November 2026
 
 Initial processing consent covers one exact document and source version, with an explicit owner-chosen expiry. It becomes invalid after Trash/Restore, a source-version change or a provider-policy change. Withdrawal preserves historical evidence and remains possible for an expired or invalidated grant when the owner currently has access to the document. A later grant replaces the current consent intent; earlier grants must never become effective again by fallback. Provider approval, consent validity and actual processing enablement remain independent; no external provider is currently approved.
+
+## Approved manual-reading authority — 17 November 2026
+
+Manual observation writes are restricted to the explicit Person owner under the LAB-04 policy in `docs/domains/medical-data.md`. Existing patient-scope View controls reading patient-level manual observations/history; document/category grants do not grant patient-wide manual-data access. Recheck current authoritative ownership/grants at each operation, and preserve correction/withdrawal history without putting values in logs or audit metadata.

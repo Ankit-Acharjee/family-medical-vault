@@ -129,3 +129,5 @@ export * from './measurements.js';
 
 export * from './comparability.js';
 export * from './measurement-workspace.js';
+
+export * from './manual-readings.js';
