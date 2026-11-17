@@ -436,6 +436,7 @@ model ManualMeasurementEvent {
 }
 
 model MedicationReconciliation {
+ sourceRecords MedicationSourceRecord[]
  id String @id @db.Uuid
  medicationId String @map("medication_id") @db.Uuid
  patientId String @map("patient_id") @db.Uuid
@@ -475,5 +476,21 @@ model MedicationReconciliationEvent {
  entry MedicationReconciliation @relation(fields:[patientId,medicationId,entryId],references:[patientId,medicationId,id],onDelete:Cascade,onUpdate:NoAction)
  actor AppAccount @relation(fields:[actorAccountId],references:[id],onDelete:NoAction,onUpdate:NoAction)
  @@map("medication_reconciliation_events")
+ @@schema("fmv")
+}
+
+model MedicationSourceRecord {
+ patientId String @map("patient_id") @db.Uuid
+ documentId String @map("document_id") @db.Uuid
+ sourceRevision Int @map("source_revision")
+ lifecycleVersion Int @map("lifecycle_version")
+ candidateId String @map("candidate_id")
+ sourceSha256 String @map("source_sha256")
+ medicationId String @map("medication_id") @db.Uuid
+ firstEntryId String @map("first_entry_id") @db.Uuid
+ entry MedicationReconciliation @relation(fields:[patientId,medicationId,firstEntryId],references:[patientId,medicationId,id],onDelete:Cascade,onUpdate:NoAction)
+ @@id([patientId,documentId,sourceRevision,lifecycleVersion,candidateId])
+ @@index([patientId,medicationId,firstEntryId],map:"medication_source_records_entry")
+ @@map("medication_source_records")
  @@schema("fmv")
 }

@@ -22,6 +22,7 @@ import type {
   MedicationReconciliationView,
   SaveMedicationReconciliation,
   MedicationSourceOptions,
+  MedicationSourceBinding,
 } from '@fmv/contracts';
 import { PrismaClient } from '../generated/prisma/client.js';
 import type { Prisma } from '../generated/prisma/client.js';
@@ -227,6 +228,16 @@ export class MedicationReconciliationService implements OnModuleDestroy {
         source.provenance.reviewRevision === b.reviewRevision,
     );
   }
+  private async existingSourceRecord(
+    db: Tx,
+    p: string,
+    b: MedicationSourceBinding,
+  ) {
+    const [record] = await db.$queryRaw<
+      { medicationId: string; revision: number }[]
+    >`SELECT c.medication_id AS "medicationId",r.revision FROM fmv.medication_source_records c JOIN LATERAL(SELECT revision FROM fmv.medication_reconciliations WHERE patient_id=c.patient_id AND medication_id=c.medication_id ORDER BY revision DESC LIMIT 1) r ON true WHERE c.patient_id=${p}::uuid AND c.document_id=${b.documentId}::uuid AND c.source_revision=${b.sourceRevision} AND c.lifecycle_version=${b.lifecycleVersion} AND c.candidate_id=${b.candidateId}`;
+    return record ?? null;
+  }
   async sourceOptions(
     principal: Principal,
     patientId: string,
@@ -263,6 +274,16 @@ export class MedicationReconciliationService implements OnModuleDestroy {
           { title: string }[]
         >`SELECT COALESCE(display_title,title) AS title FROM fmv.documents WHERE patient_id=${p}::uuid AND id=${id}::uuid`;
         if (!doc) throw new ServiceUnavailableException();
+        const provenance = sources[0]!.provenance;
+        const claims = await db.$queryRaw<
+          { candidateId: string; medicationId: string; revision: number }[]
+        >`SELECT c.candidate_id AS "candidateId",c.medication_id AS "medicationId",r.revision FROM fmv.medication_source_records c JOIN LATERAL(SELECT revision FROM fmv.medication_reconciliations WHERE patient_id=c.patient_id AND medication_id=c.medication_id ORDER BY revision DESC LIMIT 1) r ON true WHERE c.patient_id=${p}::uuid AND c.document_id=${id}::uuid AND c.source_revision=${provenance.sourceRevision} AND c.lifecycle_version=${provenance.lifecycleVersion} AND c.candidate_id=ANY(${sources.map((item) => item.source.id)}::text[])`;
+        const existing = new Map(
+          claims.map((c) => [
+            c.candidateId,
+            { medicationId: c.medicationId, revision: c.revision },
+          ]),
+        );
         for (const item of sources) {
           count++;
           if (result.options.length === 50) continue;
@@ -278,6 +299,7 @@ export class MedicationReconciliationService implements OnModuleDestroy {
               lifecycleVersion: b.lifecycleVersion,
               reviewRevision: b.reviewRevision,
             },
+            existingRecord: existing.get(item.source.id) ?? null,
           });
           if (!disclosed.includes(id)) disclosed.push(id);
         }
@@ -491,6 +513,9 @@ export class MedicationReconciliationService implements OnModuleDestroy {
         { present: boolean }[]
       >`SELECT EXISTS(SELECT 1 FROM fmv.medication_reconciliations WHERE medication_id=${id}::uuid AND request_id=${requestId}::uuid) AS present`;
       if (used?.present || body.expectedRevision !== (row?.revision ?? 0))
+        throw new ConflictException();
+      const existing = await this.existingSourceRecord(db, p, source);
+      if (existing && existing.medicationId !== id)
         throw new ConflictException();
       const revision = body.expectedRevision + 1,
         eventId = randomUUID(),

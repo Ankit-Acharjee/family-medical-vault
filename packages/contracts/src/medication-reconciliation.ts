@@ -7,6 +7,7 @@ export type MedicationSourceOption = {
   title: string;
   source: MedicationCandidate;
   binding: MedicationSourceBinding;
+  existingRecord: { medicationId: string; revision: number } | null;
 };
 export type MedicationSourceOptions = {
   patientId: string;
@@ -169,13 +170,18 @@ export function isMedicationSourceOptions(
   return v.options.every((option) => {
     if (
       !obj(option) ||
-      !exact(option, ['title', 'source', 'binding']) ||
+      !exact(option, ['title', 'source', 'binding', 'existingRecord']) ||
       typeof option.title !== 'string' ||
       option.title.length > 200 ||
       !option.title.trim() ||
       !isMedicationCandidate(option.source) ||
       !isMedicationSourceBinding(option.binding) ||
-      option.source.id !== option.binding.candidateId
+      option.source.id !== option.binding.candidateId ||
+      (option.existingRecord !== null &&
+        (!obj(option.existingRecord) ||
+          !exact(option.existingRecord, ['medicationId', 'revision']) ||
+          !uuid(option.existingRecord.medicationId) ||
+          !integer(option.existingRecord.revision, 1)))
     )
       return false;
     const key = `${option.binding.documentId.toLowerCase()}/${option.source.id}`;

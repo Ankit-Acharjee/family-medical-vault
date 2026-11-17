@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { URL } from 'node:url';
 import { MedicationReconciliationService } from '../../dist/medications/medication-reconciliation.service.js';
 export async function verifyMedicationReconciliation(f) {
   const {
@@ -72,6 +74,7 @@ export async function verifyMedicationReconciliation(f) {
     assert.equal(options.options.length, 1);
     assert.equal(options.limited, false);
     assert.deepEqual(options.options[0].binding, first.source);
+    assert.equal(options.options[0].existingRecord, null);
     await assert.rejects(
       ledger.sourceOptions(principal, patient.id, { cursor: 'ignored' }),
       status(400),
@@ -85,6 +88,18 @@ export async function verifyMedicationReconciliation(f) {
     assert.deepEqual(
       await ledger.save(principal, patient.id, reconcileId, first),
       { saved: true, revision: 1 },
+    );
+    await assert.rejects(
+      ledger.save(principal, patient.id, randomUUID(), {
+        ...first,
+        requestId: randomUUID(),
+      }),
+      status(409),
+    );
+    assert.deepEqual(
+      (await ledger.sourceOptions(principal, patient.id)).options[0]
+        .existingRecord,
+      { medicationId: reconcileId, revision: 1 },
     );
     let list = await ledger.list(principal, patient.id);
     assert.equal(list.entries.length, 1);
@@ -178,6 +193,15 @@ export async function verifyMedicationReconciliation(f) {
     );
     // A new exact review invalidates an old reconciliation even with identical bytes.
     r = await review();
+    await assert.rejects(
+      ledger.save(principal, patient.id, randomUUID(), make(r)),
+      status(409),
+    );
+    assert.equal(
+      (await ledger.sourceOptions(principal, patient.id)).options[0]
+        .existingRecord.medicationId,
+      reconcileId,
+    );
     history = await ledger.history(principal, patient.id, reconcileId);
     assert.equal(history.current.sourceState, 'source-review-required');
     assert.equal(history.current.entry.recordedStatus, 'historical');
@@ -274,8 +298,11 @@ export async function verifyMedicationReconciliation(f) {
     assert.equal(older.current.entry.revision, 26);
     assert.equal(older.history.length, 6);
     assert.equal(older.nextBeforeRevision, null);
-    for (let i = 0; i < 21; i++)
+    for (let i = 0; i < 21; i++) {
+      await extraction('Medication: SYNTHETIC renewed source\nDose: unknown');
+      r = await review();
       await ledger.save(principal, patient.id, randomUUID(), make(r));
+    }
     list = await ledger.list(principal, patient.id);
     assert.equal(list.entries.length, 20);
     assert.ok(list.nextCursor);
@@ -290,6 +317,9 @@ export async function verifyMedicationReconciliation(f) {
       ).size,
       22,
     );
+    await extraction('Medication: SYNTHETIC renewed source\nDose: unknown');
+    r = await review();
+    await ledger.save(principal, patient.id, reconcileId, make(r, 26));
     await assert.rejects(
       runtime.query(
         'UPDATE fmv.medication_reconciliations SET recorded_status=$1',
@@ -316,7 +346,7 @@ export async function verifyMedicationReconciliation(f) {
       const v = {
         ...current,
         id: randomUUID(),
-        revision: 27,
+        revision: 28,
         action: 'correction',
         request_id: randomUUID(),
         ...patch,
@@ -349,11 +379,45 @@ export async function verifyMedicationReconciliation(f) {
       { review_revision: 1 },
       { source_revision: 1 },
       { lifecycle_version: 0 },
-      { revision: 28 },
+      { revision: 29 },
       { candidate_id: 'forged' },
       { fields: { ...current.fields, medication: null } },
     ])
       await assert.rejects(direct(patch), (e) => e.code === '23514');
+    await assert.rejects(
+      direct({
+        medication_id: randomUUID(),
+        revision: 1,
+        action: 'reconciliation',
+      }),
+      (e) => e.code === '23514',
+    );
+    await assert.rejects(
+      runtime.query(
+        'UPDATE fmv.medication_source_records SET source_revision=999',
+      ),
+      (e) => e.code === '42501',
+    );
+    await assert.rejects(
+      runtime.query('DELETE FROM fmv.medication_source_records'),
+      (e) => e.code === '42501',
+    );
+    await assert.rejects(
+      runtime.query(
+        'INSERT INTO fmv.medication_source_records(patient_id,document_id,source_revision,lifecycle_version,candidate_id,source_sha256,medication_id,first_entry_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
+        [
+          patient.id,
+          id,
+          current.source_revision,
+          current.lifecycle_version,
+          'forged',
+          'a'.repeat(64),
+          reconcileId,
+          current.id,
+        ],
+      ),
+      (e) => e.code === '23514',
+    );
     await direct({ recorded_at: new Date('2000-01-01T00:00:00Z') });
     assert.ok(
       (await ledger.history(principal, patient.id, reconcileId)).current.entry
@@ -368,7 +432,7 @@ export async function verifyMedicationReconciliation(f) {
     );
     try {
       await assert.rejects(
-        ledger.save(principal, patient.id, reconcileId, make(r, 27)),
+        ledger.save(principal, patient.id, reconcileId, make(r, 28)),
         status(503),
       );
     } finally {
@@ -382,7 +446,7 @@ export async function verifyMedicationReconciliation(f) {
     assert.equal(
       (await ledger.history(principal, patient.id, reconcileId)).current.entry
         .revision,
-      27,
+      28,
     );
     await owner.query(
       'UPDATE fmv.access_grants SET revoked_at=clock_timestamp() WHERE id=ANY($1::uuid[])',
@@ -446,6 +510,21 @@ export async function verifyMedicationReconciliation(f) {
         'DROP SEQUENCE IF EXISTS fmv.synthetic_medication_audit_probe',
       );
     }
+    await extraction(
+      'Medication: SYNTHETIC concurrent source\nDose: source only',
+    );
+    r = await review();
+    const race = await Promise.allSettled([
+      ledger.save(principal, patient.id, randomUUID(), make(r)),
+      other.save(principal, patient.id, randomUUID(), make(r)),
+    ]);
+    assert.equal(race.filter((v) => v.status === 'fulfilled').length, 1);
+    assert.equal(
+      race.filter(
+        (v) => v.status === 'rejected' && v.reason.getStatus() === 409,
+      ).length,
+      1,
+    );
     const createChoice = async (index, count) => {
       const upload = await f.intake.begin(
         patient.id,
@@ -522,6 +601,68 @@ export async function verifyMedicationReconciliation(f) {
       ).size,
       50,
     );
+    // Reconstruct the prior object layout transactionally: reject ambiguous
+    // legacy identities, then backfill valid immutable history without merging.
+    const migration = (
+      await readFile(
+        new URL(
+          '../../prisma/migrations/20261117000300_medication_source_identity/migration.sql',
+          import.meta.url,
+        ),
+        'utf8',
+      )
+    )
+      .replace(/^BEGIN;\s*/, '')
+      .replace(/COMMIT;\s*$/, '');
+    await owner.query('BEGIN');
+    try {
+      await owner.query(
+        'DROP FUNCTION fmv.claim_medication_source_record() CASCADE',
+      );
+      await owner.query(
+        'DROP FUNCTION fmv.guard_medication_source_record() CASCADE',
+      );
+      await owner.query('DROP TABLE fmv.medication_source_records');
+      await owner.query('SAVEPOINT clean_legacy');
+      await owner.query(
+        "INSERT INTO fmv.medication_reconciliations(id,medication_id,patient_id,document_id,candidate_id,source_revision,source_sha256,lifecycle_version,review_revision,revision,action,recorded_status,fields,request_id,payload_hash,actor_account_id) SELECT $1::uuid,$2::uuid,patient_id,document_id,candidate_id,source_revision,source_sha256,lifecycle_version,review_revision,1,'reconciliation',recorded_status,fields,$3::uuid,payload_hash,actor_account_id FROM fmv.medication_reconciliations WHERE patient_id=$4::uuid AND document_id=$5::uuid ORDER BY recorded_at DESC LIMIT 1",
+        [randomUUID(), randomUUID(), randomUUID(), patient.id, id],
+      );
+      await assert.rejects(owner.query(migration), (e) => e.code === '23514');
+      await owner.query('ROLLBACK TO SAVEPOINT clean_legacy');
+      await owner.query(migration);
+      const counts = (
+        await owner.query(
+          'SELECT (SELECT count(*)::int FROM fmv.medication_source_records) actual,(SELECT count(*)::int FROM(SELECT DISTINCT patient_id,document_id,source_revision,lifecycle_version,candidate_id FROM fmv.medication_reconciliations) s) expected',
+        )
+      ).rows[0];
+      assert.equal(counts.actual, counts.expected);
+      assert.equal(
+        (
+          await owner.query(
+            'SELECT count(*)::int n FROM fmv.medication_source_records c JOIN fmv.medication_reconciliations r ON r.id=c.first_entry_id WHERE c.patient_id<>r.patient_id OR c.document_id<>r.document_id OR c.medication_id<>r.medication_id OR c.source_revision<>r.source_revision OR c.lifecycle_version<>r.lifecycle_version OR c.candidate_id<>r.candidate_id OR c.source_sha256<>r.source_sha256',
+          )
+        ).rows[0].n,
+        0,
+      );
+      assert.deepEqual(
+        (
+          await owner.query(
+            "SELECT relrowsecurity,relforcerowsecurity,has_table_privilege('fmv_app',oid,'SELECT') r,has_table_privilege('fmv_app',oid,'INSERT') i,has_table_privilege('fmv_app',oid,'UPDATE') u,has_table_privilege('fmv_app',oid,'DELETE') d FROM pg_class WHERE oid='fmv.medication_source_records'::regclass",
+          )
+        ).rows[0],
+        {
+          relrowsecurity: true,
+          relforcerowsecurity: true,
+          r: true,
+          i: true,
+          u: false,
+          d: false,
+        },
+      );
+    } finally {
+      await owner.query('ROLLBACK');
+    }
   } finally {
     await ledger.onModuleDestroy();
     await other.onModuleDestroy();

@@ -389,6 +389,7 @@ test('source choices are owner-only, bounded and exact without inventing a recor
   const { entry, review } = fixture();
   const option = {
     title: 'SYNTHETIC prescription',
+    existingRecord: null,
     source: review.snapshot.statements[0],
     binding: entry.source,
   };
@@ -399,6 +400,27 @@ test('source choices are owner-only, bounded and exact without inventing a recor
     limited: false,
   };
   assert.equal(isMedicationSourceOptions(value), true);
+  assert.equal(
+    isMedicationSourceOptions({
+      ...value,
+      options: [{ ...option, existingRecord: { medicationId, revision: 3 } }],
+    }),
+    true,
+  );
+  for (const existingRecord of [
+    { medicationId, revision: 0 },
+    { medicationId: 'wrong', revision: 1 },
+    { medicationId, revision: 1, fields: {} },
+    {},
+  ])
+    assert.equal(
+      isMedicationSourceOptions({
+        ...value,
+        options: [{ ...option, existingRecord }],
+      }),
+      false,
+    );
+
   for (const patch of [
     { canWrite: false },
     { patientId: 'wrong' },

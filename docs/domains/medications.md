@@ -38,3 +38,7 @@ Each reconciliation binds to the exact owner-reviewed prescription/source versio
 ## Approved reconciliation read authority — 17 November 2026
 
 The owner may read the recorded current/history list. Other users need patient-wide View and current View of each source document; document/category grants alone do not expose the patient-level list. Recheck both permissions on every read, including history. Source unavailability excludes the source from trusted use without changing recorded medication status.
+
+## Approved exact-source record identity — 17 November 2026
+
+Reuse the existing medication record and preserve its history when reconciling the same document, extraction revision, lifecycle and source block again. A new source-attestation review does not create a new medication identity for that exact source. Never merge records automatically based on matching medication names across different prescriptions. Creation/correction must enforce this identity rule atomically; conflicting legacy identities require explicit resolution rather than silent merging or deletion.
