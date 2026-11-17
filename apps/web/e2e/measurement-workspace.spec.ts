@@ -120,6 +120,15 @@ async function setup(page: Page, owner = true) {
       return route.fulfill({
         json: { patients: mode === 'revoked' ? [] : [patient] },
       });
+    if (path.endsWith('/manual-readings'))
+      return route.fulfill({
+        json: {
+          patientId: patient.id,
+          canWrite: owner,
+          entries: [],
+          nextCursor: null,
+        },
+      });
     if (path.endsWith('/measurement-workspace')) {
       reads++;
       entered = true;

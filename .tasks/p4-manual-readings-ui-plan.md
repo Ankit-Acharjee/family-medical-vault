@@ -11,3 +11,7 @@ Reuse the existing Trends patient context, semantic tokens, Radix dialog, input/
 - Verify actual desktop/mobile/both themes, narrow320px, long values/timezones/units, keyboard/axe, read-only delegates, category-only access, pagination/current/history distinction, correction/withdrawal, retry/conflict, focus and access changes. Use synthetic intercepted APIs for browser QA; no real records or external model fallback.
 
 Manual charts/device imports/diagnostic interpretation/medication features are outside this interface slice. The current backend validation checks finite bounded representation, not clinical plausibility or medical accuracy.
+
+## Delivered
+
+Migration21 was separately approved/applied and metadata-verified. This interface is implemented and verified; see `p4-manual-readings-ui-report.md` for precise files, browser checks, screenshots and limits.

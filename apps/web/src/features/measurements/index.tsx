@@ -14,6 +14,7 @@ import { useMeasurementWorkspace } from './useMeasurementWorkspace';
 import { useComparisonAction } from './useComparisonAction';
 import { ComparisonDialog } from './ComparisonDialog';
 import { MeasurementDetails } from './MeasurementDetails';
+import { ManualReadingsPanel } from '../manual-readings';
 function compatibility(options: MeasurementOption[]) {
   const first = options[0]?.measurement.fields;
   if (!first) return '';
@@ -429,6 +430,7 @@ function PatientMeasurements({
           </section>
         </>
       )}
+      <ManualReadingsPanel patient={patient} enabled={enabled} />
       <ComparisonDialog
         manager={manager}
         workspace={data}
