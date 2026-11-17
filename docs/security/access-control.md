@@ -94,3 +94,7 @@ Medication reconciliation writes are owner-only under the MED-01/MED-02 policy i
 ## Approved initial medication inventory authority — 17 November 2026
 
 Optional quantity, expiry and refill records follow the owner-only write and medication-equivalent read policy in `docs/domains/medications.md`. Preserve correction history; View, Edit or Manage do not grant inventory-write authority. Recheck current patient and source permissions on every inventory/history operation.
+
+## Approved initial informational schedule authority — 17 November 2026
+
+Schedule creation, correction and retirement are owner-only under `docs/domains/medications.md`, with preserved history and medication-equivalent patient/source View for reads. View, Edit or Manage do not grant schedule-write authority. Recheck patient and source permissions for every schedule/history operation.

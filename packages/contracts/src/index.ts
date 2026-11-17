@@ -136,3 +136,5 @@ export * from './medication-sources.js';
 export * from './medication-reconciliation.js';
 
 export * from './medication-inventory.js';
+
+export * from './medication-schedule.js';

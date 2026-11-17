@@ -46,3 +46,7 @@ Reuse the existing medication record and preserve its history when reconciling t
 ## Approved initial inventory authority — 17 November 2026
 
 Optional medication quantity, expiry and refill records use owner-only writes with preserved correction history. Apply the medication record's read permissions: the owner may read; delegates require patient-wide View plus current View of the source. Inventory information remains optional and does not block prescription upload or medication reconciliation. It does not confer permission to change medication status or source confirmation.
+
+## Approved initial schedule authority — 17 November 2026
+
+Creating, correcting or retiring an informational medication schedule is owner-only, with preserved history. Use the medication record's source-authorized read permissions: the owner may read; delegates require patient-wide View plus current View of the source. This authority does not authorize prescribing, changing medication status, dose-taking confirmation or dependable background notification delivery.

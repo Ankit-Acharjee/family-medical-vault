@@ -1,0 +1,11 @@
+# MED-04 — explicit informational schedule contract
+
+Recorded the user's owner-only create/correct/retire authority, immutable-history requirement and medication-equivalent patient/source read permissions in the canonical medication/security domains.
+
+Added a pure shared definition/write contract as the next implementation dependency. Timing is either preserved literal owner wording or explicitly selected ISO weekdays and 1–8 unique ordered wall-clock labels with a named timezone. Optional start/end dates are exact calendar labels; unknown dates remain null, impossible/partial dates are rejected and known bounds must be ordered. Optional instructions reuse the existing bounded literal policy. Requests require explicit informational meaning/confirmation, a medication revision and CAS/request identity. Retired schedule state is distinct from medication treatment status.
+
+No frequency/dose parser, timezone instant conversion, next-dose calculation, database migration, UI, notification registration or background delivery was added. DST gap/fold wall-clock labels are stored without inventing an instant; future delivery semantics must not be inferred from this contract. A pure input guard is not authorization. This slice does not claim that usable schedules or reminders are delivered. The source-invalidation/reactivation lifecycle is separately awaiting the user's decision before persistence.
+
+Files: `packages/contracts/src/medication-schedule.ts`, `packages/contracts/src/index.ts`, `apps/server/test/medication-schedule.test.mjs`, canonical authority additions in `docs/domains/medications.md` and `docs/security/access-control.md`, and the focused schedule plan/report.
+
+Five focused contract tests passed: preserved uncertain literals, malformed/duplicate/unbounded weekday/time rejection, named-zone validation, DST gap/fold non-conversion, Gregorian/leap/century/date-bound handling and rejected implicit or malformed write semantics. Contracts build, workspace typecheck, lint, formatting and secret checks passed. No live records or hosted writes. Native workers/Astra remain quota-limited; supervisor implementation/review, no OpenCode fallback or unavailable independent signoff.
