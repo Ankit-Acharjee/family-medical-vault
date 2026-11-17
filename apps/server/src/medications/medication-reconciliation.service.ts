@@ -255,7 +255,7 @@ export class MedicationReconciliationService implements OnModuleDestroy {
         throw new BadRequestException();
       const pointers = await db.$queryRaw<
         { id: string }[]
-      >`SELECT d.id FROM fmv.documents d JOIN fmv.document_extractions e ON e.document_id=d.id AND e.patient_id=d.patient_id JOIN LATERAL(SELECT * FROM fmv.document_medication_reviews WHERE document_id=d.id AND patient_id=d.patient_id ORDER BY revision DESC LIMIT 1) m ON true WHERE d.patient_id=${p}::uuid AND d.state='ready' AND d.deleted_at IS NULL AND d.sha256=e.source_sha256 AND d.extraction_lifecycle=e.lifecycle_version AND m.source_revision=e.revision AND m.source_sha256=d.sha256 AND m.lifecycle_version=d.extraction_lifecycle AND jsonb_array_length(m.statements)>0 ORDER BY d.created_at DESC,d.id DESC LIMIT 26`;
+      >`SELECT d.id FROM fmv.documents d JOIN fmv.document_extractions e ON e.document_id=d.id AND e.patient_id=d.patient_id JOIN LATERAL(SELECT * FROM fmv.document_medication_reviews WHERE document_id=d.id AND patient_id=d.patient_id ORDER BY revision DESC LIMIT 1) m ON true WHERE d.patient_id=${p}::uuid AND d.state='ready' AND d.deleted_at IS NULL AND d.sha256=e.source_sha256 AND d.extraction_lifecycle=e.lifecycle_version AND m.source_revision=e.revision AND m.source_sha256=d.sha256 AND m.lifecycle_version=d.extraction_lifecycle AND jsonb_array_length(m.statements)>0 ORDER BY m.confirmed_at DESC,d.id DESC LIMIT 26`;
       const docs = pointers.map((v) => v.id);
       await this.lockDocs(db, p, docs);
       await this.auth(db, principal, p, docs, true);

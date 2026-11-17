@@ -10,3 +10,5 @@ Standing automated-workflow approval applies. All three policy decisions are res
 Supervisor continues because native workers are quota-limited; no external model substitution or unavailable Astra signoff.
 
 Source discovery is implemented. Exact-source identity is now approved: reuse the existing record and preserve history. Add database claims/backfill guards and current record pointers in source options; never merge by name or choose a winner for legacy conflicts. Then enable the owner form with authoritative identity/revision checks.
+
+Completed: owner form, exact-source reuse/corrections, explicit same-document source relinking and full interaction verification. See `p4-medication-owner-ui-report.md`. Hosted migration23 remains pending separate approval; no hosted clinical writes were made.

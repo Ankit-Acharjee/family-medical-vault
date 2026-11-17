@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { History, Pill, RefreshCw } from 'lucide-react';
+import { History, Pill, RefreshCw, Plus } from 'lucide-react';
 import {
   isMedicationReconciliationsPage,
   isMedicationReconciliationHistory,
@@ -17,6 +17,8 @@ import {
 import { usePatientContext } from '../patients';
 import { useManualResource as useMedicationResource } from '../manual-readings/api';
 import { MedicationSummary } from './MedicationSummary';
+import { OwnerMedicationDialog } from './OwnerMedicationDialog';
+import type { MedicationEditorTarget } from './OwnerMedicationDialog';
 export function MedicationsPanel({
   onRequestPatient,
 }: {
@@ -74,7 +76,9 @@ function MedicationSurface({
   const [cursors, setCursors] = useState<(string | null)[]>([null]),
     [before, setBefore] = useState<(number | null)[]>([null]),
     [selected, setSelected] = useState<string | null>(null),
-    [denied, setDenied] = useState(false);
+    [denied, setDenied] = useState(false),
+    [editor, setEditor] = useState<MedicationEditorTarget | null>(null),
+    [notice, setNotice] = useState('');
   const heading = useRef<HTMLHeadingElement>(null),
     trigger = useRef<HTMLElement | null>(null);
   const [element, setElement] = useState<HTMLDivElement | null>(null),
@@ -82,6 +86,8 @@ function MedicationSurface({
   const onDenied = () => {
     setDenied(true);
     setSelected(null);
+    setEditor(null);
+    setNotice('');
     context.reload();
   };
   const cursor = cursors.at(-1),
@@ -95,6 +101,9 @@ function MedicationSurface({
     onDenied,
   );
   const data = enabled ? list.value : null;
+  useEffect(() => {
+    if (enabled && data && !data.canWrite) setEditor(null);
+  }, [enabled, data]);
   const history = useMedicationResource(
     data && selected
       ? `${base}/${selected}${revision ? `?beforeRevision=${revision}` : ''}`
@@ -140,12 +149,31 @@ function MedicationSurface({
           </p>
         </div>
         {data && (
-          <Button variant="outline" onClick={refresh}>
-            <RefreshCw size={16} aria-hidden="true" />
-            Refresh medications
-          </Button>
+          <div className="flex flex-wrap gap-3">
+            {data.canWrite && (
+              <Button
+                onClick={(event) => {
+                  trigger.current = event.currentTarget;
+                  setNotice('');
+                  setEditor({ kind: 'create' });
+                }}
+              >
+                <Plus size={16} aria-hidden="true" />
+                Record medication
+              </Button>
+            )}
+            <Button variant="outline" onClick={refresh}>
+              <RefreshCw size={16} aria-hidden="true" />
+              Refresh medications
+            </Button>
+          </div>
         )}
       </div>
+      {notice && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {notice}
+        </p>
+      )}
       {!enabled ? (
         <p role="status">Checking medication access…</p>
       ) : denied ? (
@@ -280,6 +308,7 @@ function MedicationSurface({
           }}
           onCloseAutoFocus={(event) => {
             event.preventDefault();
+            if (editor) return;
             const node = trigger.current;
             if (node?.isConnected) node.focus();
             else heading.current?.focus();
@@ -311,6 +340,43 @@ function MedicationSurface({
               >
                 <h2 className="mb-3 font-semibold">Current recorded version</h2>
                 <MedicationSummary record={detail.current} details />
+                {detail.canWrite &&
+                  detail.current.sourceState === 'current-source' && (
+                    <Button
+                      className="mt-4"
+                      onClick={() => {
+                        setSelected(null);
+                        setEditor({
+                          kind: 'edit',
+                          id: detail.current.entry.medicationId,
+                        });
+                      }}
+                    >
+                      Update recorded medication
+                    </Button>
+                  )}
+                {detail.canWrite &&
+                  detail.current.sourceState !== 'current-source' && (
+                    <div className="mt-3 space-y-3">
+                      <p className="text-sm text-muted-foreground">
+                        Review this prescription again before linking its
+                        current source. The existing record and history will be
+                        retained.
+                      </p>
+                      <Button
+                        onClick={() => {
+                          setSelected(null);
+                          setEditor({
+                            kind: 'edit',
+                            id: detail.current.entry.medicationId,
+                            reviewSource: true,
+                          });
+                        }}
+                      >
+                        Review source and update record
+                      </Button>
+                    </div>
+                  )}
               </section>
               <section aria-label="Preserved versions" className="space-y-3">
                 <h2 className="font-semibold">Preserved versions</h2>
@@ -369,6 +435,44 @@ function MedicationSurface({
           )}
         </DialogContent>
       </Dialog>
+      {editor && (
+        <OwnerMedicationDialog
+          key={
+            editor.kind === 'edit'
+              ? `${editor.id}:${editor.reviewSource ? 'source' : 'fields'}`
+              : 'create'
+          }
+          patient={patient}
+          target={editor}
+          enabled={enabled && !!data?.canWrite && !denied}
+          onClose={(uncertain) => {
+            setEditor(null);
+            if (uncertain) {
+              setNotice(
+                'The save was not confirmed. Check the refreshed recorded version before trying again.',
+              );
+            }
+            refresh();
+          }}
+          onSaved={() => {
+            setEditor(null);
+            setNotice('Medication context saved; prior history is preserved.');
+            refresh();
+          }}
+          onDenied={() => {
+            setEditor(null);
+            setNotice(
+              'Recording permission could not be validated. Current readable records are being rechecked.',
+            );
+            context.reload();
+            refresh();
+          }}
+          onRestoreFocus={() => {
+            if (trigger.current?.isConnected) trigger.current.focus();
+            else heading.current?.focus();
+          }}
+        />
+      )}
     </section>
   );
 }

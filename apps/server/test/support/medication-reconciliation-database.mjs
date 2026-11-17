@@ -601,6 +601,13 @@ export async function verifyMedicationReconciliation(f) {
       ).size,
       50,
     );
+    await review();
+    assert.equal(
+      (await ledger.sourceOptions(principal, patient.id)).options[0].binding
+        .documentId,
+      id,
+      'Explicit review makes an older prescription discoverable without re-upload',
+    );
     // Reconstruct the prior object layout transactionally: reject ambiguous
     // legacy identities, then backfill valid immutable history without merging.
     const migration = (
@@ -625,7 +632,7 @@ export async function verifyMedicationReconciliation(f) {
       await owner.query('DROP TABLE fmv.medication_source_records');
       await owner.query('SAVEPOINT clean_legacy');
       await owner.query(
-        "INSERT INTO fmv.medication_reconciliations(id,medication_id,patient_id,document_id,candidate_id,source_revision,source_sha256,lifecycle_version,review_revision,revision,action,recorded_status,fields,request_id,payload_hash,actor_account_id) SELECT $1::uuid,$2::uuid,patient_id,document_id,candidate_id,source_revision,source_sha256,lifecycle_version,review_revision,1,'reconciliation',recorded_status,fields,$3::uuid,payload_hash,actor_account_id FROM fmv.medication_reconciliations WHERE patient_id=$4::uuid AND document_id=$5::uuid ORDER BY recorded_at DESC LIMIT 1",
+        "INSERT INTO fmv.medication_reconciliations(id,medication_id,patient_id,document_id,candidate_id,source_revision,source_sha256,lifecycle_version,review_revision,revision,action,recorded_status,fields,request_id,payload_hash,actor_account_id) SELECT $1::uuid,$2::uuid,patient_id,document_id,candidate_id,source_revision,source_sha256,lifecycle_version,(SELECT max(revision) FROM fmv.document_medication_reviews WHERE document_id=$5::uuid),1,'reconciliation',recorded_status,fields,$3::uuid,payload_hash,actor_account_id FROM fmv.medication_reconciliations WHERE patient_id=$4::uuid AND document_id=$5::uuid ORDER BY recorded_at DESC LIMIT 1",
         [randomUUID(), randomUUID(), randomUUID(), patient.id, id],
       );
       await assert.rejects(owner.query(migration), (e) => e.code === '23514');
