@@ -6,6 +6,7 @@ import {
   isMedicationReconciliationHistory,
   isMedicationReconciliationsPage,
   isMedicationReconciliationCursor,
+  isMedicationSourceOptions,
   isMedicationSourceBinding,
   isReconciledMedicationFields,
   isSaveMedicationReconciliation,
@@ -382,4 +383,45 @@ test('bounded list and history guards reject cross-patient, duplicate, misordere
     isReconciledMedicationFields({ ...entry.fields, dose: '🧊'.repeat(61) }),
     false,
   );
+});
+
+test('source choices are owner-only, bounded and exact without inventing a recorded regimen', () => {
+  const { entry, review } = fixture();
+  const option = {
+    title: 'SYNTHETIC prescription',
+    source: review.snapshot.statements[0],
+    binding: entry.source,
+  };
+  const value = {
+    patientId,
+    canWrite: true,
+    options: [option],
+    limited: false,
+  };
+  assert.equal(isMedicationSourceOptions(value), true);
+  for (const patch of [
+    { canWrite: false },
+    { patientId: 'wrong' },
+    { options: [option, option] },
+    { options: new Array(51).fill(option) },
+    { options: [{ ...option, title: '' }] },
+    {
+      options: [
+        {
+          ...option,
+          binding: { ...option.binding, candidateId: 'page-1-medication-99' },
+        },
+      ],
+    },
+    {
+      options: [{ ...option, source: { ...option.source, unverified: false } }],
+    },
+    { options: [{ ...option, recordedStatus: 'current' }] },
+  ])
+    assert.equal(isMedicationSourceOptions({ ...value, ...patch }), false);
+  assert.equal(
+    isMedicationSourceOptions({ ...value, options: [], limited: false }),
+    true,
+  );
+  assert.equal(isMedicationSourceOptions({ ...value, limited: true }), true);
 });

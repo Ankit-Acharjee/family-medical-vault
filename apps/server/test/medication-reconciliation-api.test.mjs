@@ -13,6 +13,10 @@ test('medication reconciliation routes preserve session, CSRF, no-store and priv
       calls.push({ principal, p, query });
       return { patientId: p, canWrite: true, entries: [], nextCursor: null };
     };
+    service.sourceOptions = async (principal, p, query) => {
+      calls.push({ principal, p, query, sourceOptions: true });
+      return { patientId: p, canWrite: true, options: [], limited: false };
+    };
     service.history = async (principal, p, medicationId, query) => {
       calls.push({ principal, p, medicationId, query });
       return {};
@@ -32,6 +36,11 @@ test('medication reconciliation routes preserve session, CSRF, no-store and priv
     assert.equal(page.status, 200);
     assert.equal(page.headers.get('cache-control'), 'no-store');
     assert.ok(calls[0].principal.subject);
+    assert.equal(
+      (await f.request('GET', `${base}/source-options`, session)).status,
+      200,
+    );
+    assert.equal(calls.at(-1).sourceOptions, true);
     assert.equal(
       (await f.request('GET', `${base}/${id}?beforeRevision=2`, session))
         .status,

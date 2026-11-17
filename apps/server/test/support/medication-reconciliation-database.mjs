@@ -68,6 +68,15 @@ export async function verifyMedicationReconciliation(f) {
     );
     let r = await review();
     const first = make(r);
+    const options = await ledger.sourceOptions(principal, patient.id);
+    assert.equal(options.options.length, 1);
+    assert.equal(options.limited, false);
+    assert.deepEqual(options.options[0].binding, first.source);
+    await assert.rejects(
+      ledger.sourceOptions(principal, patient.id, { cursor: 'ignored' }),
+      status(400),
+    );
+    await assert.rejects(ledger.sourceOptions(reader, patient.id), status(404));
     await assert.rejects(ledger.list(reader, patient.id), status(404));
     assert.deepEqual(
       await ledger.save(principal, patient.id, reconcileId, first),
@@ -108,6 +117,7 @@ export async function verifyMedicationReconciliation(f) {
       actions: ['view'],
       scopeKind: 'patient',
     });
+    await assert.rejects(ledger.sourceOptions(reader, patient.id), status(404));
     assert.equal((await ledger.list(reader, patient.id)).canWrite, false);
     assert.equal(
       (await ledger.history(reader, patient.id, reconcileId)).current.entry
@@ -199,6 +209,10 @@ export async function verifyMedicationReconciliation(f) {
       'withdrawal',
     );
     assert.equal(
+      (await ledger.sourceOptions(principal, patient.id)).options.length,
+      0,
+    );
+    assert.equal(
       (await ledger.history(principal, patient.id, reconcileId)).current
         .sourceState,
       'source-review-required',
@@ -216,6 +230,10 @@ export async function verifyMedicationReconciliation(f) {
       'UPDATE fmv.documents SET deleted_at=clock_timestamp(),extraction_lifecycle=extraction_lifecycle+1 WHERE id=$1::uuid',
       [id],
     );
+    assert.equal(
+      (await ledger.sourceOptions(principal, patient.id)).options.length,
+      0,
+    );
     history = await ledger.history(principal, patient.id, reconcileId);
     assert.equal(history.current.sourceState, 'source-review-required');
     assert.equal(history.current.entry.recordedStatus, 'current');
@@ -227,6 +245,10 @@ export async function verifyMedicationReconciliation(f) {
     await owner.query(
       'UPDATE fmv.documents SET deleted_at=NULL,extraction_lifecycle=extraction_lifecycle+1 WHERE id=$1::uuid',
       [id],
+    );
+    assert.equal(
+      (await ledger.sourceOptions(principal, patient.id)).options.length,
+      0,
     );
     assert.equal(
       (await ledger.history(principal, patient.id, reconcileId)).current
@@ -424,6 +446,82 @@ export async function verifyMedicationReconciliation(f) {
         'DROP SEQUENCE IF EXISTS fmv.synthetic_medication_audit_probe',
       );
     }
+    const createChoice = async (index, count) => {
+      const upload = await f.intake.begin(
+        patient.id,
+        {
+          title: `Synthetic prescription choice ${index}.pdf`,
+          mimeType: 'application/pdf',
+          bytes: f.bytes.length,
+          sha256: first.source.sourceSha256,
+          idempotencyKey: randomUUID(),
+          categoryId: f.categoryId,
+        },
+        f.authorize,
+      );
+      await f.intake.content(patient.id, upload.uploadId, f.bytes, f.authorize);
+      await f.intake.finalize(patient.id, upload.uploadId, f.authorize);
+      const doc = upload.documentId,
+        context = (
+          await service.extraction.read(principal, patient.id, doc, false)
+        ).context;
+      await service.extraction.save(principal, patient.id, doc, {
+        requestId: randomUUID(),
+        expectedRevision: context.revision,
+        lifecycleVersion: context.lifecycleVersion,
+        sourceSha256: context.sourceSha256,
+        result: {
+          method: 'pdf-text',
+          engineVersion: 'pdfjs-6.5.438',
+          pages: [
+            {
+              page: 1,
+              text: Array.from(
+                { length: count },
+                (_, i) =>
+                  `Medication: SYNTHETIC ${index} ${i}\nDose: literal source only`,
+              ).join('\n\n'),
+            },
+          ],
+          partial: false,
+          partialReason: null,
+          downsized: false,
+        },
+      });
+      const source = await service.medication.read(principal, patient.id, doc);
+      await service.medication.write(
+        principal,
+        patient.id,
+        doc,
+        {
+          requestId: randomUUID(),
+          expectedRevision: source.context.revision,
+          sourceRevision: source.context.sourceRevision,
+          sourceSha256: source.context.sourceSha256,
+          lifecycleVersion: source.context.lifecycleVersion,
+          confirmed: true,
+          meaning: 'source-fields-only',
+          candidateIds: source.candidates.map((c) => c.id),
+        },
+        'confirmation',
+      );
+    };
+    for (let i = 0; i < 26; i++) await createChoice(i, 1);
+    const cappedDocs = await ledger.sourceOptions(principal, patient.id);
+    assert.equal(cappedDocs.options.length, 25);
+    assert.equal(cappedDocs.limited, true);
+    for (let i = 26; i < 29; i++) await createChoice(i, 20);
+    const cappedOptions = await ledger.sourceOptions(principal, patient.id);
+    assert.equal(cappedOptions.options.length, 50);
+    assert.equal(cappedOptions.limited, true);
+    assert.equal(
+      new Set(
+        cappedOptions.options.map(
+          (o) => o.binding.documentId + '/' + o.binding.candidateId,
+        ),
+      ).size,
+      50,
+    );
   } finally {
     await ledger.onModuleDestroy();
     await other.onModuleDestroy();

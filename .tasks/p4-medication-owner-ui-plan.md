@@ -8,3 +8,5 @@ Standing automated-workflow approval applies. All three policy decisions are res
 4. Test actual browser creation/correction/history/status flows, source invalidation, failures/retry, denied roles, context changes, responsive themes, axe and overflow. Independently inspect rendered screenshots and run relevant checks before commit/push. No fake hosted records, original-byte access or dependency additions.
 
 Supervisor continues because native workers are quota-limited; no external model substitution or unavailable Astra signoff.
+
+Source discovery is implemented and verified: owner-only, exact current source/review bindings, at most 25 documents/50 candidates, with value-free audit. Before enabling creation, the user is deciding whether the exact same document/extraction/lifecycle/block must reuse its existing medication record rather than create a duplicate. Do not infer this identity policy from matching medication names, silently merge prescriptions or enable duplicate creation by default. Read-only Meds browsing/history remains available; no owner-form write UI is exposed until this decision is resolved.

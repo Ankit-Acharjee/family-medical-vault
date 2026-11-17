@@ -13,13 +13,15 @@ import {
   isMedicationReconciliationHistory,
   isMedicationReconciliationsPage,
   isSaveMedicationReconciliation,
-  medicationReconciliationSourceCurrent,
+  projectReviewedMedicationSources,
+  isMedicationSourceOptions,
 } from '@fmv/contracts';
 import type {
   MedicationReconciliationEntry,
   MedicationReconciliationCursor,
   MedicationReconciliationView,
   SaveMedicationReconciliation,
+  MedicationSourceOptions,
 } from '@fmv/contracts';
 import { PrismaClient } from '../generated/prisma/client.js';
 import type { Prisma } from '../generated/prisma/client.js';
@@ -157,7 +159,7 @@ export class MedicationReconciliationService implements OnModuleDestroy {
     if (ids.length)
       await db.$queryRaw`SELECT id FROM fmv.documents WHERE patient_id=${p}::uuid AND id=ANY(${[...new Set(ids)].sort()}::uuid[]) ORDER BY id FOR NO KEY UPDATE`;
   }
-  private async sourceCurrent(db: Tx, r: Row) {
+  private async currentSources(db: Tx, p: string, d: string) {
     const [s] = await db.$queryRaw<
       {
         sha: string;
@@ -176,11 +178,12 @@ export class MedicationReconciliationService implements OnModuleDestroy {
         confirmedAt: Date;
         ruleVersion: string;
       }[]
-    >`SELECT d.sha256 AS sha,d.extraction_lifecycle AS life,e.revision AS "sourceRevision",e.source_sha256 AS "extractionSha",e.lifecycle_version AS "extractionLife",m.revision AS "reviewRevision",m.source_revision AS "reviewSource",m.source_sha256 AS "reviewSha",m.lifecycle_version AS "reviewLife",m.action,m.statements,m.withdrawn_statements AS withdrawn,m.source_context AS context,m.confirmed_at AS "confirmedAt",m.rule_version AS "ruleVersion" FROM fmv.documents d JOIN fmv.document_extractions e ON e.document_id=d.id AND e.patient_id=d.patient_id JOIN LATERAL(SELECT * FROM fmv.document_medication_reviews WHERE document_id=d.id AND patient_id=d.patient_id ORDER BY revision DESC LIMIT 1) m ON true WHERE d.patient_id=${r.patientId}::uuid AND d.id=${r.documentId}::uuid AND d.state='ready' AND d.deleted_at IS NULL`;
+    >`SELECT d.sha256 AS sha,d.extraction_lifecycle AS life,e.revision AS "sourceRevision",e.source_sha256 AS "extractionSha",e.lifecycle_version AS "extractionLife",m.revision AS "reviewRevision",m.source_revision AS "reviewSource",m.source_sha256 AS "reviewSha",m.lifecycle_version AS "reviewLife",m.action,m.statements,m.withdrawn_statements AS withdrawn,m.source_context AS context,m.confirmed_at AS "confirmedAt",m.rule_version AS "ruleVersion" FROM fmv.documents d JOIN fmv.document_extractions e ON e.document_id=d.id AND e.patient_id=d.patient_id JOIN LATERAL(SELECT * FROM fmv.document_medication_reviews WHERE document_id=d.id AND patient_id=d.patient_id ORDER BY revision DESC LIMIT 1) m ON true WHERE d.patient_id=${p}::uuid AND d.id=${d}::uuid AND d.state='ready' AND d.deleted_at IS NULL`;
     if (!s || s.extractionSha !== s.sha || s.extractionLife !== s.life)
-      return false;
-    return medicationReconciliationSourceCurrent(
-      entry(r),
+      return [];
+    return projectReviewedMedicationSources(
+      p,
+      d,
       {
         context: {
           sourceRevision: s.sourceRevision,
@@ -211,6 +214,82 @@ export class MedicationReconciliationService implements OnModuleDestroy {
         reviewLifecycleVersion: s.reviewLife,
       },
     );
+  }
+  private async sourceCurrent(db: Tx, r: Row) {
+    const v = entry(r),
+      b = v.source;
+    return (await this.currentSources(db, r.patientId, r.documentId)).some(
+      (source) =>
+        source.source.id === b.candidateId &&
+        source.provenance.sourceRevision === b.sourceRevision &&
+        source.provenance.sourceSha256 === b.sourceSha256 &&
+        source.provenance.lifecycleVersion === b.lifecycleVersion &&
+        source.provenance.reviewRevision === b.reviewRevision,
+    );
+  }
+  async sourceOptions(
+    principal: Principal,
+    patientId: string,
+    query: unknown = {},
+  ) {
+    const p = patientId.toLowerCase();
+    return this.tx(p, async (db) => {
+      const actor = await this.auth(db, principal, p, [], true);
+      if (
+        !query ||
+        typeof query !== 'object' ||
+        Array.isArray(query) ||
+        Object.keys(query).length
+      )
+        throw new BadRequestException();
+      const pointers = await db.$queryRaw<
+        { id: string }[]
+      >`SELECT d.id FROM fmv.documents d JOIN fmv.document_extractions e ON e.document_id=d.id AND e.patient_id=d.patient_id JOIN LATERAL(SELECT * FROM fmv.document_medication_reviews WHERE document_id=d.id AND patient_id=d.patient_id ORDER BY revision DESC LIMIT 1) m ON true WHERE d.patient_id=${p}::uuid AND d.state='ready' AND d.deleted_at IS NULL AND d.sha256=e.source_sha256 AND d.extraction_lifecycle=e.lifecycle_version AND m.source_revision=e.revision AND m.source_sha256=d.sha256 AND m.lifecycle_version=d.extraction_lifecycle AND jsonb_array_length(m.statements)>0 ORDER BY d.created_at DESC,d.id DESC LIMIT 26`;
+      const docs = pointers.map((v) => v.id);
+      await this.lockDocs(db, p, docs);
+      await this.auth(db, principal, p, docs, true);
+      const result: MedicationSourceOptions = {
+        patientId: p,
+        canWrite: true,
+        options: [],
+        limited: pointers.length > 25,
+      };
+      const disclosed: string[] = [];
+      let count = 0;
+      for (const { id } of pointers.slice(0, 25)) {
+        const sources = await this.currentSources(db, p, id);
+        if (!sources.length) continue;
+        const [doc] = await db.$queryRaw<
+          { title: string }[]
+        >`SELECT COALESCE(display_title,title) AS title FROM fmv.documents WHERE patient_id=${p}::uuid AND id=${id}::uuid`;
+        if (!doc) throw new ServiceUnavailableException();
+        for (const item of sources) {
+          count++;
+          if (result.options.length === 50) continue;
+          const b = item.provenance;
+          result.options.push({
+            title: doc.title,
+            source: item.source,
+            binding: {
+              documentId: id,
+              candidateId: item.source.id,
+              sourceRevision: b.sourceRevision,
+              sourceSha256: b.sourceSha256,
+              lifecycleVersion: b.lifecycleVersion,
+              reviewRevision: b.reviewRevision,
+            },
+          });
+          if (!disclosed.includes(id)) disclosed.push(id);
+        }
+      }
+      result.limited ||= count > 50;
+      if (!isMedicationSourceOptions(result))
+        throw new ServiceUnavailableException();
+      for (const id of disclosed)
+        await db.$executeRaw`INSERT INTO fmv.document_events(id,patient_id,document_id,actor_account_id,kind) VALUES(${randomUUID()}::uuid,${p}::uuid,${id}::uuid,${actor.accountId}::uuid,'document.viewed')`;
+      await this.auth(db, principal, p, docs, true);
+      return result;
+    });
   }
   private async view(db: Tx, r: Row): Promise<MedicationReconciliationView> {
     return {

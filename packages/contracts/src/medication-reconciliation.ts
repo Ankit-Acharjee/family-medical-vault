@@ -1,5 +1,19 @@
 import { projectReviewedMedicationSources } from './medication-sources.js';
 import type { MedicationSourceFence } from './medication-sources.js';
+import { isMedicationCandidate } from './medication-review.js';
+import type { MedicationCandidate } from './medication-fields.js';
+
+export type MedicationSourceOption = {
+  title: string;
+  source: MedicationCandidate;
+  binding: MedicationSourceBinding;
+};
+export type MedicationSourceOptions = {
+  patientId: string;
+  canWrite: true;
+  options: MedicationSourceOption[];
+  limited: boolean;
+};
 
 /** Owner-recorded literal fields. Null means unknown, never an inferred value. */
 export type ReconciledMedicationFields = {
@@ -137,6 +151,38 @@ export function isMedicationSourceBinding(
     v.sourceSha256.length === 64 &&
     /^[a-f0-9]{64}$/.test(v.sourceSha256)
   );
+}
+export function isMedicationSourceOptions(
+  v: unknown,
+): v is MedicationSourceOptions {
+  if (
+    !obj(v) ||
+    !exact(v, ['patientId', 'canWrite', 'options', 'limited']) ||
+    !uuid(v.patientId) ||
+    v.canWrite !== true ||
+    typeof v.limited !== 'boolean' ||
+    !Array.isArray(v.options) ||
+    v.options.length > 50
+  )
+    return false;
+  const seen = new Set<string>();
+  return v.options.every((option) => {
+    if (
+      !obj(option) ||
+      !exact(option, ['title', 'source', 'binding']) ||
+      typeof option.title !== 'string' ||
+      option.title.length > 200 ||
+      !option.title.trim() ||
+      !isMedicationCandidate(option.source) ||
+      !isMedicationSourceBinding(option.binding) ||
+      option.source.id !== option.binding.candidateId
+    )
+      return false;
+    const key = `${option.binding.documentId.toLowerCase()}/${option.source.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 function content(v: Record<string, unknown>) {
   return (

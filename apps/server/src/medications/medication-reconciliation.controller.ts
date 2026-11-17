@@ -32,6 +32,13 @@ export class MedicationReconciliationController {
   ) {
     return this.medications.list(await this.principal(req), p, query);
   }
+  @Get('source-options') async sourceOptions(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Query() query: unknown,
+  ) {
+    return this.medications.sourceOptions(await this.principal(req), p, query);
+  }
   @Get(':medicationId') async history(
     @Req() req: Request,
     @Param('patientId') p: string,

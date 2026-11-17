@@ -699,6 +699,10 @@ export async function verifyClinicalReview(runtimeUrl, owner, insertGrant) {
       readerAccountId,
     });
     await verifyMedicationReconciliation({
+      intake,
+      authorize,
+      categoryId,
+      bytes,
       runtimeUrl,
       runtime,
       owner,
