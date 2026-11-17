@@ -12,6 +12,7 @@ import {
   DialogDescription,
 } from '../../components/ui/dialog';
 import { MeasurementDetails } from './MeasurementDetails';
+import { ConfirmedTrend } from './ConfirmedTrend';
 import type { useComparisonAction } from './useComparisonAction';
 type Manager = ReturnType<typeof useComparisonAction>;
 export function ComparisonDialog({
@@ -131,7 +132,16 @@ export function ComparisonDialog({
           </div>
         ) : (
           <>
-            {values.length > 0 && (
+            {!create && result?.status === 'current' && (
+              <ConfirmedTrend
+                key={result.setId + ':' + result.revision}
+                result={result}
+                sources={workspace?.sources ?? []}
+                onDenied={onDenied}
+                onReload={onReload}
+              />
+            )}
+            {values.length > 0 && (create || result?.status !== 'current') && (
               <div className="flex flex-col gap-3">
                 {values.map(({ measurement: m, title: sourceTitle }) => (
                   <article
@@ -150,7 +160,7 @@ export function ComparisonDialog({
                     <p className="mt-1 text-sm text-muted-foreground [overflow-wrap:anywhere]">
                       {sourceTitle}
                     </p>
-                    <p className="mt-2 text-sm">
+                    <p className="mt-2 text-sm [overflow-wrap:anywhere]">
                       Specimen: {m.fields.specimen ?? 'Unknown'} · Method:{' '}
                       {m.fields.method ?? 'Unknown'}
                     </p>

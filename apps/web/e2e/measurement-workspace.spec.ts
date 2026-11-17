@@ -607,3 +607,206 @@ test('stalled discovery has an actionable timeout and late responses stay hidden
     page.getByRole('heading', { name: 'Verified results' }),
   ).toBeVisible();
 });
+
+async function showSyntheticTrend(
+  page: Page,
+  f: Awaited<ReturnType<typeof setup>>,
+) {
+  const setId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  f.sets.set(setId, {
+    setId,
+    revision: 1,
+    status: 'current',
+    canConfirm: f.data.canConfirm,
+    members: f.data.measurements.map((o) => o.member),
+    measurements: f.data.measurements.map((o) => o.measurement),
+  });
+  f.data.comparisons = [
+    {
+      setId,
+      revision: 1,
+      status: 'current',
+      analyte: 'Synthetic marker',
+      memberCount: f.data.measurements.length,
+      recordedAt: '2026-11-17T00:00:00.000Z',
+    },
+  ];
+  await page.getByRole('button', { name: 'Refresh results' }).click();
+  await page.getByRole('button', { name: 'View comparison' }).click();
+  await expect(
+    dialog(page).getByRole('region', { name: 'Confirmed laboratory trend' }),
+  ).toBeVisible();
+  return setId;
+}
+test('confirmed chart has exact values, source-specific ranges and original-source navigation', async ({
+  page,
+}) => {
+  const f = await setup(page, false);
+  f.data.measurements[0]!.measurement.fields.reference = '1–2 as written';
+  f.data.measurements[1]!.measurement.fields.reference =
+    'Different source range';
+  await showSyntheticTrend(page, f);
+  const trend = dialog(page).getByRole('region', {
+    name: 'Confirmed laboratory trend',
+  });
+  await expect(
+    trend.getByRole('img', { name: /Synthetic marker by collection day/ }),
+  ).toBeVisible();
+  await expect(
+    trend.getByText('Reference as written: 1–2 as written'),
+  ).toBeVisible();
+  await expect(
+    trend.getByText('Reference as written: Different source range'),
+  ).toBeVisible();
+  await trend.getByRole('button', { name: /View source for point 1/ }).click();
+  await expect(
+    trend.getByRole('heading', { name: /Selected source/ }),
+  ).toBeFocused();
+  await expect(trend.getByRole('blockquote')).toContainText(
+    '1.230000000000000001',
+  );
+  await trend.getByRole('button', { name: 'Compare original' }).click();
+  await expect(
+    trend.getByText("Original source matches this saved text's file.", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(
+    dialog(page).getByRole('button', { name: 'Withdraw confirmation' }),
+  ).toHaveCount(0);
+  expect(f.writes).toEqual([]);
+  expect(f.errors).toEqual([]);
+  expect(f.unexpected).toEqual([]);
+});
+test('qualified and uncertain-date results remain source-linked and are never plotted', async ({
+  page,
+}) => {
+  const f = await setup(page);
+  for (const [i, value, date] of [
+    [0, '<5', '2026-11-11'],
+    [1, '3', 'November 2026'],
+  ] as const) {
+    const extra = structuredClone(f.data.measurements[i]!);
+    extra.measurement.fields.result = value;
+    extra.measurement.fields.date = date;
+    extra.measurement.result = classifyMeasurementResult(value);
+    extra.measurement.collectionDate = classifyMeasurementDate(date);
+    extra.member.candidateId = 'page-1-block-1';
+    extra.measurement.source.id = extra.member.candidateId;
+    f.data.measurements.push(extra);
+  }
+  const id = await showSyntheticTrend(page, f);
+  const trend = dialog(page).getByRole('region', {
+    name: 'Confirmed laboratory trend',
+  });
+  await expect(trend.locator('circle')).toHaveCount(2);
+  await expect(
+    trend.getByText(
+      'Not plotted: Qualified limit, not an exact numeric result.',
+    ),
+  ).toBeVisible();
+  await expect(
+    trend.getByText('Not plotted: Exact collection day unavailable.'),
+  ).toBeVisible();
+  await trend
+    .getByRole('button', { name: /View source for not plotted, <5/ })
+    .click();
+  await expect(
+    trend.getByRole('heading', { name: 'Selected source · <5 synthetic/unit' }),
+  ).toBeFocused();
+  // A later source invalidation must remove the entire trusted graph.
+  f.sets.set(id, {
+    ...f.sets.get(id)!,
+    revision: 2,
+    status: 'invalid',
+    measurements: [],
+  });
+  f.data.comparisons[0]!.revision = 2;
+  f.data.comparisons[0]!.status = 'invalid';
+  f.data.comparisons[0]!.analyte = null;
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(
+    dialog(page).getByRole('region', { name: 'Confirmed laboratory trend' }),
+  ).toHaveCount(0);
+  await expect(
+    dialog(page).getByText('A source or confirmation changed.', {
+      exact: false,
+    }),
+  ).toBeVisible();
+});
+test('chart is accessible in both themes and responsive at320px', async ({
+  page,
+}, testInfo) => {
+  const f = await setup(page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await showSyntheticTrend(page, f);
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate((t) => {
+      document.documentElement.dataset.theme = t;
+      document.documentElement.classList.toggle('dark', t === 'dark');
+    }, theme);
+    await expect(
+      dialog(page).getByRole('img', {
+        name: /Synthetic marker by collection day/,
+      }),
+    ).toBeVisible();
+    const axe = await new AxeBuilder({ page }).analyze();
+    expect(axe.violations).toEqual([]);
+    await page.screenshot({
+      path: `../../.local/screenshots/confirmed-trend-${testInfo.project.name}-${theme}.png`,
+    });
+  }
+  if (testInfo.project.name === 'mobile') {
+    await page.setViewportSize({ width: 320, height: 780 });
+    await expect(
+      dialog(page).getByRole('img', {
+        name: /Synthetic marker by collection day/,
+      }),
+    ).toBeVisible();
+    expect(
+      await dialog(page).evaluate((e) => e.scrollWidth <= e.clientWidth),
+    ).toBe(true);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+  }
+  f.data.measurements[0]!.measurement.fields.result = '9'.repeat(115);
+  f.data.measurements[0]!.measurement.result = classifyMeasurementResult(
+    '9'.repeat(115),
+  );
+  f.sets.forEach((s) => {
+    s.measurements = f.data.measurements.map((o) => o.measurement);
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await dialog(page)
+    .getByRole('button', { name: /View source for point 1/ })
+    .click();
+  await expect(
+    dialog(page).getByRole('heading', { name: /Selected source/ }),
+  ).toBeFocused();
+  expect(
+    await dialog(page).evaluate((e) => e.scrollWidth <= e.clientWidth),
+  ).toBe(true);
+  f.data.measurements.forEach((o) => {
+    o.measurement.fields.result = 'text';
+    o.measurement.result = classifyMeasurementResult('text');
+  });
+  f.sets.forEach((s) => {
+    s.measurements = f.data.measurements.map((o) => o.measurement);
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(
+    dialog(page).getByText('At least two exact numeric results', {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(
+    dialog(page).getByRole('img', {
+      name: /Synthetic marker by collection day/,
+    }),
+  ).toHaveCount(0);
+  expect(f.errors).toEqual([]);
+  expect(f.unexpected).toEqual([]);
+});
