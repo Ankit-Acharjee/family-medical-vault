@@ -41,6 +41,26 @@ export type MedicationReconciliationEntry = {
   recordedStatus: 'current' | 'historical';
   fields: ReconciledMedicationFields;
 };
+export type MedicationReconciliationView = {
+  entry: MedicationReconciliationEntry;
+  sourceState: 'current-source' | 'source-review-required';
+};
+export type MedicationReconciliationCursor = {
+  recordedAt: string;
+  medicationId: string;
+};
+export type MedicationReconciliationsPage = {
+  patientId: string;
+  canWrite: boolean;
+  entries: MedicationReconciliationView[];
+  nextCursor: MedicationReconciliationCursor | null;
+};
+export type MedicationReconciliationHistory = {
+  current: MedicationReconciliationView;
+  canWrite: boolean;
+  history: MedicationReconciliationView[];
+  nextBeforeRevision: number | null;
+};
 const keys = [
   'medication',
   'strength',
@@ -71,7 +91,11 @@ const literal = (v: unknown) =>
   v.trim().length > 0 &&
   [...v].every((character) => {
     const code = character.charCodeAt(0);
-    return code > 31 && code !== 127;
+    return (
+      code > 31 &&
+      code !== 127 &&
+      !(character.length === 1 && code >= 0xd800 && code <= 0xdfff)
+    );
   });
 export function isReconciledMedicationFields(
   v: unknown,
@@ -194,4 +218,111 @@ export function medicationReconciliationSourceCurrent(
       item.provenance.lifecycleVersion === source.lifecycleVersion &&
       item.provenance.reviewRevision === source.reviewRevision,
   );
+}
+export function isMedicationReconciliationCursor(
+  v: unknown,
+): v is MedicationReconciliationCursor {
+  return (
+    obj(v) &&
+    exact(v, ['recordedAt', 'medicationId']) &&
+    uuid(v.medicationId) &&
+    typeof v.recordedAt === 'string' &&
+    /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(v.recordedAt) &&
+    Number.isFinite(Date.parse(v.recordedAt)) &&
+    new Date(v.recordedAt).toISOString() === v.recordedAt
+  );
+}
+function view(v: unknown): v is MedicationReconciliationView {
+  return (
+    obj(v) &&
+    exact(v, ['entry', 'sourceState']) &&
+    isMedicationReconciliationEntry(v.entry) &&
+    (v.sourceState === 'current-source' ||
+      v.sourceState === 'source-review-required')
+  );
+}
+export function isMedicationReconciliationsPage(
+  v: unknown,
+): v is MedicationReconciliationsPage {
+  if (
+    !obj(v) ||
+    !exact(v, ['patientId', 'canWrite', 'entries', 'nextCursor']) ||
+    !uuid(v.patientId) ||
+    typeof v.canWrite !== 'boolean' ||
+    !Array.isArray(v.entries) ||
+    v.entries.length > 20 ||
+    !v.entries.every(view)
+  )
+    return false;
+  const entries = v.entries as MedicationReconciliationView[];
+  if (
+    new Set(entries.map((r) => r.entry.medicationId.toLowerCase())).size !==
+      entries.length ||
+    entries.some((r) => r.entry.patientId !== v.patientId)
+  )
+    return false;
+  for (let i = 1; i < entries.length; i++) {
+    const a = entries[i - 1]!.entry,
+      b = entries[i]!.entry;
+    if (
+      a.recordedAt < b.recordedAt ||
+      (a.recordedAt === b.recordedAt && a.medicationId <= b.medicationId)
+    )
+      return false;
+  }
+  const last = entries.at(-1)?.entry;
+  return (
+    v.nextCursor === null ||
+    (entries.length === 20 &&
+      isMedicationReconciliationCursor(v.nextCursor) &&
+      last?.recordedAt === v.nextCursor.recordedAt &&
+      last?.medicationId === v.nextCursor.medicationId)
+  );
+}
+export function isMedicationReconciliationHistory(
+  v: unknown,
+): v is MedicationReconciliationHistory {
+  if (
+    !obj(v) ||
+    !exact(v, ['current', 'canWrite', 'history', 'nextBeforeRevision']) ||
+    !view(v.current) ||
+    typeof v.canWrite !== 'boolean' ||
+    !Array.isArray(v.history) ||
+    v.history.length < 1 ||
+    v.history.length > 20 ||
+    !v.history.every(view)
+  )
+    return false;
+  const currentView = v.current,
+    current = currentView.entry,
+    rows = v.history as MedicationReconciliationView[];
+  if (
+    rows.some(
+      (r) =>
+        r.entry.medicationId !== current.medicationId ||
+        r.entry.patientId !== current.patientId ||
+        r.entry.source.documentId !== current.source.documentId ||
+        r.entry.revision > current.revision ||
+        (r.entry.revision === current.revision &&
+          (r.sourceState !== currentView.sourceState ||
+            r.entry.recordedAt !== current.recordedAt ||
+            r.entry.recordedStatus !== current.recordedStatus ||
+            Object.keys(current.source).some(
+              (k) =>
+                r.entry.source[k as keyof MedicationSourceBinding] !==
+                current.source[k as keyof MedicationSourceBinding],
+            ) ||
+            keys.some((k) => r.entry.fields[k] !== current.fields[k]))),
+    )
+  )
+    return false;
+  for (let i = 1; i < rows.length; i++)
+    if (rows[i]!.entry.revision !== rows[i - 1]!.entry.revision - 1)
+      return false;
+  const last = rows.at(-1)!.entry.revision;
+  return v.nextBeforeRevision === null
+    ? last === 1
+    : rows.length === 20 &&
+        integer(v.nextBeforeRevision, 1) &&
+        v.nextBeforeRevision === last - 1;
 }

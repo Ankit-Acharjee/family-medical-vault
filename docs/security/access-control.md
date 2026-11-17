@@ -89,4 +89,4 @@ Manual observation writes are restricted to the explicit Person owner under the 
 
 ## Approved initial medication reconciliation authority — 17 November 2026
 
-Medication reconciliation writes are owner-only under the MED-01/MED-02 policy in `docs/domains/medications.md`; View, Edit and Manage do not confer this authority. Source-field confirmation and reconciliation remain separate actions. Source lifecycle and record-read scope must be resolved before implementing the reconciliation ledger; do not infer a current regimen from labels or extraction alone.
+Medication reconciliation writes are owner-only under the MED-01/MED-02 policy in `docs/domains/medications.md`; View, Edit and Manage do not confer this authority. Source-field confirmation and reconciliation remain separate actions. The owner may read records/history; delegates require patient-wide View plus current View of each source. Document/category grants alone are insufficient. Enforce the approved exact-source lifecycle without inferring a current regimen from labels or extraction alone.

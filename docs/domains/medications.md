@@ -34,3 +34,7 @@ Only the explicit Person owner may initially reconcile an owner-reviewed prescri
 ## Approved source-bound reconciliation lifecycle — 17 November 2026
 
 Each reconciliation binds to the exact owner-reviewed prescription/source version. Source changes, withdrawal or Trash require source review again; invalid sources are excluded from trusted use. Preserve the owner's recorded current/historical status and prior history when a source becomes invalid. Source invalidation never implies that treatment stopped, and restoring a document does not automatically revalidate its old reconciliation. Reconciliation remains a separate owner action after source review.
+
+## Approved reconciliation read authority — 17 November 2026
+
+The owner may read the recorded current/history list. Other users need patient-wide View and current View of each source document; document/category grants alone do not expose the patient-level list. Recheck both permissions on every read, including history. Source unavailability excludes the source from trusted use without changing recorded medication status.

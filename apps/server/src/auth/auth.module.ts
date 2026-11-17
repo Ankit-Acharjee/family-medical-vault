@@ -1,3 +1,5 @@
+import { MedicationReconciliationService } from '../medications/medication-reconciliation.service.js';
+import { MedicationReconciliationController } from '../medications/medication-reconciliation.controller.js';
 import { Module } from '@nestjs/common';
 import type { DynamicModule } from '@nestjs/common';
 import { authConfig } from './auth.config.js';
@@ -138,6 +140,7 @@ class DisabledAccessStore extends AccessStore {
     MeasurementComparisonsController,
     MeasurementWorkspaceController,
     ManualReadingsController,
+    MedicationReconciliationController,
   ],
   providers: [
     AuthBoundaryGuard,
@@ -150,6 +153,11 @@ class DisabledAccessStore extends AccessStore {
       provide: ManualReadingsService,
       useFactory: () =>
         new ManualReadingsService(authConfig()?.databaseUrl ?? null),
+    },
+    {
+      provide: MedicationReconciliationService,
+      useFactory: () =>
+        new MedicationReconciliationService(authConfig()?.databaseUrl ?? null),
     },
     PermissionService,
     {

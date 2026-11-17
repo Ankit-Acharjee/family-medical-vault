@@ -3,6 +3,9 @@ import test from 'node:test';
 import {
   extractMedicationFields,
   isMedicationReconciliationEntry,
+  isMedicationReconciliationHistory,
+  isMedicationReconciliationsPage,
+  isMedicationReconciliationCursor,
   isMedicationSourceBinding,
   isReconciledMedicationFields,
   isSaveMedicationReconciliation,
@@ -313,4 +316,70 @@ test('history entries enforce canonical action, timestamp and revision without a
     assert.equal(isMedicationSourceBinding(v), false);
     assert.equal(isReconciledMedicationFields(v), false);
   }
+});
+
+test('bounded list and history guards reject cross-patient, duplicate, misordered and contradictory responses', () => {
+  const { entry } = fixture(),
+    view = { entry, sourceState: 'current-source' };
+  const page = { patientId, canWrite: true, entries: [view], nextCursor: null };
+  assert.equal(isMedicationReconciliationsPage(page), true);
+  for (const patch of [
+    { entries: [view, view] },
+    { patientId: documentId },
+    { nextCursor: { recordedAt: entry.recordedAt, medicationId } },
+    { entries: [{ ...view, sourceState: 'verified' }] },
+    { entries: new Array(21).fill(view) },
+  ])
+    assert.equal(isMedicationReconciliationsPage({ ...page, ...patch }), false);
+  assert.equal(
+    isMedicationReconciliationCursor({
+      medicationId,
+      recordedAt: entry.recordedAt,
+    }),
+    true,
+  );
+  assert.equal(
+    isMedicationReconciliationCursor({
+      medicationId,
+      recordedAt: entry.recordedAt + '\n',
+    }),
+    false,
+  );
+  const history = {
+    current: view,
+    canWrite: true,
+    history: [view],
+    nextBeforeRevision: null,
+  };
+  assert.equal(isMedicationReconciliationHistory(history), true);
+  for (const patch of [
+    { history: [] },
+    { history: [view, view] },
+    { nextBeforeRevision: 1 },
+    {
+      history: [
+        {
+          entry: { ...entry, recordedStatus: 'historical' },
+          sourceState: 'current-source',
+        },
+      ],
+    },
+    { history: [{ ...view, sourceState: 'source-review-required' }] },
+  ])
+    assert.equal(
+      isMedicationReconciliationHistory({ ...history, ...patch }),
+      false,
+    );
+  assert.equal(
+    isReconciledMedicationFields({ ...entry.fields, dose: '\ud800' }),
+    false,
+  );
+  assert.equal(
+    isReconciledMedicationFields({ ...entry.fields, dose: '🧊'.repeat(60) }),
+    true,
+  );
+  assert.equal(
+    isReconciledMedicationFields({ ...entry.fields, dose: '🧊'.repeat(61) }),
+    false,
+  );
 });
