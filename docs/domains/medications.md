@@ -26,3 +26,7 @@
 **Requirement:** No autonomous prescribing, per-dose adherence dashboard or native-only monitoring in initial scope.
 
 **Acceptance check:** UI does not present an AI recommendation as a prescription.
+
+## Approved initial reconciliation authority — 17 November 2026
+
+Only the explicit Person owner may initially reconcile an owner-reviewed prescription into the recorded current/history medication list, correct its record or mark it historical. Preserve prior history. Source-field confirmation alone remains insufficient: reconciliation is a separate explicit action. These actions record medication context; the application does not prescribe or recommend starting/stopping treatment. Delegate writes remain deferred.

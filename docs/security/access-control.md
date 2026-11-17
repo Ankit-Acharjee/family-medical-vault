@@ -86,3 +86,7 @@ Initial processing consent covers one exact document and source version, with an
 ## Approved manual-reading authority — 17 November 2026
 
 Manual observation writes are restricted to the explicit Person owner under the LAB-04 policy in `docs/domains/medical-data.md`. Existing patient-scope View controls reading patient-level manual observations/history; document/category grants do not grant patient-wide manual-data access. Recheck current authoritative ownership/grants at each operation, and preserve correction/withdrawal history without putting values in logs or audit metadata.
+
+## Approved initial medication reconciliation authority — 17 November 2026
+
+Medication reconciliation writes are owner-only under the MED-01/MED-02 policy in `docs/domains/medications.md`; View, Edit and Manage do not confer this authority. Source-field confirmation and reconciliation remain separate actions. Source lifecycle and record-read scope must be resolved before implementing the reconciliation ledger; do not infer a current regimen from labels or extraction alone.
