@@ -33,6 +33,8 @@ model AuthRateLimit {
 }
 
 model AppAccount {
+ medicationInventory MedicationInventory[]
+ medicationInventoryEvents MedicationInventoryEvent[]
   medicationReconciliations MedicationReconciliation[]
   medicationReconciliationEvents MedicationReconciliationEvent[]
   manualMeasurements ManualMeasurement[]
@@ -436,6 +438,7 @@ model ManualMeasurementEvent {
 }
 
 model MedicationReconciliation {
+ inventory MedicationInventory[]
  sourceRecords MedicationSourceRecord[]
  id String @id @db.Uuid
  medicationId String @map("medication_id") @db.Uuid
@@ -492,5 +495,42 @@ model MedicationSourceRecord {
  @@id([patientId,documentId,sourceRevision,lifecycleVersion,candidateId])
  @@index([patientId,medicationId,firstEntryId],map:"medication_source_records_entry")
  @@map("medication_source_records")
+ @@schema("fmv")
+}
+
+model MedicationInventory {
+ id String @id @db.Uuid
+ patientId String @map("patient_id") @db.Uuid
+ medicationId String @map("medication_id") @db.Uuid
+ medicationEntryId String @map("medication_entry_id") @db.Uuid
+ medicationRevision Int @map("medication_revision")
+ revision Int
+ fields Json
+ requestId String @map("request_id") @db.Uuid
+ payloadHash String @map("payload_hash")
+ actorAccountId String @map("actor_account_id") @db.Uuid
+ recordedAt DateTime @default(dbgenerated("clock_timestamp()")) @map("recorded_at") @db.Timestamptz(3)
+ medication MedicationReconciliation @relation(fields:[patientId,medicationId,medicationEntryId],references:[patientId,medicationId,id],onDelete:Cascade,onUpdate:NoAction)
+ actor AppAccount @relation(fields:[actorAccountId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+ events MedicationInventoryEvent[]
+ @@unique([medicationId,revision])
+ @@unique([medicationId,requestId])
+ @@unique([patientId,medicationId,id])
+ @@index([patientId,medicationId,revision(sort:Desc)],map:"medication_inventory_latest")
+ @@map("medication_inventory")
+ @@schema("fmv")
+}
+model MedicationInventoryEvent {
+ id String @id @db.Uuid
+ patientId String @map("patient_id") @db.Uuid
+ medicationId String @map("medication_id") @db.Uuid
+ entryId String @map("entry_id") @db.Uuid
+ actorAccountId String @map("actor_account_id") @db.Uuid
+ kind String
+ recordedAt DateTime @default(dbgenerated("clock_timestamp()")) @map("recorded_at") @db.Timestamptz(3)
+ expiresAt DateTime? @map("expires_at") @db.Timestamptz(3)
+ entry MedicationInventory @relation(fields:[patientId,medicationId,entryId],references:[patientId,medicationId,id],onDelete:Cascade,onUpdate:NoAction)
+ actor AppAccount @relation(fields:[actorAccountId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+ @@map("medication_inventory_events")
  @@schema("fmv")
 }

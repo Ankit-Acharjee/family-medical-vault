@@ -1,3 +1,4 @@
+import { InventoryDialog } from './InventoryDialog';
 import { useEffect, useRef, useState } from 'react';
 import { History, Pill, RefreshCw, Plus } from 'lucide-react';
 import {
@@ -78,7 +79,8 @@ function MedicationSurface({
     [selected, setSelected] = useState<string | null>(null),
     [denied, setDenied] = useState(false),
     [editor, setEditor] = useState<MedicationEditorTarget | null>(null),
-    [notice, setNotice] = useState('');
+    [notice, setNotice] = useState(''),
+    [inventoryId, setInventoryId] = useState<string | null>(null);
   const heading = useRef<HTMLHeadingElement>(null),
     trigger = useRef<HTMLElement | null>(null);
   const [element, setElement] = useState<HTMLDivElement | null>(null),
@@ -88,6 +90,7 @@ function MedicationSurface({
     setSelected(null);
     setEditor(null);
     setNotice('');
+    setInventoryId(null);
     context.reload();
   };
   const cursor = cursors.at(-1),
@@ -240,23 +243,38 @@ function MedicationSurface({
                             className="min-w-0 rounded-2xl border border-border bg-card p-5"
                           >
                             <MedicationSummary record={record} />
-                            <Button
-                              className="mt-4"
-                              variant="outline"
-                              onClick={(e) => {
-                                trigger.current = e.currentTarget;
-                                setHeight(0);
-                                setBefore([null]);
-                                setSelected(record.entry.medicationId);
-                              }}
-                            >
-                              <History size={16} aria-hidden="true" />
-                              Details and history
-                              <span className="sr-only">
-                                {' '}
-                                for {record.entry.fields.medication}
-                              </span>
-                            </Button>
+                            <div className="mt-4 flex flex-wrap gap-3">
+                              <Button
+                                variant="outline"
+                                onClick={(e) => {
+                                  trigger.current = e.currentTarget;
+                                  setHeight(0);
+                                  setBefore([null]);
+                                  setSelected(record.entry.medicationId);
+                                }}
+                              >
+                                <History size={16} aria-hidden="true" />
+                                Details and history
+                                <span className="sr-only">
+                                  {' '}
+                                  for {record.entry.fields.medication}
+                                </span>
+                              </Button>
+                              <Button
+                                variant="outline"
+                                onClick={(event) => {
+                                  trigger.current = event.currentTarget;
+                                  setInventoryId(record.entry.medicationId);
+                                  setNotice('');
+                                }}
+                              >
+                                Inventory
+                                <span className="sr-only">
+                                  {' '}
+                                  for {record.entry.fields.medication}
+                                </span>
+                              </Button>
+                            </div>
                           </li>
                         ))}
                     </ul>
@@ -435,6 +453,41 @@ function MedicationSurface({
           )}
         </DialogContent>
       </Dialog>
+      {inventoryId && (
+        <InventoryDialog
+          key={inventoryId}
+          patientId={patient.id}
+          patientName={patient.displayName}
+          medicationId={inventoryId}
+          medicationName={
+            data?.entries.find((r) => r.entry.medicationId === inventoryId)
+              ?.entry.fields.medication ?? null
+          }
+          enabled={enabled && !!data && !denied}
+          onClose={(uncertain) => {
+            setInventoryId(null);
+            if (uncertain)
+              setNotice(
+                'Inventory save was not confirmed. Check its latest version before trying again.',
+              );
+          }}
+          onSaved={() => {
+            setInventoryId(null);
+            setNotice(
+              'Inventory information saved; prior versions are preserved.',
+            );
+          }}
+          onDenied={() => {
+            setInventoryId(null);
+            context.reload();
+            refresh();
+          }}
+          onRestoreFocus={() => {
+            if (trigger.current?.isConnected) trigger.current.focus();
+            else heading.current?.focus();
+          }}
+        />
+      )}
       {editor && (
         <OwnerMedicationDialog
           key={

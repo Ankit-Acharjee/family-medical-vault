@@ -47,6 +47,34 @@ export class MedicationReconciliationController {
   ) {
     return this.medications.history(await this.principal(req), p, id, query);
   }
+  @Get(':medicationId/inventory') async inventory(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('medicationId') id: string,
+    @Query() query: unknown,
+  ) {
+    return this.medications.inventory(
+      await this.principal(req),
+      p,
+      id,
+      'read',
+      query,
+    );
+  }
+  @Put(':medicationId/inventory') async saveInventory(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('medicationId') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.medications.inventory(
+      await this.principal(req),
+      p,
+      id,
+      'save',
+      body,
+    );
+  }
   @Put(':medicationId') async save(
     @Req() req: Request,
     @Param('patientId') p: string,

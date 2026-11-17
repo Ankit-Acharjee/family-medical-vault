@@ -100,7 +100,7 @@ const uuid = (v: unknown): v is string =>
   );
 const integer = (v: unknown, min: number): v is number =>
   typeof v === 'number' && Number.isInteger(v) && v >= min && v <= 2147483647;
-const literal = (v: unknown) =>
+export const isMedicationLiteral = (v: unknown) =>
   typeof v === 'string' &&
   v.length <= 120 &&
   v.trim().length > 0 &&
@@ -118,7 +118,9 @@ export function isReconciledMedicationFields(
   return (
     obj(v) &&
     exact(v, keys) &&
-    keys.every((k) => (k !== 'medication' && v[k] === null) || literal(v[k]))
+    keys.every(
+      (k) => (k !== 'medication' && v[k] === null) || isMedicationLiteral(v[k]),
+    )
   );
 }
 export function isMedicationSourceBinding(

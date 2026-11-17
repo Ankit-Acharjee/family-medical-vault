@@ -1,3 +1,4 @@
+import { verifyMedicationInventory } from './medication-inventory-database.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -101,6 +102,7 @@ export async function verifyMedicationReconciliation(f) {
         .existingRecord,
       { medicationId: reconcileId, revision: 1 },
     );
+    await verifyMedicationInventory(f, ledger, other, reconcileId);
     let list = await ledger.list(principal, patient.id);
     assert.equal(list.entries.length, 1);
     assert.equal(list.entries[0].sourceState, 'current-source');
@@ -204,6 +206,22 @@ export async function verifyMedicationReconciliation(f) {
     );
     history = await ledger.history(principal, patient.id, reconcileId);
     assert.equal(history.current.sourceState, 'source-review-required');
+    assert.equal(
+      (await ledger.inventory(principal, patient.id, reconcileId, 'read'))
+        .sourceState,
+      'source-review-required',
+    );
+    await assert.rejects(
+      ledger.inventory(principal, patient.id, reconcileId, 'save', {
+        requestId: randomUUID(),
+        expectedRevision: 24,
+        medicationRevision: 2,
+        confirmed: true,
+        meaning: 'owner-reported-inventory',
+        fields: { quantity: null, expiry: null, refill: null },
+      }),
+      status(409),
+    );
     assert.equal(history.current.entry.recordedStatus, 'historical');
     await ledger.save(principal, patient.id, reconcileId, {
       ...make(r, 2),

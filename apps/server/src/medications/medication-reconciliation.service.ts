@@ -1,3 +1,4 @@
+import { readInventory, saveInventory } from './medication-inventory.store.js';
 import {
   BadRequestException,
   ConflictException,
@@ -448,6 +449,48 @@ export class MedicationReconciliationService implements OnModuleDestroy {
       result.canWrite = (
         await this.auth(db, principal, p, [row.documentId])
       ).owner;
+      return result;
+    });
+  }
+  async inventory(
+    principal: Principal,
+    patientId: string,
+    medicationId: string,
+    mode: 'read' | 'save',
+    input: unknown = {},
+  ) {
+    const p = patientId.toLowerCase(),
+      id = medicationId.toLowerCase();
+    return this.tx(p, async (db) => {
+      const actor = await this.auth(db, principal, p, [], mode === 'save');
+      if (!isUuid(id)) throw new NotFoundException();
+      await db.$queryRaw`SELECT 1 FROM pg_advisory_xact_lock(hashtextextended(${'medication:' + id},0))`;
+      const [pointer] = await db.$queryRaw<
+        { documentId: string }[]
+      >`SELECT document_id AS "documentId" FROM fmv.medication_reconciliations WHERE patient_id=${p}::uuid AND medication_id=${id}::uuid ORDER BY revision DESC LIMIT 1`;
+      if (!pointer) throw new NotFoundException();
+      await this.lockDocs(db, p, [pointer.documentId]);
+      await this.auth(db, principal, p, [pointer.documentId], mode === 'save');
+      const row = await this.latest(db, p, id);
+      if (!row) throw new NotFoundException();
+      const context = {
+        patientId: p,
+        medicationId: id,
+        medicationEntryId: row.id,
+        medicationRevision: row.revision,
+        accountId: actor.accountId,
+        owner: actor.owner,
+        sourceState: (await this.sourceCurrent(db, row))
+          ? ('current-source' as const)
+          : ('source-review-required' as const),
+      };
+      const result =
+        mode === 'read'
+          ? await readInventory(db, context, input)
+          : await saveInventory(db, context, input);
+      if (mode === 'read')
+        await this.audit(db, p, actor.accountId, [row], 'medication.viewed');
+      await this.auth(db, principal, p, [row.documentId], mode === 'save');
       return result;
     });
   }
