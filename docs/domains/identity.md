@@ -36,3 +36,7 @@
 **Requirement:** Keep login deactivation separate from Person/profile deletion and reconcile individually registered and managed profiles securely.
 
 **Acceptance check:** Disabling credentials does not automatically delete medical history.
+
+## Approved initial managed-profile creation authority — 18 November 2026
+
+A verified user with an existing personal Person may create a private managed Person without login credentials and receive explicit patient-wide View, Upload, Edit, Export and Manage grants. The creator remains a caregiver, not that Person's owner. Existing owner-only clinical verification, emergency-profile editing and external-link issuance remain unavailable until activation establishes ownership under its separately defined policy. Do not infer guardian clinical authority, public exposure or automatic identity merging from these caregiver grants.
