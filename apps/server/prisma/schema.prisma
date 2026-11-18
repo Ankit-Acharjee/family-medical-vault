@@ -33,6 +33,8 @@ model AuthRateLimit {
 }
 
 model AppAccount {
+ emergencyEntries EmergencyProfileEntry[]
+ emergencyEvents EmergencyProfileEvent[]
   createdTemporaryLinks TemporaryLink[] @relation("TemporaryLinkCreator")
   revokedTemporaryLinks TemporaryLink[] @relation("TemporaryLinkRevoker")
   summaryExports SummaryExportEvent[]
@@ -67,6 +69,8 @@ model AppAccount {
 }
 
 model Person {
+ emergencyEntries EmergencyProfileEntry[]
+ emergencyEvents EmergencyProfileEvent[]
   temporaryLinks TemporaryLink[]
   summaryExports SummaryExportEvent[]
   manualMeasurements ManualMeasurement[]
@@ -640,5 +644,35 @@ model TemporaryLinkAccessEvent {
  @@index([retentionUntil],map:"temporary_link_access_retention")
  @@index([linkId,recordedAt(sort:Desc),id],map:"temporary_link_access_link")
  @@map("temporary_link_access_events")
+ @@schema("fmv")
+}
+
+model EmergencyProfileEntry {
+ id String @id @db.Uuid
+ patientId String @map("patient_id") @db.Uuid
+ actorAccountId String @map("actor_account_id") @db.Uuid
+ revision Int
+ requestId String @map("request_id") @db.Uuid
+ payloadSha256 String @map("payload_sha256")
+ fields Json
+ recordedAt DateTime @default(dbgenerated("statement_timestamp()")) @map("recorded_at") @db.Timestamptz(3)
+ patient Person @relation(fields:[patientId],references:[id],onDelete:Cascade,onUpdate:NoAction)
+ actor AppAccount @relation(fields:[actorAccountId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+ @@unique([patientId,revision])
+ @@unique([patientId,requestId])
+ @@map("emergency_profile_entries")
+ @@schema("fmv")
+}
+model EmergencyProfileEvent {
+ id String @id @db.Uuid
+ patientId String @map("patient_id") @db.Uuid
+ actorAccountId String @map("actor_account_id") @db.Uuid
+ kind String
+ recordedAt DateTime @default(dbgenerated("statement_timestamp()")) @map("recorded_at") @db.Timestamptz(3)
+ retentionUntil DateTime? @default(dbgenerated("(statement_timestamp() + '90 days'::interval)")) @map("retention_until") @db.Timestamptz(3)
+ patient Person @relation(fields:[patientId],references:[id],onDelete:Cascade,onUpdate:NoAction)
+ actor AppAccount @relation(fields:[actorAccountId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+ @@index([patientId,recordedAt(sort:Desc),id],map:"emergency_profile_events_patient")
+ @@map("emergency_profile_events")
  @@schema("fmv")
 }

@@ -45,3 +45,7 @@ Initial external links are bearer capabilities: anyone holding the secret may ac
 ## Approved initial private emergency-profile authority — 18 November 2026
 
 Only the explicit Person owner may edit the initial private emergency profile. Other readers require current patient-wide View; source-document access alone does not grant access to this separate aggregate. The owner may read it. Public QR exposure remains disabled until its exact fields and consent policy are separately approved. This authority grants no external sharing, clinical verification or inferred diagnosis/medication status.
+
+## Approved initial private emergency fields — 18 November 2026
+
+The private profile initially contains only optional owner-entered emergency contact name, relationship, phone and a short emergency note, clearly labeled owner-reported. Do not automatically infer or populate diagnoses, allergies, blood group or medication lists from source statements. Missing fields remain not provided. Public QR remains disabled pending its separate field and consent policy.

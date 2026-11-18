@@ -1,3 +1,5 @@
+import { EmergencyProfileController } from '../emergency/emergency-profile.controller.js';
+import { EmergencyProfileService } from '../emergency/emergency-profile.service.js';
 import { RecipientController } from '../sharing/recipient.controller.js';
 import { TemporaryLinksService } from '../sharing/temporary-links.service.js';
 import { TemporaryLinksController } from '../sharing/temporary-links.controller.js';
@@ -152,8 +154,14 @@ class DisabledAccessStore extends AccessStore {
     OriginalExportController,
     TemporaryLinksController,
     RecipientController,
+    EmergencyProfileController,
   ],
   providers: [
+    {
+      provide: EmergencyProfileService,
+      useFactory: () =>
+        new EmergencyProfileService(authConfig()?.databaseUrl ?? null),
+    },
     {
       provide: TemporaryLinksService,
       inject: [OBJECT_STORE],

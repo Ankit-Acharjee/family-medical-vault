@@ -1,3 +1,4 @@
+import { EmergencyProfileEntry } from '../emergency/EmergencyProfileEntry';
 import { useEffect, useRef, useState } from 'react';
 import { permissionActions } from '@fmv/contracts';
 import type {
@@ -109,7 +110,12 @@ function validList(value: unknown): value is FamilyAccessResult {
 }
 export function FamilyAccessPanel() {
   const { selectedPatient } = usePatientContext();
-  return <FamilyAccessContent key={selectedPatient?.id ?? 'no-patient'} />;
+  return (
+    <>
+      <EmergencyProfileEntry />
+      <FamilyAccessContent key={selectedPatient?.id ?? 'no-patient'} />
+    </>
+  );
 }
 
 function FamilyAccessContent() {

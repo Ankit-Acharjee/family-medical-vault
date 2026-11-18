@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { FocusEvent } from 'react';
 // Preserve footprint and keyed keyboard focus across protected-content rechecks.
 // Only UI identifiers are retained, never record values or hidden authorization.
-export function useStableDialogHeight(active: boolean) {
+export function useStableDialogHeight(active: boolean, retainLargest = true) {
   const [element, setElement] = useState<HTMLDivElement | null>(null),
     [height, setHeight] = useState(0),
     lastFocus = useRef<{ id: string; key: string } | null>(null),
@@ -11,12 +11,17 @@ export function useStableDialogHeight(active: boolean) {
     if (!element || !active) return;
     const observer = new ResizeObserver(() =>
       setHeight((previous) =>
-        Math.max(previous, Math.ceil(element.getBoundingClientRect().height)),
+        retainLargest
+          ? Math.max(
+              previous,
+              Math.ceil(element.getBoundingClientRect().height),
+            )
+          : Math.ceil(element.getBoundingClientRect().height),
       ),
     );
     observer.observe(element);
     return () => observer.disconnect();
-  }, [element, active]);
+  }, [element, active, retainLargest]);
   useEffect(() => {
     if (!active) {
       restore.current = true;
@@ -49,8 +54,9 @@ export function useStableDialogHeight(active: boolean) {
   return {
     ref: setElement,
     onFocusCapture,
-    style: height
-      ? { minHeight: `min(${height}px, calc(100dvh - 2rem))` }
-      : undefined,
+    style:
+      height && (retainLargest || !active)
+        ? { minHeight: `min(${height}px, calc(100dvh - 2rem))` }
+        : undefined,
   };
 }
