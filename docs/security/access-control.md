@@ -108,3 +108,7 @@ Open-page reminders follow the owner-only explicit opt-in policy in the medicati
 ## Approved initial in-app summary read authority — 18 November 2026
 
 An aggregate patient summary requires patient-wide View and current permission for each included source; the explicit Person owner remains allowed. Check aggregate authority and every source's current authorization/verification/lifecycle before disclosure. Never treat a client capability hint or a previously generated summary as permission, and do not infer export/share authority from summary read access.
+
+## Approved initial summary export authority — 18 November 2026
+
+Summary export requires patient-wide View and Export and current View and Export for each included source, with the explicit Person owner allowed. Current read permission, a client capability hint or an older generated artifact is insufficient. Recheck source/permission freshness before generation and before serving bytes; preserve independent original-document Export behavior. Downloaded copies are outside future application revocation.

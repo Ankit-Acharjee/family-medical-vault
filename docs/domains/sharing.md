@@ -29,3 +29,7 @@ The explicit Person owner may read an in-app patient summary. Other users requir
 ## Approved initial summary date semantics — 18 November 2026
 
 Period summaries use exact reported collection/observation calendar dates for laboratory and manual readings. Keep unknown or imprecise dates separately; never substitute upload, recording or verification timestamps. Preserve the manual observation's recorded offset and calendar date. Medication status remains an explicitly labeled current record snapshot, including its owner-recorded current/historical labels; do not infer treatment intervals or historical medication status for a requested period.
+
+## Approved initial summary export authority — 18 November 2026
+
+The explicit Person owner may export a patient summary. Other users require patient-wide View and Export plus current View and Export for every included source. Summary read authority alone does not authorize export. Revalidate the current summary/source snapshot and these independent permissions before generation and immediately before download; downloaded copies cannot be revoked. This does not authorize public sharing, external processing or any change to the original records or clinical verification state.

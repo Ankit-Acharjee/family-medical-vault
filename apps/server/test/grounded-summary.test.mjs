@@ -308,3 +308,84 @@ test('wrong patient, malformed or substituted source projections fail closed', (
     assert.equal(isGroundedSummary(r), false);
   }
 });
+
+test('export snapshot ignores generation time and property ordering but preserves clinical changes', async () => {
+  const { canonicalSummarySnapshot, isSummaryExportRequest } =
+    await import('@fmv/contracts');
+  const summary = projectGroundedSummary(fixture());
+  const canonical = canonicalSummarySnapshot(summary);
+  assert.ok(canonical);
+  const reordered = Object.fromEntries(Object.entries(summary).reverse());
+  reordered.generatedAt = '2026-11-19T00:00:00.000Z';
+  assert.equal(canonicalSummarySnapshot(reordered), canonical);
+  const changed = globalThis.structuredClone(summary);
+  changed.manual[0].revision += 1;
+  assert.notEqual(canonicalSummarySnapshot(changed), canonical);
+  const request = {
+    requestId: patientId,
+    confirmed: true,
+    format: 'zip',
+    request: { scope: 'patient', period: null },
+    snapshotSha256: sha,
+  };
+  assert.equal(isSummaryExportRequest(request), true);
+  for (const patch of [
+    { confirmed: false },
+    { format: 'html' },
+    { snapshotSha256: 'invalid' },
+    { owner: true },
+  ])
+    assert.equal(isSummaryExportRequest({ ...request, ...patch }), false);
+});
+
+test('summary archive contains only safe static paths, exact JSON and escaped offline HTML', async () => {
+  const { summaryArchive, summaryHtml } =
+    await import('../dist/summaries/summary-archive.js');
+  const { mkdtemp, writeFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { execFileSync } = await import('node:child_process');
+  const summary = projectGroundedSummary(fixture());
+  const name = '<script>alert("synthetic")</script> বাংলা';
+  const html = summaryHtml(summary, name);
+  assert.ok(html.includes('&lt;script&gt;'));
+  assert.ok(html.includes('বাংলা'));
+  assert.ok(!html.includes('<script>'));
+  assert.ok(html.includes("default-src 'none'"));
+  const bytes = await summaryArchive(
+    summary,
+    name,
+    new globalThis.AbortController().signal,
+  );
+  const dir = await mkdtemp(join(tmpdir(), 'fmv-synthetic-archive-'));
+  try {
+    const file = join(dir, 'summary.zip');
+    await writeFile(file, bytes, { mode: 0o600 });
+    execFileSync('/usr/bin/unzip', ['-t', file]);
+    assert.deepEqual(
+      execFileSync('/usr/bin/unzip', ['-Z1', file], { encoding: 'utf8' })
+        .trim()
+        .split('\n'),
+      ['summary.html', 'summary.json', 'README.txt'],
+    );
+    assert.deepEqual(
+      JSON.parse(
+        execFileSync('/usr/bin/unzip', ['-p', file, 'summary.json'], {
+          encoding: 'utf8',
+        }),
+      ),
+      summary,
+    );
+    assert.equal(
+      execFileSync('/usr/bin/unzip', ['-p', file, 'summary.html'], {
+        encoding: 'utf8',
+      }),
+      html,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+  const controller = new globalThis.AbortController();
+  controller.abort();
+  await assert.rejects(summaryArchive(summary, name, controller.signal));
+});

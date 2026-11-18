@@ -11,11 +11,13 @@ import {
   DialogDescription,
 } from '../../components/ui/dialog';
 import { useManualResource } from '../manual-readings/api';
+import { SummaryExport } from './SummaryExport';
 import { GroundedSummaryContent } from './GroundedSummaryContent';
 export function GroundedSummaryDialog({
   patientId,
   patientName,
   enabled,
+  canExport,
   onClose,
   onDenied,
   onRestoreFocus,
@@ -23,6 +25,7 @@ export function GroundedSummaryDialog({
   patientId: string;
   patientName: string;
   enabled: boolean;
+  canExport: boolean;
   onClose: () => void;
   onDenied: () => void;
   onRestoreFocus: () => void;
@@ -227,6 +230,14 @@ export function GroundedSummaryDialog({
             By reported date
           </Button>
         </div>
+        {value && canExport && (
+          <SummaryExport
+            key={value.generatedAt + query.toString()}
+            value={value}
+            patientName={patientName}
+            onReload={resource.reload}
+          />
+        )}
         {!enabled ? (
           <p role="status">Checking summary access…</p>
         ) : resource.phase === 'failed' ? (

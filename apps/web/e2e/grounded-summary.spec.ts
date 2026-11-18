@@ -158,7 +158,9 @@ async function setup(page: Page, owner = true) {
   const errors: string[] = [],
     unexpected: string[] = [],
     queries: URLSearchParams[] = [];
-  let writes = 0;
+  let writes = 0,
+    exportMode = 'ready';
+  const exports: unknown[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.route('**/api/**', async (route) => {
     const r = route.request(),
@@ -166,6 +168,18 @@ async function setup(page: Page, owner = true) {
       path = url.pathname;
     const json = (value: unknown, status = 200) =>
       route.fulfill({ status, json: value });
+    if (r.method() === 'POST' && path.endsWith('/summary/export')) {
+      writes++;
+      exports.push(r.postDataJSON());
+      if (exportMode === 'conflict') return json({}, 409);
+      if (exportMode === 'denied') return json({}, 404);
+      if (exportMode === 'failed') return json({}, 503);
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/zip',
+        body: Buffer.from([0x50, 0x4b, 3, 4, 0, 0, 0, 0]),
+      });
+    }
     if (r.method() !== 'GET') {
       writes++;
       return json({}, 404);
@@ -266,6 +280,10 @@ async function setup(page: Page, owner = true) {
     errors,
     unexpected,
     queries,
+    exports,
+    exportMode(value: string) {
+      exportMode = value;
+    },
     get writes() {
       return writes;
     },
@@ -635,4 +653,156 @@ test('chronology supports both themes, keyboard source expansion and narrow scro
   ).toBeFocused();
   expect(f.writes).toBe(0);
   expect(f.errors).toEqual([]);
+});
+
+test('summary export confirms patient and privacy, handles conflict and permission denial separately from reading', async ({
+  page,
+}) => {
+  const f = await setup(page);
+  await open(page);
+  await dialog(page)
+    .getByRole('button', { name: 'Export summary', exact: true })
+    .click();
+  await expect(dialog(page)).toContainText(
+    'Export for Synthetic summary patient',
+  );
+  const download = dialog(page).getByRole('button', {
+    name: 'Download summary ZIP',
+    exact: true,
+  });
+  const acknowledgement = dialog(page).getByRole('checkbox');
+  await expect(download).toBeDisabled();
+  await acknowledgement.check();
+  f.exportMode('conflict');
+  await download.click();
+  await expect(dialog(page)).toContainText('Records changed.');
+  await dialog(page)
+    .getByRole('button', { name: 'Reload summary before export' })
+    .click();
+  await dialog(page)
+    .getByRole('button', { name: 'Export summary', exact: true })
+    .click();
+  await expect(dialog(page).getByRole('checkbox')).not.toBeChecked();
+  await dialog(page).getByRole('checkbox').check();
+  f.exportMode('denied');
+  await download.click();
+  await expect(dialog(page)).toContainText(
+    'Export is not currently authorized',
+  );
+  await expect(
+    dialog(page).getByText('SYNTHETIC analyte').first(),
+  ).toBeVisible();
+  expect(f.exports).toHaveLength(2);
+  expect(f.errors).toEqual([]);
+});
+
+test('summary export downloads a bounded attachment after explicit consent and retains retry safety', async ({
+  page,
+}, info) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const f = await setup(page);
+  await open(page);
+  await dialog(page)
+    .getByRole('button', { name: 'Export summary', exact: true })
+    .click();
+  await dialog(page).getByRole('checkbox').check();
+  f.exportMode('failed');
+  await dialog(page)
+    .getByRole('button', { name: 'Download summary ZIP', exact: true })
+    .click();
+  await expect(dialog(page)).toContainText('Export could not be completed.');
+  await expect(dialog(page).getByRole('checkbox')).not.toBeChecked();
+  await dialog(page).getByRole('checkbox').check();
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(
+      (theme) => (document.documentElement.dataset.theme = theme),
+      theme,
+    );
+    await page.screenshot({
+      path: `../../.local/screenshots/summary-export-${info.project.name}-${theme}.png`,
+    });
+    expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  }
+  f.exportMode('ready');
+  const event = page.waitForEvent('download');
+  await dialog(page)
+    .getByRole('button', { name: 'Download summary ZIP', exact: true })
+    .click();
+  const file = await event;
+  expect(file.suggestedFilename()).toBe('family-medical-vault-summary.zip');
+  await expect(dialog(page)).toContainText('Download started.');
+  expect(f.exports).toHaveLength(2);
+  expect(f.exports[0]).toMatchObject({
+    confirmed: true,
+    format: 'zip',
+    request: { scope: 'patient', period: null },
+  });
+  expect(f.exports[1]).toMatchObject({
+    snapshotSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+  });
+  expect(f.errors).toEqual([]);
+});
+
+test('read-only summary delegate has no aggregate export action', async ({
+  page,
+}) => {
+  await setup(page, false);
+  await open(page);
+  await expect(
+    dialog(page).getByRole('button', { name: 'Export summary', exact: true }),
+  ).toHaveCount(0);
+});
+
+test('canceling an in-flight export prevents a late download and resets consent at 320px', async ({
+  page,
+}) => {
+  await setup(page);
+  await page.setViewportSize({ width: 320, height: 844 });
+  await open(page);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  await page.route('**/summary/export', async (route) => {
+    await gate;
+    await route
+      .fulfill({
+        status: 200,
+        contentType: 'application/zip',
+        body: Buffer.from([0x50, 0x4b, 3, 4, 0, 0, 0, 0]),
+      })
+      .catch(() => {});
+  });
+  let downloads = 0;
+  page.on('download', () => downloads++);
+  await dialog(page)
+    .getByRole('button', { name: 'Export summary', exact: true })
+    .click();
+  await dialog(page).getByRole('checkbox').check();
+  await dialog(page)
+    .getByRole('button', { name: 'Download summary ZIP', exact: true })
+    .click();
+  await expect(
+    dialog(page).getByRole('button', { name: 'Preparing private export…' }),
+  ).toBeDisabled();
+  await dialog(page)
+    .getByRole('button', { name: 'Cancel export', exact: true })
+    .click();
+  release();
+  await expect(
+    dialog(page).getByRole('button', { name: 'Export summary', exact: true }),
+  ).toBeFocused();
+  await dialog(page)
+    .getByRole('button', { name: 'Export summary', exact: true })
+    .click();
+  await expect(dialog(page).getByRole('checkbox')).not.toBeChecked();
+  await expect(
+    dialog(page).getByRole('button', {
+      name: 'Download summary ZIP',
+      exact: true,
+    }),
+  ).toBeDisabled();
+  const overflow = await dialog(page).evaluate(
+    (e) => e.scrollWidth > e.clientWidth,
+  );
+  expect(overflow).toBe(false);
+  expect(downloads).toBe(0);
 });

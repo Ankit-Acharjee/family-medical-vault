@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { Buffer } from 'node:buffer';
 import { NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { documentSetup, ids } from './support/document-fixture.mjs';
 import {
@@ -85,4 +86,67 @@ test('summary endpoint requires current session, uses no-store and sanitizes all
       assert.ok(!(await r.text()).includes('private source details'));
     }
     assert.equal((await f.request('POST', base, session, {})).status, 404);
+  }));
+
+test('summary export requires session and CSRF and delivers private attachment only after authorization', async () =>
+  documentSetup(async (f) => {
+    const service = f.app.get(GroundedSummaryService),
+      base = f.path('summary/export'),
+      calls = [];
+    service.export = async (...args) => {
+      calls.push(args);
+      return { bytes: Buffer.from('PK synthetic fixture') };
+    };
+    assert.equal((await f.request('POST', base, undefined, {})).status, 401);
+    const session = await f.login();
+    assert.equal(
+      (
+        await f.request(
+          'POST',
+          base,
+          session,
+          {},
+          { 'X-CSRF-Token': undefined },
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await f.request(
+          'POST',
+          base,
+          session,
+          {},
+          { Origin: 'https://unapproved.example.test' },
+        )
+      ).status,
+      403,
+    );
+    assert.equal(calls.length, 0);
+    const r = await f.request('POST', base, session, {});
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get('cache-control'), 'no-store');
+    assert.equal(r.headers.get('content-type'), 'application/zip');
+    assert.ok(
+      r.headers
+        .get('content-disposition')
+        .includes('family-medical-vault-summary.zip'),
+    );
+    assert.equal(r.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(await r.text(), 'PK synthetic fixture');
+    assert.equal(calls[0][1], ids.patient);
+    assert.ok(calls[0][3] instanceof globalThis.AbortSignal);
+    for (const error of [
+      new NotFoundException(),
+      new ServiceUnavailableException(),
+      new Error('private export content'),
+    ]) {
+      service.export = async () => {
+        throw error;
+      };
+      const denied = await f.request('POST', base, session, {});
+      assert.equal(denied.status, error.getStatus?.() ?? 500);
+      assert.ok(!(await denied.text()).includes('private export content'));
+    }
   }));

@@ -30,7 +30,7 @@
     "dev": "node infra/scripts/dev.mjs",
     "ci:lint": "node infra/ci/tools.mjs lint",
     "security:secrets": "node infra/ci/tools.mjs secrets",
-    "security:dependencies": "pnpm audit --audit-level=high",
+    "security:dependencies": "node infra/ci/dependency-audit.mjs",
     "test:security": "node --test infra/ci/test/*.test.mjs",
     "ci:runtime": "node infra/ci/runtime-smoke.mjs"
   },

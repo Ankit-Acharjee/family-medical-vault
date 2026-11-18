@@ -1,3 +1,4 @@
+import { verifySummaryExport } from './summary-export-database.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { GroundedSummaryService } from '../../dist/summaries/grounded-summary.service.js';
@@ -122,6 +123,7 @@ export async function verifyGroundedSummary(f, medications, medicationId) {
         'DROP FUNCTION IF EXISTS fmv.synthetic_summary_audit_failure()',
       );
     }
+    await verifySummaryExport(f, summary, manual);
     await manual.withdraw(principal, patient.id, readingId, {
       requestId: randomUUID(),
       expectedRevision: 1,

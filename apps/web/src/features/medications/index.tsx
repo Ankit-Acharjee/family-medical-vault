@@ -522,6 +522,12 @@ function MedicationSurface({
           patientId={patient.id}
           patientName={patient.displayName}
           enabled={enabled && !!data && !denied}
+          canExport={
+            patient.relationship === 'self' ||
+            patient.capabilities.some(
+              (c) => c.action === 'export' && c.scope.kind === 'patient',
+            )
+          }
           onClose={() => setSummaryOpen(false)}
           onDenied={onDenied}
           onRestoreFocus={() => {
