@@ -33,6 +33,7 @@ model AuthRateLimit {
 }
 
 model AppAccount {
+ managedCreations ManagedProfileCreation[]
  emergencyEntries EmergencyProfileEntry[]
  emergencyEvents EmergencyProfileEvent[]
   createdTemporaryLinks TemporaryLink[] @relation("TemporaryLinkCreator")
@@ -69,6 +70,7 @@ model AppAccount {
 }
 
 model Person {
+ managedCreation ManagedProfileCreation?
  emergencyEntries EmergencyProfileEntry[]
  emergencyEvents EmergencyProfileEvent[]
   temporaryLinks TemporaryLink[]
@@ -76,9 +78,9 @@ model Person {
   manualMeasurements ManualMeasurement[]
   id               String             @id @db.Uuid
   storageNamespace String             @unique @default(dbgenerated("gen_random_uuid()")) @map("storage_namespace") @db.Uuid
-  ownerAccountId   String             @unique @map("owner_account_id") @db.Uuid
+  ownerAccountId   String?            @unique @map("owner_account_id") @db.Uuid
   displayName      String             @map("display_name")
-  account          AppAccount         @relation(fields: [ownerAccountId], references: [id], onDelete: Restrict)
+  account          AppAccount?        @relation(fields: [ownerAccountId], references: [id], onDelete: Restrict)
   grants           AccessGrant[]
   accessEvents     AccessEvent[]
   documents        Document[]
@@ -90,6 +92,7 @@ model Person {
 }
 
 model AccessGrant {
+ managedCreation ManagedProfileCreation?
   id                 String                  @id @db.Uuid
   patientId          String                  @map("patient_id") @db.Uuid
   granteeAccountId   String                  @map("grantee_account_id") @db.Uuid
@@ -674,5 +677,20 @@ model EmergencyProfileEvent {
  actor AppAccount @relation(fields:[actorAccountId],references:[id],onDelete:NoAction,onUpdate:NoAction)
  @@index([patientId,recordedAt(sort:Desc),id],map:"emergency_profile_events_patient")
  @@map("emergency_profile_events")
+ @@schema("fmv")
+}
+
+model ManagedProfileCreation {
+ patientId String @id @map("patient_id") @db.Uuid
+ creatorAccountId String @map("creator_account_id") @db.Uuid
+ requestId String @map("request_id") @db.Uuid
+ payloadSha256 String @map("payload_sha256")
+ initialGrantId String @unique @map("initial_grant_id") @db.Uuid
+ createdAt DateTime @default(dbgenerated("statement_timestamp()")) @map("created_at") @db.Timestamptz(3)
+ patient Person @relation(fields:[patientId],references:[id],onDelete:Cascade,onUpdate:NoAction)
+ creator AppAccount @relation(fields:[creatorAccountId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+ initialGrant AccessGrant @relation(fields:[initialGrantId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+ @@unique([creatorAccountId,requestId])
+ @@map("managed_profile_creations")
  @@schema("fmv")
 }

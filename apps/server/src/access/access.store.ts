@@ -20,7 +20,11 @@ export type StoredGrant = {
 };
 export type AccessSnapshot = {
   accountId: string | null;
-  patient: { id: string; displayName: string; ownerAccountId: string } | null;
+  patient: {
+    id: string;
+    displayName: string;
+    ownerAccountId: string | null;
+  } | null;
   grants: StoredGrant[];
   now: Date;
 };
@@ -115,7 +119,7 @@ export class PrismaAccessStore extends AccessStore implements OnModuleDestroy {
       >`SELECT id FROM fmv.app_accounts WHERE issuer = ${issuer} AND subject = ${subject}`;
       if (!account) return [];
       const patients = await db.$queryRaw<
-        { id: string; displayName: string; ownerAccountId: string }[]
+        { id: string; displayName: string; ownerAccountId: string | null }[]
       >`
         SELECT p.id, p.display_name AS "displayName", p.owner_account_id AS "ownerAccountId" FROM fmv.persons p
         WHERE p.owner_account_id = ${account.id}::uuid OR EXISTS (

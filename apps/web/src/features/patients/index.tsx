@@ -1,3 +1,4 @@
+import { ManagedProfileForm } from './ManagedProfileForm';
 import {
   createContext,
   useCallback,
@@ -216,6 +217,15 @@ export function usePatientContext(): PatientContextValue {
 }
 
 export function PatientPicker({ onSelected }: { onSelected?: () => void }) {
+  const { loading, reload } = usePatientContext();
+  return (
+    <>
+      <ManagedProfileForm enabled={!loading} onCreated={reload} />
+      <PatientChoices {...(onSelected ? { onSelected } : {})} />
+    </>
+  );
+}
+function PatientChoices({ onSelected }: { onSelected?: () => void }) {
   const { patients, selectedPatient, loading, error, selectPatient, reload } =
     usePatientContext();
   if (loading) return <p role="status">Loading patient profiles…</p>;

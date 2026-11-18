@@ -147,3 +147,4 @@ export * from './original-export.js';
 
 export * from './temporary-links.js';
 export * from './emergency-profile.js';
+export * from './managed-profiles.js';

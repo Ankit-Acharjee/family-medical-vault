@@ -1,3 +1,4 @@
+import { ManagedProfilesService } from '../identity/managed-profiles.service.js';
 import { EmergencyProfileController } from '../emergency/emergency-profile.controller.js';
 import { EmergencyProfileService } from '../emergency/emergency-profile.service.js';
 import { RecipientController } from '../sharing/recipient.controller.js';
@@ -157,6 +158,11 @@ class DisabledAccessStore extends AccessStore {
     EmergencyProfileController,
   ],
   providers: [
+    {
+      provide: ManagedProfilesService,
+      useFactory: () =>
+        new ManagedProfilesService(authConfig()?.databaseUrl ?? null),
+    },
     {
       provide: EmergencyProfileService,
       useFactory: () =>
