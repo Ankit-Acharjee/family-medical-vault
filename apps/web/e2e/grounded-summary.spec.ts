@@ -503,3 +503,136 @@ test('delegates read with no write affordance; both themes, focus and 320px scro
   expect(f.unexpected).toEqual([]);
   expect(f.writes).toBe(0);
 });
+
+test('reported-date view groups sources without clinical episodes and leaves medication outside the chronology', async ({
+  page,
+}) => {
+  const f = await setup(page);
+  await open(page);
+  await expect(dialog(page)).toContainText('SYNTHETIC analyte');
+  await dialog(page)
+    .getByRole('button', { name: 'By reported date', exact: true })
+    .click();
+  const region = dialog(page).getByRole('region', {
+    name: 'Reported-date chronology',
+  });
+  await expect(region).toContainText('does not establish a common encounter');
+  await expect(region.locator('ol > li > h3 time')).toHaveText([
+    '2026-11-17',
+    '2024-02-29',
+  ]);
+  await expect(region).toContainText('2024-02-29T00:30:00+14:00');
+  await expect(region).not.toContainText('SYNTHETIC medication');
+  await expect(
+    dialog(page).getByRole('region', { name: 'Summary medication snapshot' }),
+  ).toContainText('SYNTHETIC medication');
+  await expect(region).toContainText(
+    'These source records are not assigned a calendar position.',
+  );
+  await region.locator('details').first().locator('summary').first().click();
+  await expect(
+    region.getByRole('button', { name: 'Compare original' }).first(),
+  ).toBeVisible();
+  await dialog(page)
+    .getByRole('button', { name: 'By record type', exact: true })
+    .click();
+  await expect(region).toHaveCount(0);
+  await expect(
+    dialog(page).getByRole('region', { name: 'Summary laboratory results' }),
+  ).toBeVisible();
+  expect(f.writes).toBe(0);
+  expect(f.errors).toEqual([]);
+});
+test('date view respects period/scope changes, retains arrangement on revalidation and clears denied data', async ({
+  page,
+}) => {
+  const f = await setup(page);
+  await open(page);
+  await dialog(page)
+    .getByRole('button', { name: 'By reported date', exact: true })
+    .click();
+  await period(page);
+  const region = dialog(page).getByRole('region', {
+    name: 'Reported-date chronology',
+  });
+  await expect(region.locator('ol > li > h3 time')).toHaveText(['2024-02-29']);
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(region).toContainText('Observations by reported date');
+  await expect(
+    dialog(page).getByRole('button', { name: 'By reported date', exact: true }),
+  ).toHaveAttribute('aria-pressed', 'true');
+  await dialog(page)
+    .getByLabel('Summary scope', { exact: true })
+    .selectOption('medication');
+  await dialog(page)
+    .getByRole('button', { name: 'Apply summary scope' })
+    .click();
+  await expect(
+    dialog(page).getByRole('region', { name: 'Summary medication snapshot' }),
+  ).toBeVisible();
+  await expect(region).toHaveCount(0);
+  await expect(
+    dialog(page).getByRole('button', { name: 'By reported date', exact: true }),
+  ).toBeDisabled();
+  f.mode('denied');
+  await dialog(page).getByRole('button', { name: 'Reset scope' }).click();
+  await expect(dialog(page)).toHaveCount(0);
+  await expect(page.getByText('SYNTHETIC analyte')).toHaveCount(0);
+  expect(f.writes).toBe(0);
+});
+test('chronology supports both themes, keyboard source expansion and narrow scrolling', async ({
+  page,
+}, info) => {
+  const f = await setup(page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await open(page);
+  await dialog(page)
+    .getByRole('button', { name: 'By reported date', exact: true })
+    .click();
+  await dialog(page)
+    .locator('summary')
+    .filter({ hasText: 'Summary scope and dates' })
+    .click();
+  const region = dialog(page).getByRole('region', {
+    name: 'Reported-date chronology',
+  });
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(
+      (t) => (document.documentElement.dataset.theme = t),
+      theme,
+    );
+    await dialog(page).evaluate((e) => (e.scrollTop = 0));
+    expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+    await page.screenshot({
+      path: `../../.local/screenshots/reported-chronology-${info.project.name}-${theme}.png`,
+      animations: 'disabled',
+    });
+  }
+  await page.setViewportSize({ width: 320, height: 780 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  expect(
+    await dialog(page).evaluate((e) => e.scrollWidth <= e.clientWidth + 1),
+  ).toBe(true);
+  await region.locator('details > summary').first().focus();
+  await page.keyboard.press('Enter');
+  await expect(
+    region.getByRole('button', { name: 'Compare original' }).first(),
+  ).toBeVisible();
+  await dialog(page)
+    .getByRole('link', { name: /Open original source/ })
+    .scrollIntoViewIfNeeded();
+  await expect(
+    dialog(page).getByRole('link', { name: /Open original source/ }),
+  ).toBeInViewport();
+  await page.keyboard.press('Escape');
+  await expect(dialog(page)).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: 'Patient summary', exact: true }),
+  ).toBeFocused();
+  expect(f.writes).toBe(0);
+  expect(f.errors).toEqual([]);
+});

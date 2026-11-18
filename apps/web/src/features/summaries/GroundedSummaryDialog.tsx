@@ -31,6 +31,11 @@ export function GroundedSummaryDialog({
     scope: 'patient',
     period: null,
   });
+  const [arrangement, setArrangement] = useState<'sections' | 'reported-date'>(
+    'sections',
+  );
+  const effectiveArrangement =
+    request.scope === 'medication' ? 'sections' : arrangement;
   const [scope, setScope] = useState('patient'),
     [fromDate, setFromDate] = useState(''),
     [toDate, setToDate] = useState(''),
@@ -196,6 +201,32 @@ export function GroundedSummaryDialog({
             </div>
           </form>
         </details>
+        <div
+          role="group"
+          aria-label="Summary arrangement"
+          className="flex flex-wrap gap-2"
+        >
+          <Button
+            variant={
+              effectiveArrangement === 'sections' ? 'secondary' : 'outline'
+            }
+            aria-pressed={effectiveArrangement === 'sections'}
+            disabled={!enabled}
+            onClick={() => setArrangement('sections')}
+          >
+            By record type
+          </Button>
+          <Button
+            variant={
+              effectiveArrangement === 'reported-date' ? 'secondary' : 'outline'
+            }
+            aria-pressed={effectiveArrangement === 'reported-date'}
+            disabled={!enabled || request.scope === 'medication'}
+            onClick={() => setArrangement('reported-date')}
+          >
+            By reported date
+          </Button>
+        </div>
         {!enabled ? (
           <p role="status">Checking summary access…</p>
         ) : resource.phase === 'failed' ? (
@@ -213,6 +244,7 @@ export function GroundedSummaryDialog({
         ) : (
           <GroundedSummaryContent
             value={value}
+            arrangement={effectiveArrangement}
             enabled={enabled}
             onDenied={onDenied}
             onReload={resource.reload}
