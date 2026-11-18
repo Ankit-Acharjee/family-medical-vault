@@ -1,3 +1,4 @@
+import { OriginalExportDialog } from './OriginalExportDialog';
 import { ProcessingConsentDialog } from './ProcessingConsentDialog';
 import { RelatedDocumentsDialog } from './RelatedDocumentsDialog';
 import type { ProcessingConsentSource } from './ProcessingConsentDialog';
@@ -154,6 +155,8 @@ export function DocumentsPanel({
     selectedPatient ?? (patientsLoading ? retainedPatient.current : null);
   const patientId = selectedPatient?.id ?? null;
   const [view, setView] = useState<'active' | 'trash'>('active');
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportTrigger = useRef<HTMLButtonElement | null>(null);
   const [list, setList] = useState<
     | (
         | { id: string; view: 'active'; value: DocumentsResult }
@@ -304,6 +307,7 @@ export function DocumentsPanel({
       return;
     }
     if (listPatient.current !== patientId) {
+      setExportOpen(false);
       setList(null);
       setEditing(null);
       setLifecycle(null);
@@ -706,11 +710,48 @@ export function DocumentsPanel({
       aria-label={`Documents for ${displayPatient.displayName}`}
     >
       <p>Patient: {displayPatient.displayName}</p>
+      {view === 'active' && (
+        <Button
+          variant="outline"
+          disabled={
+            busy ||
+            patientsLoading ||
+            !current?.storageReady ||
+            !current.documents.some((d) => d.canExport)
+          }
+          onClick={(event) => {
+            exportTrigger.current = event.currentTarget;
+            setExportOpen(true);
+          }}
+        >
+          Export originals
+        </Button>
+      )}
+      {exportOpen && (
+        <OriginalExportDialog
+          key={displayPatient.id}
+          patientId={displayPatient.id}
+          patientName={displayPatient.displayName}
+          documents={
+            list?.id === displayPatient.id && list.view === 'active'
+              ? list.value.documents
+              : []
+          }
+          enabled={!busy && !patientsLoading && view === 'active' && !!current}
+          onClose={() => setExportOpen(false)}
+          onRestoreFocus={() => {
+            if (exportTrigger.current?.isConnected)
+              exportTrigger.current.focus();
+            else panel.current?.focus();
+          }}
+        />
+      )}
       <DocumentsViewSwitcher
         value={view}
         onChange={(next) => {
           if (next !== view) {
             setLifecycle(null);
+            setExportOpen(false);
             setLifecycleError('');
             setEditing(null);
             setPreview(null);

@@ -1,6 +1,5 @@
-import { Readable } from 'node:stream';
+import { zipBuffers } from '../archives/zip.js';
 import { Buffer } from 'node:buffer';
-import { ZipFile } from 'yazl';
 import { PayloadTooLargeException } from '@nestjs/common';
 import { isGroundedSummary, maximumSummaryExportBytes } from '@fmv/contracts';
 import type { GroundedSummary } from '@fmv/contracts';
@@ -44,42 +43,5 @@ export async function summaryArchive(
   ] as const;
   if (files.reduce((n, [, b]) => n + b.length, 0) > 8 * 1024 * 1024)
     throw new PayloadTooLargeException();
-  return await new Promise<Buffer>((resolve, reject) => {
-    const zip = new ZipFile(),
-      chunks: Buffer[] = [];
-    let size = 0,
-      settled = false;
-    const finish = (error?: unknown) => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener('abort', cancel);
-      if (error) {
-        if (zip.outputStream instanceof Readable) zip.outputStream.destroy();
-        reject(error);
-      } else resolve(Buffer.concat(chunks, size));
-    };
-    const cancel = () => finish(new Error('Export cancelled'));
-    zip.on('error', finish);
-    zip.outputStream.on('error', finish);
-    zip.outputStream.on('data', (chunk: Buffer) => {
-      size += chunk.length;
-      if (size > maximumSummaryExportBytes)
-        finish(new PayloadTooLargeException());
-      else chunks.push(chunk);
-    });
-    zip.outputStream.on('end', () => finish());
-    signal.addEventListener('abort', cancel, { once: true });
-    try {
-      signal.throwIfAborted();
-      for (const [name, bytes] of files)
-        zip.addBuffer(bytes, name, {
-          compressionLevel: 0,
-          mtime: new Date('2000-01-01T00:00:00.000Z'),
-          mode: 0o100600,
-        });
-      zip.end();
-    } catch (error) {
-      finish(error);
-    }
-  });
+  return zipBuffers(files, maximumSummaryExportBytes, signal);
 }

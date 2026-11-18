@@ -1,6 +1,6 @@
 # SHARE-01 — next slice: selected-original ZIP export
 
-Status: readiness inspection started after summary-export commit `ca63bcd` was pushed to develop. Summary export migration26 is now separately approved, applied and verified on development. No additional hosted write is authorized by this plan.
+Status: implemented and verified; see `p5-selected-original-export-report.md` for delivered behavior, files and test evidence. Initial readiness followed summary-export commit `ca63bcd` on develop. Summary export migration26 is now separately approved, applied and verified on development. No additional hosted write is authorized by this plan.
 
 ## Existing foundations and authority
 
@@ -18,4 +18,4 @@ Status: readiness inspection started after summary-export commit `ca63bcd` was p
 
 Inspect existing document-list selection patterns and all relevant store transaction/authorization hooks before implementation. Decide concrete count/byte limits consistent with 25-MiB originals and limited local resources. Cover independent Export-without-View cases, mixed scoped grants, cross-patient IDs, duplicate selection, revocation/expiry/Trash/Restore and byte/source changes, object-fetch failures, cancellation, archive integrity and audit failure. Browser tests must intercept synthetic APIs before navigation and capture actual mobile/desktop light/dark confirmation/download states. Keep existing per-document download/preview/upload/search/Trash behavior intact.
 
-No selected-original runtime code, policy expansion, dependency addition, hosted write or fake data has been introduced by this readiness document. Codex-native review availability remains limited; do not claim independent agent signoff or fall back to OpenCode.
+The delivered slice uses 20-file/32-MiB original-content bounds, existing per-file audit semantics and no new schema/dependency/hosted writes. The initial plan introduced no runtime code itself; the implementation and verification are now recorded in the separate report. Codex-native review availability remains limited; do not claim independent agent signoff or fall back to OpenCode.

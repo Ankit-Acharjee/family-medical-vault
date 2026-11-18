@@ -1,3 +1,5 @@
+import { OriginalExportService } from '../documents/original-export.service.js';
+import { OriginalExportController } from '../documents/original-export.controller.js';
 import { GroundedSummaryService } from '../summaries/grounded-summary.service.js';
 import { GroundedSummaryController } from '../summaries/grounded-summary.controller.js';
 import { MedicationReconciliationService } from '../medications/medication-reconciliation.service.js';
@@ -144,8 +146,15 @@ class DisabledAccessStore extends AccessStore {
     ManualReadingsController,
     MedicationReconciliationController,
     GroundedSummaryController,
+    OriginalExportController,
   ],
   providers: [
+    {
+      provide: OriginalExportService,
+      inject: [DocumentsService],
+      useFactory: (documents: DocumentsService) =>
+        new OriginalExportService(authConfig()?.databaseUrl ?? null, documents),
+    },
     {
       provide: GroundedSummaryService,
       inject: [ManualReadingsService, MedicationReconciliationService],
