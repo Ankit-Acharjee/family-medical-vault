@@ -140,6 +140,7 @@ export type MedicationScheduleHistory = {
   patientId: string;
   medicationId: string;
   medicationRevision: number;
+  medicationName: string;
   canWrite: boolean;
   sourceState: 'current-source' | 'source-review-required';
   current: MedicationScheduleEntry | null;
@@ -216,6 +217,7 @@ export function isMedicationScheduleHistory(
       'patientId',
       'medicationId',
       'medicationRevision',
+      'medicationName',
       'canWrite',
       'sourceState',
       'current',
@@ -225,6 +227,7 @@ export function isMedicationScheduleHistory(
     !uuid(v.patientId) ||
     !uuid(v.medicationId) ||
     !integer(v.medicationRevision, 1) ||
+    !isMedicationLiteral(v.medicationName) ||
     typeof v.canWrite !== 'boolean' ||
     (v.sourceState !== 'current-source' &&
       v.sourceState !== 'source-review-required') ||

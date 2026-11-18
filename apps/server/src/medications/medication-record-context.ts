@@ -3,6 +3,7 @@ export type MedicationRecordContext = {
   patientId: string;
   medicationId: string;
   medicationRevision: number;
+  medicationName: string;
   medicationEntryId: string;
   accountId: string;
   owner: boolean;

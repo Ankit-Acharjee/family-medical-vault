@@ -211,6 +211,7 @@ test('schedule history keeps current state authoritative and source changes neve
     patientId: entry.patientId,
     medicationId: entry.medicationId,
     medicationRevision: 1,
+    medicationName: 'SYNTHETIC current medication',
     canWrite: true,
     sourceState: 'current-source',
     current: entry,

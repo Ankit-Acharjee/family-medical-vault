@@ -480,6 +480,7 @@ export class MedicationReconciliationService implements OnModuleDestroy {
         medicationId: id,
         medicationEntryId: row.id,
         medicationRevision: row.revision,
+        medicationName: row.fields.medication,
         accountId: actor.accountId,
         owner: actor.owner,
         sourceState: (await this.sourceCurrent(db, row))

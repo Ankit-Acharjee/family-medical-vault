@@ -1,3 +1,4 @@
+import { ScheduleDialog } from './ScheduleDialog';
 import { InventoryDialog } from './InventoryDialog';
 import { useEffect, useRef, useState } from 'react';
 import { History, Pill, RefreshCw, Plus } from 'lucide-react';
@@ -80,7 +81,8 @@ function MedicationSurface({
     [denied, setDenied] = useState(false),
     [editor, setEditor] = useState<MedicationEditorTarget | null>(null),
     [notice, setNotice] = useState(''),
-    [inventoryId, setInventoryId] = useState<string | null>(null);
+    [inventoryId, setInventoryId] = useState<string | null>(null),
+    [scheduleId, setScheduleId] = useState<string | null>(null);
   const heading = useRef<HTMLHeadingElement>(null),
     trigger = useRef<HTMLElement | null>(null);
   const [element, setElement] = useState<HTMLDivElement | null>(null),
@@ -91,6 +93,7 @@ function MedicationSurface({
     setEditor(null);
     setNotice('');
     setInventoryId(null);
+    setScheduleId(null);
     context.reload();
   };
   const cursor = cursors.at(-1),
@@ -269,6 +272,20 @@ function MedicationSurface({
                                 }}
                               >
                                 Inventory
+                                <span className="sr-only">
+                                  {' '}
+                                  for {record.entry.fields.medication}
+                                </span>
+                              </Button>
+                              <Button
+                                variant="outline"
+                                onClick={(event) => {
+                                  trigger.current = event.currentTarget;
+                                  setScheduleId(record.entry.medicationId);
+                                  setNotice('');
+                                }}
+                              >
+                                Schedule
                                 <span className="sr-only">
                                   {' '}
                                   for {record.entry.fields.medication}
@@ -453,6 +470,37 @@ function MedicationSurface({
           )}
         </DialogContent>
       </Dialog>
+      {scheduleId && (
+        <ScheduleDialog
+          key={scheduleId}
+          patientId={patient.id}
+          patientName={patient.displayName}
+          medicationId={scheduleId}
+          enabled={enabled && !!data && !denied}
+          onClose={(uncertain) => {
+            setScheduleId(null);
+            if (uncertain)
+              setNotice(
+                'Schedule save was not confirmed. Check its latest version before trying again.',
+              );
+          }}
+          onSaved={() => {
+            setScheduleId(null);
+            setNotice(
+              'Informational schedule saved; prior versions are preserved.',
+            );
+          }}
+          onDenied={() => {
+            setScheduleId(null);
+            context.reload();
+            refresh();
+          }}
+          onRestoreFocus={() => {
+            if (trigger.current?.isConnected) trigger.current.focus();
+            else heading.current?.focus();
+          }}
+        />
+      )}
       {inventoryId && (
         <InventoryDialog
           key={inventoryId}
