@@ -100,3 +100,7 @@ Optional quantity, expiry and refill records follow the owner-only write and med
 Schedule creation, correction and retirement are owner-only under `docs/domains/medications.md`, with preserved history and medication-equivalent patient/source View for reads. View, Edit or Manage do not grant schedule-write authority. Recheck patient and source permissions for every schedule/history operation.
 
 Schedule use also follows the approved source-bound lifecycle in the medication domain: medication/source changes require explicit owner review, without changing the recorded/retired state or implying that treatment stopped.
+
+## Approved initial reminder authority — 18 November 2026
+
+Open-page reminders follow the owner-only explicit opt-in policy in the medication domain. Revalidate current ownership and patient/source access before showing a due notice; stored client intent is not authority. Generic notices contain no medical details. No delegate reminder authority, background delivery, shared schedule mutation or adherence recording is introduced by local reminder preferences.

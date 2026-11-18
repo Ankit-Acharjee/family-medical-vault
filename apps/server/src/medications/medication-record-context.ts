@@ -4,6 +4,7 @@ export type MedicationRecordContext = {
   medicationId: string;
   medicationRevision: number;
   medicationName: string;
+  medicationStatus: 'current' | 'historical';
   medicationEntryId: string;
   accountId: string;
   owner: boolean;

@@ -1,3 +1,4 @@
+import { usePageReminders } from './reminders/usePageReminders';
 import { ScheduleDialog } from './ScheduleDialog';
 import { InventoryDialog } from './InventoryDialog';
 import { useEffect, useRef, useState } from 'react';
@@ -107,6 +108,10 @@ function MedicationSurface({
     onDenied,
   );
   const data = enabled ? list.value : null;
+  const reminders = usePageReminders(
+    patient.id,
+    denied ? false : data ? data.canWrite : null,
+  );
   useEffect(() => {
     if (enabled && data && !data.canWrite) setEditor(null);
   }, [enabled, data]);
@@ -175,6 +180,36 @@ function MedicationSurface({
           </div>
         )}
       </div>
+      {reminders.items.length > 0 && (
+        <section
+          aria-label="Page reminders"
+          className="space-y-3 rounded-xl border border-border bg-card p-4"
+        >
+          <p className="text-sm text-muted-foreground">
+            Reminders run only while this Meds page is open and visible.
+            Delivery is not guaranteed.
+          </p>
+          {reminders.items.some((i) => i.state === 'due') && (
+            <p role="status" className="font-medium">
+              A page reminder is due. Review your recorded schedule.
+            </p>
+          )}
+          {reminders.items.some((i) => i.state === 'review') && (
+            <p role="status" className="text-sm">
+              A clock time needs owner review. No occurrence was chosen.
+            </p>
+          )}
+          {reminders.items.some((i) => i.state === 'unavailable') && (
+            <p role="status" className="text-sm">
+              A reminder stopped because its current context could not be
+              verified. Review the schedule before enabling again.
+            </p>
+          )}
+          <Button variant="outline" onClick={() => reminders.session.stop()}>
+            Stop page reminders
+          </Button>
+        </section>
+      )}
       {notice && (
         <p role="status" className="text-sm text-muted-foreground">
           {notice}
@@ -477,7 +512,15 @@ function MedicationSurface({
           patientName={patient.displayName}
           medicationId={scheduleId}
           enabled={enabled && !!data && !denied}
+          reminderState={
+            reminders.items.find((i) => i.id === scheduleId)?.state
+          }
+          onEnableReminder={(value) => {
+            void reminders.session.enable(value);
+          }}
+          onStopReminder={() => reminders.session.stop(scheduleId)}
           onClose={(uncertain) => {
+            if (uncertain) reminders.session.stop(scheduleId);
             setScheduleId(null);
             if (uncertain)
               setNotice(
@@ -485,6 +528,7 @@ function MedicationSurface({
               );
           }}
           onSaved={() => {
+            reminders.session.stop(scheduleId);
             setScheduleId(null);
             setNotice(
               'Informational schedule saved; prior versions are preserved.',

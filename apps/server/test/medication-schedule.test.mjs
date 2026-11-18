@@ -212,6 +212,7 @@ test('schedule history keeps current state authoritative and source changes neve
     medicationId: entry.medicationId,
     medicationRevision: 1,
     medicationName: 'SYNTHETIC current medication',
+    medicationStatus: 'current',
     canWrite: true,
     sourceState: 'current-source',
     current: entry,
@@ -246,6 +247,8 @@ test('schedule history keeps current state authoritative and source changes neve
   assert.equal(retired.recordedState, 'retired');
   for (const v of [
     { ...result, patientId: randomUUID() },
+    { ...result, medicationStatus: undefined },
+    { ...result, medicationStatus: 'inferred' },
     { ...result, history: [] },
     { ...result, current: { ...entry, medicationRevision: 2 } },
     { ...result, history: [{ ...entry, recordedState: 'retired' }] },

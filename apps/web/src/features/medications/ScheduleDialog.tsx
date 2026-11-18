@@ -1,3 +1,6 @@
+import { reminderEligible } from './reminders/session';
+import type { ReminderState } from './reminders/session';
+import type { MedicationScheduleHistory } from '@fmv/contracts';
 import { useEffect, useRef, useState } from 'react';
 import {
   isMedicationScheduleHistory,
@@ -29,6 +32,9 @@ export function ScheduleDialog({
   onSaved,
   onDenied,
   onRestoreFocus,
+  reminderState,
+  onEnableReminder,
+  onStopReminder,
 }: {
   patientId: string;
   patientName: string;
@@ -38,6 +44,9 @@ export function ScheduleDialog({
   onSaved: () => void;
   onDenied: () => void;
   onRestoreFocus: () => void;
+  reminderState: ReminderState | undefined;
+  onEnableReminder: (value: MedicationScheduleHistory) => void;
+  onStopReminder: () => void;
 }) {
   const base = `/api/patients/${encodeURIComponent(patientId)}/medication-reconciliations/${encodeURIComponent(medicationId)}/schedule`;
   const [pages, setPages] = useState<(number | null)[]>([null]),
@@ -252,6 +261,54 @@ export function ScheduleDialog({
                 No schedule recorded. Timing is never created automatically from
                 a prescription.
               </p>
+            )}
+            {data.canWrite && !editing && !retiring && (
+              <section
+                aria-label="Open-page reminder"
+                className="space-y-3 rounded-xl border border-border p-4"
+              >
+                <h2 className="font-semibold">Optional page reminder</h2>
+                <p className="text-sm text-muted-foreground">
+                  Generic notices only while this Meds page is open and visible.
+                  No background delivery or dose-taking confirmation. Leaving
+                  this page clears your choice.
+                </p>
+                {reminderState === 'checking' ? (
+                  <p role="status">Checking reminder timing…</p>
+                ) : reminderState === 'enabled' || reminderState === 'due' ? (
+                  <p role="status">Page reminder enabled for this schedule.</p>
+                ) : reminderState === 'review' ? (
+                  <p role="status">
+                    This local clock time is missing or ambiguous. Owner review
+                    is required; no occurrence was chosen.
+                  </p>
+                ) : reminderState === 'unavailable' ? (
+                  <p role="status">
+                    Reminder stopped. Reload and review the current schedule
+                    before trying again.
+                  </p>
+                ) : null}
+                {reminderState ? (
+                  <Button variant="outline" onClick={onStopReminder}>
+                    Stop this page reminder
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    disabled={!reminderEligible(data)}
+                    onClick={() => onEnableReminder(data)}
+                  >
+                    Enable page reminder
+                  </Button>
+                )}
+                {!reminderEligible(data) && (
+                  <p className="text-sm text-muted-foreground">
+                    Requires a current recorded medication, current reviewed
+                    source and an explicitly recorded clock schedule. Literal
+                    timing remains informational.
+                  </p>
+                )}
+              </section>
             )}
             {data.canWrite && (stale || write.phase === 'conflict') ? (
               <div className="space-y-3">

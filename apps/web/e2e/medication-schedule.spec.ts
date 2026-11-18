@@ -115,6 +115,7 @@ async function setup(page: Page, owner = true) {
           medicationId: medication,
           medicationRevision: revision,
           medicationName,
+          medicationStatus: 'current',
           canWrite: owner,
           sourceState,
           current: rows[0] ?? null,
@@ -224,7 +225,7 @@ async function setup(page: Page, owner = true) {
       release?.();
       hold = null;
     },
-    seed(count = 1) {
+    seed(count = 1, definition = clock) {
       rows = Array.from({ length: count }, (_, i) => ({
         patientId: patient,
         medicationId: medication,
@@ -236,7 +237,7 @@ async function setup(page: Page, owner = true) {
         ).toISOString(),
         meaning: 'owner-recorded-informational-schedule',
         recordedState: 'recorded',
-        definition: structuredClone(clock),
+        definition: structuredClone(definition),
       }));
     },
   };
@@ -687,4 +688,236 @@ test('clock controls enforce weekday, duplicate-time and row limits without losi
     dialog(page).getByRole('button', { name: 'Add clock time' }),
   ).toBeEnabled();
   expect(f.writes).toHaveLength(0);
+});
+
+const reminderClock: MedicationScheduleDefinition = {
+  timing: {
+    kind: 'clock-times',
+    timeZone: 'UTC',
+    weekdays: [1, 2, 3, 4, 5, 6, 7],
+    times: ['12:01'],
+  },
+  startDate: null,
+  endDate: null,
+  instructions: null,
+};
+async function reminderSetup(
+  page: Page,
+  owner = true,
+  definition = reminderClock,
+) {
+  await page.clock.install({ time: new Date('2026-11-18T12:00:00Z') });
+  const f = await setup(page, owner);
+  f.seed(1, definition);
+  await open(page);
+  await page.clock.pauseAt(new Date('2026-11-18T12:00:10Z'));
+  return f;
+}
+async function enableReminder(page: Page) {
+  await dialog(page)
+    .getByRole('button', { name: 'Enable page reminder', exact: true })
+    .click();
+  for (let n = 0; n < 8; n++) {
+    await page.clock.runFor(1000);
+    if (
+      await dialog(page)
+        .getByText('Page reminder enabled for this schedule.', { exact: true })
+        .isVisible()
+    )
+      return;
+  }
+  await expect(
+    dialog(page).getByText('Page reminder enabled for this schedule.', {
+      exact: true,
+    }),
+  ).toBeVisible();
+}
+test('page reminders remain after dialog close, emit generic notices, stop and clear on route departure', async ({
+  page,
+}, testInfo) => {
+  const f = await reminderSetup(page);
+  await enableReminder(page);
+  await dialog(page)
+    .getByRole('button', { name: 'Close dialog', exact: true })
+    .click();
+  await page.clock.runFor(55000);
+  const region = page.getByRole('region', {
+    name: 'Page reminders',
+    exact: true,
+  });
+  await expect(
+    region.getByText('A page reminder is due. Review your recorded schedule.', {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(region).not.toContainText('SYNTHETIC');
+  expect(f.writes).toHaveLength(0);
+  await page.clock.resume();
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await region.getByRole('button', { name: 'Stop page reminders' }).focus();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate((theme) => {
+      document.documentElement.dataset.theme = theme;
+    }, theme);
+    await page.screenshot({
+      path: `../../.local/screenshots/page-reminder-${testInfo.project.name}-${theme}.png`,
+      fullPage: false,
+      animations: 'disabled',
+    });
+  }
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await region.getByRole('button', { name: 'Stop page reminders' }).click();
+  await expect(region).toHaveCount(0);
+  await open(page);
+  await enableReminder(page);
+  await dialog(page)
+    .getByRole('button', { name: 'Close dialog', exact: true })
+    .click();
+  await page.evaluate(() => {
+    window.location.hash = 'overview';
+  });
+  await expect(region).toHaveCount(0);
+  await page.evaluate(() => {
+    window.location.hash = 'medications';
+  });
+  await expect(
+    page.getByRole('heading', { name: 'Recorded medication context' }),
+  ).toBeVisible();
+  await expect(region).toHaveCount(0);
+  expect(f.errors).toEqual([]);
+  expect(f.unexpected).toEqual([]);
+});
+test('reminder due checks stop on changed source and cannot dispatch stale context', async ({
+  page,
+}) => {
+  const f = await reminderSetup(page);
+  await enableReminder(page);
+  await dialog(page)
+    .getByRole('button', { name: 'Close dialog', exact: true })
+    .click();
+  f.source();
+  await page.clock.runFor(55000);
+  const region = page.getByRole('region', {
+    name: 'Page reminders',
+    exact: true,
+  });
+  await expect(region).toContainText('A reminder stopped');
+  await expect(region).not.toContainText('A page reminder is due');
+  expect(f.writes).toHaveLength(0);
+  expect(f.errors).toEqual([]);
+});
+test('reminders are owner-only and literal timing remains informational', async ({
+  page,
+}) => {
+  const f = await reminderSetup(page, false);
+  await expect(
+    dialog(page).getByRole('button', { name: 'Enable page reminder' }),
+  ).toHaveCount(0);
+  expect(f.writes).toHaveLength(0);
+});
+test('ambiguous clock day requires review without choosing an occurrence', async ({
+  page,
+}) => {
+  await page.clock.install({ time: new Date('2026-11-01T04:00:00Z') });
+  const f = await setup(page);
+  f.seed(1, {
+    ...reminderClock,
+    timing: {
+      kind: 'clock-times',
+      timeZone: 'America/New_York',
+      weekdays: [7],
+      times: ['01:30'],
+    },
+  });
+  await open(page);
+  await page.clock.pauseAt(new Date('2026-11-01T04:00:10Z'));
+  await dialog(page)
+    .getByRole('button', { name: 'Enable page reminder' })
+    .click();
+  for (let n = 0; n < 8; n++) await page.clock.runFor(1000);
+  await expect(dialog(page)).toContainText(
+    'Owner review is required; no occurrence was chosen.',
+  );
+  expect(f.writes).toHaveLength(0);
+  expect(f.errors).toEqual([]);
+});
+test('hidden-page return skips the elapsed clock minute and pagehide clears opt-in', async ({
+  page,
+}) => {
+  const f = await reminderSetup(page);
+  await enableReminder(page);
+  await dialog(page)
+    .getByRole('button', { name: 'Close dialog', exact: true })
+    .click();
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'hidden',
+    });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await page.clock.runFor(55000);
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'visible',
+    });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await page.clock.runFor(10000);
+  const region = page.getByRole('region', {
+    name: 'Page reminders',
+    exact: true,
+  });
+  await expect(region).not.toContainText('A page reminder is due');
+  await open(page);
+  await expect(dialog(page)).toContainText(
+    'Page reminder enabled for this schedule.',
+  );
+  await page.evaluate(() =>
+    window.dispatchEvent(new PageTransitionEvent('pagehide')),
+  );
+  await expect(
+    dialog(page).getByRole('button', {
+      name: 'Enable page reminder',
+      exact: true,
+    }),
+  ).toBeEnabled();
+  expect(f.writes).toHaveLength(0);
+  expect(f.errors).toEqual([]);
+});
+test('literal timing has no reminder occurrence and failed opt-in can be explicitly retried', async ({
+  page,
+}) => {
+  const f = await reminderSetup(page, true, {
+    ...reminderClock,
+    timing: { kind: 'literal', text: 'SYNTHETIC uncertain timing' },
+  });
+  await expect(
+    dialog(page).getByRole('button', {
+      name: 'Enable page reminder',
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await dialog(page)
+    .getByRole('button', { name: 'Close dialog', exact: true })
+    .click();
+  f.seed(1, reminderClock);
+  await open(page);
+  f.mode('failed');
+  await dialog(page)
+    .getByRole('button', { name: 'Enable page reminder', exact: true })
+    .click();
+  await page.clock.runFor(1000);
+  await expect(dialog(page)).toContainText(
+    'Reminder stopped. Reload and review the current schedule before trying again.',
+  );
+  await dialog(page)
+    .getByRole('button', { name: 'Stop this page reminder' })
+    .click();
+  f.mode('normal');
+  await enableReminder(page);
+  expect(f.writes).toHaveLength(0);
+  expect(f.errors).toEqual([]);
 });

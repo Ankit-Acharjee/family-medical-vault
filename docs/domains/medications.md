@@ -54,3 +54,7 @@ Creating, correcting or retiring an informational medication schedule is owner-o
 ## Approved source-bound schedule lifecycle — 17 November 2026
 
 Medication/source changes require explicit owner review before a schedule can be used again. Preserve the recorded or retired schedule state and all history. Source invalidation or schedule retirement never implies that treatment stopped; restoring or re-reviewing a source does not automatically reactivate its previously recorded schedule.
+
+## Approved initial web reminders — 18 November 2026
+
+Initial reminders are owner-only, explicitly enabled and limited to the open page. Notices are generic and contain no medical details; dependable background delivery is not promised. When daylight-saving changes make a local clock time ambiguous or nonexistent, keep it informational and require owner review instead of choosing an occurrence automatically. This does not authorize dose confirmation, adherence tracking or changing recorded medication/schedule state.

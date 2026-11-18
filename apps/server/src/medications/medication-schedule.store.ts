@@ -102,6 +102,7 @@ export async function readSchedule(
     medicationId: c.medicationId,
     medicationRevision: c.medicationRevision,
     medicationName: c.medicationName,
+    medicationStatus: c.medicationStatus,
     canWrite: c.owner,
     sourceState: c.sourceState,
     current: latest ? entry(latest) : null,

@@ -1,0 +1,10 @@
+# MED-04 — owner-only open-page reminders
+
+Authority/scope and daylight-saving policy explicitly approved 18 November 2026. Standing automated delivery approval applies. Native workers remain quota-limited; supervisor continues without OpenCode fallback.
+
+1. Define a pure named-zone clock resolver that counts exact local-minute occurrences. Missing/ambiguous times require review; never pick a nearest/earlier/later occurrence. Keep work bounded, cooperative and cached per public timezone/date. Verify DST gaps/folds, half-hour changes, skipped dates, unknown input and aborts. Use actual Chrome DevTools measurements before claiming responsiveness/performance.
+2. Keep opt-in operational state in memory on the current patient's Meds page only. Use current recorded medications and source-bound recorded clock schedules; literal/historical/retired/stale contexts stay informational. Add the authoritative medication status to the new schedule context instead of trusting parent-list metadata. Check a fresh guarded owner/source snapshot before each due notice and stop on version/permission mismatch or failed validation. No shared preference or clinical writes.
+3. Pause on hidden/access-checking state; clear on route/patient/session/page departure, with no hidden-tab catch-up. Deduplicate actual occurrences, bound local state and stop old preferences after schedule/medication changes. Emit generic in-page notices only; no OS notifications, service workers, external push, persistence or per-dose confirmations.
+4. Reuse the approved Meds UI and existing protected fetch/primitives. Add explicit enable/stop/checking/review states and a page-level stop affordance. Verify actual browser time/visibility/source/role/context/retry flows, generic notice privacy, both themes and responsive focus/overflow. Commit/push verified slices before proceeding.
+
+Public Context7 MDN documentation was consulted for explicit-zone/h23 formatting and Page Visibility/timer throttling. No private source, records or credentials were sent to that documentation service. Existing25 migrations are approved/applied; no new hosted write is planned for this slice.
