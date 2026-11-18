@@ -36,4 +36,8 @@ The explicit Person owner may export a patient summary. Other users require pati
 
 ## Approved initial temporary-link authority — 18 November 2026
 
-Only the explicit Person owner may create or revoke external temporary sharing links initially. Delegate link issuance remains deferred; existing View, Export or Manage permissions do not grant this new external-sharing authority. This decision does not enable an anonymous endpoint or settle the recipient access/expiry policy, which must be approved separately before implementation.
+Only the explicit Person owner may create or revoke external temporary sharing links initially. Delegate link issuance remains deferred; existing View, Export or Manage permissions do not grant this new external-sharing authority. The separately approved initial recipient policy below defines the limited access this authority may issue.
+
+## Approved initial temporary-link access and lifecycle — 18 November 2026
+
+Initial external links are bearer capabilities: anyone holding the secret may access only the explicitly selected original documents, without an account or separate passcode. Require an explicit owner-chosen expiry of at most seven days. Bind the selection to exact original/source versions and permanently invalidate it after Trash/Restore or source change; do not silently follow a restored or replaced source. Revocation stops future serving, while downloaded copies cannot be recalled. This does not permit implicit whole-vault/category sharing, clinical summaries, delegate issuance, external processing or public record enumeration.

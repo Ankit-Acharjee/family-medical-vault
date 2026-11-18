@@ -96,64 +96,13 @@ export class OriginalExportService implements OnModuleDestroy {
   async onModuleDestroy() {
     await this.db?.$disconnect();
   }
-  private async snapshot(
+  private snapshot(
     db: Prisma.TransactionClient,
     principal: Principal,
     p: string,
     ids: string[],
-  ): Promise<Snapshot> {
-    const rows = await db.$queryRaw<
-      Source[]
-    >`SELECT d.id,d.patient_id AS "patientId",d.category_id AS "categoryId",d.state,d.deleted_at AS "deletedAt",COALESCE(d.display_title,d.title) AS title,d.title AS "originalTitle",d.mime_type AS "mimeType",d.bytes,d.sha256,d.object_key AS "objectKey",d.extraction_lifecycle AS lifecycle,EXISTS(SELECT 1 FROM fmv.document_object_attempts a WHERE a.object_key=d.object_key AND a.document_id=d.id AND a.retired_at IS NULL) AS active FROM fmv.documents d WHERE d.patient_id=${p}::uuid AND d.id=ANY(${ids}::uuid[]) ORDER BY d.id FOR NO KEY UPDATE OF d`;
-    const permissions = new PermissionService(new TransactionAccessStore(db)),
-      auth = await permissions.snapshot(principal, p);
-    if (
-      rows.length !== ids.length ||
-      rows.some(
-        (d) =>
-          d.state !== 'ready' ||
-          d.deletedAt ||
-          !d.active ||
-          !permissions.allows(
-            auth,
-            'export',
-            { kind: 'document', documentId: d.id },
-            d,
-          ),
-      )
-    )
-      throw new NotFoundException();
-    if (
-      rows.reduce((n, d) => n + d.bytes, 0) > maximumOriginalExportContentBytes
-    )
-      throw new PayloadTooLargeException();
-    const snapshotSha256 = createHash('sha256')
-      .update(
-        JSON.stringify({
-          patientId: p,
-          patientName: auth.patient!.displayName,
-          rows,
-        }),
-      )
-      .digest('hex');
-    const preview: OriginalExportPreview = {
-      patientId: p,
-      patientName: auth.patient!.displayName,
-      snapshotSha256,
-      files: rows.map(
-        ({ id, title, originalTitle, mimeType, bytes, sha256 }) => ({
-          id,
-          title,
-          originalTitle,
-          mimeType,
-          bytes,
-          sha256,
-        }),
-      ),
-    };
-    if (!isOriginalExportPreview(preview))
-      throw new ServiceUnavailableException();
-    return { rows, preview };
+  ) {
+    return readOriginalSelection(db, principal, p, ids);
   }
   private async transaction<T>(
     p: string,
@@ -259,4 +208,62 @@ export class OriginalExportService implements OnModuleDestroy {
       if (acquired) this.active--;
     }
   }
+}
+
+export async function readOriginalSelection(
+  db: Prisma.TransactionClient,
+  principal: Principal,
+  p: string,
+  ids: string[],
+): Promise<Snapshot> {
+  const rows = await db.$queryRaw<
+    Source[]
+  >`SELECT d.id,d.patient_id AS "patientId",d.category_id AS "categoryId",d.state,d.deleted_at AS "deletedAt",COALESCE(d.display_title,d.title) AS title,d.title AS "originalTitle",d.mime_type AS "mimeType",d.bytes,d.sha256,d.object_key AS "objectKey",d.extraction_lifecycle AS lifecycle,EXISTS(SELECT 1 FROM fmv.document_object_attempts a WHERE a.object_key=d.object_key AND a.document_id=d.id AND a.retired_at IS NULL) AS active FROM fmv.documents d WHERE d.patient_id=${p}::uuid AND d.id=ANY(${ids}::uuid[]) ORDER BY d.id FOR NO KEY UPDATE OF d`;
+  const permissions = new PermissionService(new TransactionAccessStore(db)),
+    auth = await permissions.snapshot(principal, p);
+  if (
+    rows.length !== ids.length ||
+    rows.some(
+      (d) =>
+        d.state !== 'ready' ||
+        d.deletedAt ||
+        !d.active ||
+        !permissions.allows(
+          auth,
+          'export',
+          { kind: 'document', documentId: d.id },
+          d,
+        ),
+    )
+  )
+    throw new NotFoundException();
+  if (rows.reduce((n, d) => n + d.bytes, 0) > maximumOriginalExportContentBytes)
+    throw new PayloadTooLargeException();
+  const snapshotSha256 = createHash('sha256')
+    .update(
+      JSON.stringify({
+        patientId: p,
+        patientName: auth.patient!.displayName,
+        rows,
+      }),
+    )
+    .digest('hex');
+  const preview: OriginalExportPreview = {
+    patientId: p,
+    patientName: auth.patient!.displayName,
+    snapshotSha256,
+    files: rows.map(
+      ({ id, title, originalTitle, mimeType, bytes, sha256 }) => ({
+        id,
+        title,
+        originalTitle,
+        mimeType,
+        bytes,
+        sha256,
+      }),
+    ),
+  };
+  if (!isOriginalExportPreview(preview))
+    throw new ServiceUnavailableException();
+  return { rows, preview };
 }

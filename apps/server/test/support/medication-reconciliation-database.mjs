@@ -1,3 +1,4 @@
+import { verifyTemporaryLinks } from './temporary-links-database.mjs';
 import { verifyOriginalExport } from './original-export-database.mjs';
 import { verifyGroundedSummary } from './grounded-summary-database.mjs';
 import { verifyMedicationSchedule } from './medication-schedule-database.mjs';
@@ -107,6 +108,7 @@ export async function verifyMedicationReconciliation(f) {
     );
     await verifyGroundedSummary(f, ledger, reconcileId);
     await verifyOriginalExport(f);
+    await verifyTemporaryLinks(f);
     await verifyMedicationInventory(f, ledger, other, reconcileId);
     const scheduleFixture = await verifyMedicationSchedule(
       f,

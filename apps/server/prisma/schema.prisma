@@ -33,6 +33,8 @@ model AuthRateLimit {
 }
 
 model AppAccount {
+  createdTemporaryLinks TemporaryLink[] @relation("TemporaryLinkCreator")
+  revokedTemporaryLinks TemporaryLink[] @relation("TemporaryLinkRevoker")
   summaryExports SummaryExportEvent[]
  medicationSchedules MedicationSchedule[]
  medicationScheduleEvents MedicationScheduleEvent[]
@@ -65,6 +67,7 @@ model AppAccount {
 }
 
 model Person {
+  temporaryLinks TemporaryLink[]
   summaryExports SummaryExportEvent[]
   manualMeasurements ManualMeasurement[]
   id               String             @id @db.Uuid
@@ -157,6 +160,7 @@ model AccessInvitation {
 }
 
 model Document {
+  temporaryLinkAccess TemporaryLinkAccessEvent[]
   medicationReconciliations MedicationReconciliation[]
   id                  String                    @id @db.Uuid
   uploadId            String                    @unique @map("upload_id") @db.Uuid
@@ -598,5 +602,43 @@ model SummaryExportEvent {
  @@index([patientId,recordedAt(sort:Desc),id],map:"summary_export_events_patient")
  @@index([retentionUntil],map:"summary_export_events_retention")
  @@map("summary_export_events")
+ @@schema("fmv")
+}
+
+model TemporaryLink {
+ id String @id @db.Uuid
+ patientId String @map("patient_id") @db.Uuid
+ creatorAccountId String @map("creator_account_id") @db.Uuid
+ patientName String @map("patient_name")
+ requestId String @map("request_id") @db.Uuid
+ payloadSha256 String @map("payload_sha256")
+ tokenSha256 String @unique @map("token_sha256")
+ selectionSha256 String @map("selection_sha256")
+ sourceSnapshot Json @map("source_snapshot")
+ createdAt DateTime @default(dbgenerated("statement_timestamp()")) @map("created_at") @db.Timestamptz(3)
+ expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+ revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+ revokerAccountId String? @map("revoker_account_id") @db.Uuid
+ patient Person @relation(fields:[patientId],references:[id],onDelete:Cascade,onUpdate:NoAction)
+ creator AppAccount @relation("TemporaryLinkCreator",fields:[creatorAccountId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+ revoker AppAccount? @relation("TemporaryLinkRevoker",fields:[revokerAccountId],references:[id],onDelete:NoAction,onUpdate:NoAction)
+ accessEvents TemporaryLinkAccessEvent[]
+ @@unique([patientId,requestId])
+ @@index([patientId,createdAt(sort:Desc),id],map:"temporary_links_patient")
+ @@map("temporary_links")
+ @@schema("fmv")
+}
+model TemporaryLinkAccessEvent {
+ id String @id @db.Uuid
+ linkId String @map("link_id") @db.Uuid
+ documentId String? @map("document_id") @db.Uuid
+ kind String
+ recordedAt DateTime @default(dbgenerated("statement_timestamp()")) @map("recorded_at") @db.Timestamptz(3)
+ retentionUntil DateTime @default(dbgenerated("(statement_timestamp() + '90 days'::interval)")) @map("retention_until") @db.Timestamptz(3)
+ link TemporaryLink @relation(fields:[linkId],references:[id],onDelete:Cascade,onUpdate:NoAction)
+ document Document? @relation(fields:[documentId],references:[id],onDelete:Cascade,onUpdate:NoAction)
+ @@index([retentionUntil],map:"temporary_link_access_retention")
+ @@index([linkId,recordedAt(sort:Desc),id],map:"temporary_link_access_link")
+ @@map("temporary_link_access_events")
  @@schema("fmv")
 }

@@ -1,3 +1,5 @@
+import { TemporaryLinksService } from '../sharing/temporary-links.service.js';
+import { TemporaryLinksController } from '../sharing/temporary-links.controller.js';
 import { OriginalExportService } from '../documents/original-export.service.js';
 import { OriginalExportController } from '../documents/original-export.controller.js';
 import { GroundedSummaryService } from '../summaries/grounded-summary.service.js';
@@ -147,8 +149,14 @@ class DisabledAccessStore extends AccessStore {
     MedicationReconciliationController,
     GroundedSummaryController,
     OriginalExportController,
+    TemporaryLinksController,
   ],
   providers: [
+    {
+      provide: TemporaryLinksService,
+      useFactory: () =>
+        new TemporaryLinksService(authConfig()?.databaseUrl ?? null),
+    },
     {
       provide: OriginalExportService,
       inject: [DocumentsService],
