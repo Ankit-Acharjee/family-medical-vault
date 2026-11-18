@@ -1,7 +1,8 @@
+import { ReadingSummary } from './ReadingSummary';
 import { useEffect, useRef, useState } from 'react';
 import { Plus, History } from 'lucide-react';
 import { isManualReadingsPage, isManualReadingHistory } from '@fmv/contracts';
-import type { PatientSummary, ManualReadingEntry } from '@fmv/contracts';
+import type { PatientSummary } from '@fmv/contracts';
 import { Button } from '../../components/ui/button';
 import {
   Dialog,
@@ -50,24 +51,6 @@ export function ManualReadingsPanel({
         category access is unchanged.
       </p>
     </section>
-  );
-}
-function ReadingSummary({ entry }: { entry: ManualReadingEntry }) {
-  return (
-    <div className="min-w-0 [overflow-wrap:anywhere]">
-      <p className="text-xs text-muted-foreground">
-        Manual / user-reported ·{' '}
-        {entry.action === 'withdrawal' ? 'Withdrawn' : 'Recorded'} · revision{' '}
-        {entry.revision}
-      </p>
-      <p className="mt-1 font-medium">{manualLabels[entry.reading.kind]}</p>
-      <p className="mt-1 font-semibold tabular-nums">
-        {manualValue(entry.reading)}
-      </p>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Observed: {entry.reading.observedAt}
-      </p>
-    </div>
   );
 }
 function ManualSurface({

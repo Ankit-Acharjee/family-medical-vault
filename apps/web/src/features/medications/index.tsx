@@ -1,3 +1,4 @@
+import { GroundedSummaryDialog } from '../summaries/GroundedSummaryDialog';
 import { usePageReminders } from './reminders/usePageReminders';
 import { ScheduleDialog } from './ScheduleDialog';
 import { InventoryDialog } from './InventoryDialog';
@@ -83,7 +84,8 @@ function MedicationSurface({
     [editor, setEditor] = useState<MedicationEditorTarget | null>(null),
     [notice, setNotice] = useState(''),
     [inventoryId, setInventoryId] = useState<string | null>(null),
-    [scheduleId, setScheduleId] = useState<string | null>(null);
+    [scheduleId, setScheduleId] = useState<string | null>(null),
+    [summaryOpen, setSummaryOpen] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null),
     trigger = useRef<HTMLElement | null>(null);
   const [element, setElement] = useState<HTMLDivElement | null>(null),
@@ -95,6 +97,7 @@ function MedicationSurface({
     setNotice('');
     setInventoryId(null);
     setScheduleId(null);
+    setSummaryOpen(false);
     context.reload();
   };
   const cursor = cursors.at(-1),
@@ -173,6 +176,15 @@ function MedicationSurface({
                 Record medication
               </Button>
             )}
+            <Button
+              variant="outline"
+              onClick={(event) => {
+                trigger.current = event.currentTarget;
+                setSummaryOpen(true);
+              }}
+            >
+              Patient summary
+            </Button>
             <Button variant="outline" onClick={refresh}>
               <RefreshCw size={16} aria-hidden="true" />
               Refresh medications
@@ -505,6 +517,19 @@ function MedicationSurface({
           )}
         </DialogContent>
       </Dialog>
+      {summaryOpen && (
+        <GroundedSummaryDialog
+          patientId={patient.id}
+          patientName={patient.displayName}
+          enabled={enabled && !!data && !denied}
+          onClose={() => setSummaryOpen(false)}
+          onDenied={onDenied}
+          onRestoreFocus={() => {
+            if (trigger.current?.isConnected) trigger.current.focus();
+            else heading.current?.focus();
+          }}
+        />
+      )}
       {scheduleId && (
         <ScheduleDialog
           key={scheduleId}

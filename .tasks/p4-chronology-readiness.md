@@ -1,0 +1,9 @@
+# P4 chronology — next ready read-only slice
+
+The roadmap requests source-linked chronology without compulsory encounter creation. The source-grounded summary API now supplies bounded current owner-confirmed lab results and clearly user-reported manual readings with exact reported dates, current access/source checks and explicit coverage. Medication labels remain a current record snapshot and must never become historical treatment events.
+
+A safe next slice can arrange these already-authorized observations by exact reported calendar day, newest first, while retaining every separate source, literal value/unit and verification/provenance label. Unknown/imprecise lab dates remain outside dated groups. A same-day group is a calendar grouping, never evidence of a shared consultation, causality, diagnosis or medication episode. No cross-report comparability is inferred and no chart/unit conversion is introduced. Manual offsets remain intact rather than silently converting their reported date to UTC.
+
+Reuse the existing summary boundary and shared observation presentation; do not add a second authorization store, persistent episode model, global navigation or a new backend query. Provide an explicit optional dated view inside the existing summary interface. Respect the current scope/period and retain coverage/unknown notices. Pure tests should cover duplicate calendar days, distinct sources/units, stable sorting, offset dates, source identity and no mutation; browser checks should cover view changes, source actions, permission revalidation, both themes and mobile. This readiness note is planning only; chronology has not been implemented yet.
+
+Native workers remain quota-limited. No OpenCode fallback, external data, hosted write or new dependency is authorized by this readiness note; standing roadmap implementation approval continues to apply within these existing privacy and scope rules.
