@@ -42,6 +42,13 @@ export class TemporaryLinksController {
   @Get() async list(@Req() req: Request, @Param('patientId') p: string) {
     return this.links.list(await this.principal(req), p);
   }
+  @Get(':linkId/activity') async activity(
+    @Req() req: Request,
+    @Param('patientId') p: string,
+    @Param('linkId') id: string,
+  ) {
+    return this.links.activity(await this.principal(req), p, id);
+  }
   @Post(':linkId/revoke') @HttpCode(200) async revoke(
     @Req() req: Request,
     @Param('patientId') p: string,

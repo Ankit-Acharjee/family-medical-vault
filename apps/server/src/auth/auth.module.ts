@@ -1,3 +1,4 @@
+import { RecipientController } from '../sharing/recipient.controller.js';
 import { TemporaryLinksService } from '../sharing/temporary-links.service.js';
 import { TemporaryLinksController } from '../sharing/temporary-links.controller.js';
 import { OriginalExportService } from '../documents/original-export.service.js';
@@ -150,12 +151,14 @@ class DisabledAccessStore extends AccessStore {
     GroundedSummaryController,
     OriginalExportController,
     TemporaryLinksController,
+    RecipientController,
   ],
   providers: [
     {
       provide: TemporaryLinksService,
-      useFactory: () =>
-        new TemporaryLinksService(authConfig()?.databaseUrl ?? null),
+      inject: [OBJECT_STORE],
+      useFactory: (objects: ObjectStore) =>
+        new TemporaryLinksService(authConfig()?.databaseUrl ?? null, objects),
     },
     {
       provide: OriginalExportService,

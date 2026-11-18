@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { isCreateTemporaryLink } from '@fmv/contracts';
@@ -41,7 +42,7 @@ test('temporary capabilities use opaque domain-separated hashes; raw tokens are 
   for (const bad of [null, {}, '', token + 'x', '../' + token])
     assert.equal(hashTemporaryLink(bad), null);
 });
-test('owner management HTTP endpoints enforce current session and Origin/CSRF; no anonymous route is exposed', async () =>
+test('owner management HTTP endpoints enforce current session and Origin/CSRF; bearer access is a separate POST-only boundary', async () =>
   documentSetup(async (f) => {
     const service = f.app.get(TemporaryLinksService),
       path = f.path('sharing-links'),
@@ -91,14 +92,85 @@ test('owner management HTTP endpoints enforce current session and Origin/CSRF; n
       200,
     );
     assert.equal(calls.length, 3);
+    assert.equal((await f.request('GET', '/api/sharing/open')).status, 404);
+    const response = await f.request('GET', path, session);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+  }));
+
+test('recipient POST endpoints use bearer-only scope with same-origin CSRF, private headers and no session principal', async () =>
+  documentSetup(async (f) => {
+    const service = f.app.get(TemporaryLinksService),
+      token = opaque(),
+      documentId = randomUUID(),
+      calls = [];
+    service.inspect = async (value) => {
+      calls.push(value);
+      return { synthetic: true };
+    };
+    service.readOriginal = async (...args) => {
+      calls.push(args);
+      return {
+        bytes: Buffer.from('%PDF-1.7\nSynthetic shared original\n%%EOF'),
+        mimeType: 'application/pdf',
+      };
+    };
+    assert.equal(
+      (
+        await f.request(
+          'POST',
+          '/api/sharing/open',
+          undefined,
+          { token },
+          { 'X-CSRF-Token': undefined },
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await f.request(
+          'POST',
+          '/api/sharing/open',
+          undefined,
+          { token },
+          { Origin: 'https://unapproved.example.test' },
+        )
+      ).status,
+      403,
+    );
+    assert.equal(calls.length, 0);
     assert.equal(
       (
         await f.request('POST', '/api/sharing/open', undefined, {
-          token: opaque(),
+          token,
+          patientId: randomUUID(),
         })
       ).status,
-      404,
+      400,
     );
-    const response = await f.request('GET', path, session);
+    assert.equal(
+      (await f.request('POST', '/api/sharing/open', undefined, { token }))
+        .status,
+      200,
+    );
+    assert.equal(calls[0], token);
+    const response = await f.request(
+      'POST',
+      '/api/sharing/original',
+      undefined,
+      { token, documentId },
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'application/pdf');
     assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+    assert.ok(
+      response.headers
+        .get('content-disposition')
+        .includes('shared-original.pdf'),
+    );
+    assert.ok(!response.headers.get('content-disposition').includes(token));
+    assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(calls[1][0], token);
+    assert.equal(calls[1][1], documentId);
   }));

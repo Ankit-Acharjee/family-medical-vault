@@ -1,3 +1,6 @@
+import { validateBytes } from '../documents/intake.js';
+import { UnavailableObjectStore } from '../documents/object-store.js';
+import type { ObjectStore } from '../documents/object-store.js';
 import { randomUUID } from 'node:crypto';
 import {
   BadRequestException,
@@ -60,7 +63,11 @@ function summary(row: Link, now: Date): TemporaryLinkSummary {
 }
 export class TemporaryLinksService implements OnModuleDestroy {
   private readonly db: PrismaClient | null;
-  constructor(url: string | null) {
+  private activeReads = 0;
+  constructor(
+    url: string | null,
+    private readonly objects: ObjectStore = new UnavailableObjectStore(),
+  ) {
     this.db = url
       ? new PrismaClient({
           adapter: new PrismaPg({
@@ -205,6 +212,32 @@ export class TemporaryLinksService implements OnModuleDestroy {
       };
     });
   }
+  async activity(principal: Principal, patientId: string, id: string) {
+    if (!isUuid(id)) throw new NotFoundException();
+    const p = patientId.toLowerCase();
+    return this.transaction(p, async (db) => {
+      await this.owner(db, principal, p);
+      if (!(await this.row(db, p, id.toLowerCase())))
+        throw new NotFoundException();
+      const rows = await db.$queryRaw<
+        {
+          id: string;
+          documentId: string | null;
+          kind: 'link.opened' | 'original.accessed';
+          recordedAt: Date;
+        }[]
+      >`SELECT id,document_id AS "documentId",kind,recorded_at AS "recordedAt" FROM fmv.temporary_link_access_events WHERE link_id=${id.toLowerCase()}::uuid AND retention_until>clock_timestamp() ORDER BY recorded_at DESC,id DESC LIMIT 21`;
+      await this.owner(db, principal, p);
+      return {
+        patientId: p,
+        linkId: id.toLowerCase(),
+        events: rows
+          .slice(0, 20)
+          .map((row) => ({ ...row, recordedAt: row.recordedAt.toISOString() })),
+        limited: rows.length > 20,
+      };
+    });
+  }
   async revoke(principal: Principal, patientId: string, id: string) {
     if (!isUuid(id)) throw new NotFoundException();
     const p = patientId.toLowerCase();
@@ -218,7 +251,64 @@ export class TemporaryLinksService implements OnModuleDestroy {
       return { revoked: true };
     });
   }
-  /** Capability validation foundation only; there is deliberately no anonymous HTTP endpoint yet. */
+  private async capability(db: Tx, p: string, id: string) {
+    const initial = await this.row(db, p, id);
+    if (!initial) throw new NotFoundException();
+    const ids = initial.sources.map((s) => s.id);
+    await db.$queryRaw`SELECT id FROM fmv.documents WHERE patient_id=${p}::uuid AND id=ANY(${ids}::uuid[]) ORDER BY id FOR NO KEY UPDATE`;
+    const row = await this.row(db, p, id),
+      now = await transactionClock(db);
+    if (!row || row.revokedAt || row.expiresAt <= now || !row.current)
+      throw new NotFoundException();
+    return row;
+  }
+  async readOriginal(token: unknown, documentId: string, signal: AbortSignal) {
+    const hash = hashTemporaryLink(token);
+    if (!hash || !isUuid(documentId)) throw new NotFoundException();
+    if (!this.db) throw new ServiceUnavailableException();
+    let acquired = false;
+    try {
+      signal.throwIfAborted();
+      const found = (
+        await this.db.$queryRawUnsafe<Link[]>(
+          `SELECT ${columns} FROM fmv.temporary_links l WHERE l.token_sha256=$1`,
+          hash,
+        )
+      )[0];
+      if (!found) throw new NotFoundException();
+      const source = await this.transaction(found.patientId, async (db) => {
+        const row = await this.capability(db, found.patientId, found.id),
+          source = row.sources.find((s) => s.id === documentId.toLowerCase());
+        if (!source) throw new NotFoundException();
+        if (this.activeReads >= 1) throw new ServiceUnavailableException();
+        this.activeReads++;
+        acquired = true;
+        return source;
+      });
+      if (!this.objects.ready) throw new ServiceUnavailableException();
+      signal.throwIfAborted();
+      const bytes = await this.objects.get(source.objectKey);
+      signal.throwIfAborted();
+      validateBytes(bytes, source);
+      await this.transaction(found.patientId, async (db) => {
+        await this.capability(db, found.patientId, found.id);
+        await db.$executeRaw`INSERT INTO fmv.temporary_link_access_events(id,link_id,document_id,kind) VALUES(${randomUUID()}::uuid,${found.id}::uuid,${source.id}::uuid,'original.accessed')`;
+        await this.capability(db, found.patientId, found.id);
+        signal.throwIfAborted();
+      });
+      return { bytes, mimeType: source.mimeType };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof ServiceUnavailableException
+      )
+        throw error;
+      throw new ServiceUnavailableException();
+    } finally {
+      if (acquired) this.activeReads--;
+    }
+  }
+  /** Current capability metadata; every use still revalidates authority and sources. */
   async inspect(token: unknown) {
     const hash = hashTemporaryLink(token);
     if (!hash) throw new NotFoundException();
@@ -236,20 +326,9 @@ export class TemporaryLinksService implements OnModuleDestroy {
     }
     if (!found) throw new NotFoundException();
     return this.transaction(found.patientId, async (db) => {
-      const row = await this.row(db, found!.patientId, found!.id),
-        now = await transactionClock(db);
-      if (!row || row.revokedAt || row.expiresAt <= now || !row.current)
-        throw new NotFoundException();
+      const row = await this.capability(db, found!.patientId, found!.id);
       await db.$executeRaw`INSERT INTO fmv.temporary_link_access_events(id,link_id,kind) VALUES(${randomUUID()}::uuid,${row.id}::uuid,'link.opened')`;
-      const current = await this.row(db, row.patientId, row.id),
-        clock = await transactionClock(db);
-      if (
-        !current ||
-        current.revokedAt ||
-        current.expiresAt <= clock ||
-        !current.current
-      )
-        throw new NotFoundException();
+      await this.capability(db, row.patientId, row.id);
       const preview = {
         patientId: row.patientId,
         patientName: row.patientName,

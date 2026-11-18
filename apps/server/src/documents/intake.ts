@@ -155,7 +155,10 @@ function validSignature(bytes: Buffer, mime: DocumentMimeType): boolean {
   }
 }
 
-function validateBytes(bytes: Buffer, record: IntakeRecord) {
+export function validateBytes(
+  bytes: Buffer,
+  record: Pick<IntakeRecord, 'bytes' | 'mimeType' | 'sha256'>,
+) {
   if (!Buffer.isBuffer(bytes)) throw new IntakeError(400);
   if (bytes.length > maximumDocumentBytes) throw new IntakeError(413);
   if (bytes.length !== record.bytes || digest(bytes) !== record.sha256)

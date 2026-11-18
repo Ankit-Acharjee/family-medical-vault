@@ -19,7 +19,7 @@ export async function verifyTemporaryLinks(f) {
     bytes,
     categoryId,
   } = f;
-  const links = new TemporaryLinksService(runtimeUrl.href),
+  const links = new TemporaryLinksService(runtimeUrl.href, service.objects),
     other = new TemporaryLinksService(runtimeUrl.href),
     status = (n) => (e) => e.getStatus?.() === n;
   const upload = await intake.begin(
@@ -73,6 +73,49 @@ export async function verifyTemporaryLinks(f) {
     assert.ok(!JSON.stringify(stored).includes(created.token));
     assert.equal(stored.source_snapshot.length, 1);
     assert.equal(stored.source_snapshot[0].id, id);
+    const ownerEventsBefore = (
+      await runtime.query(
+        'SELECT count(*)::int n FROM fmv.document_events WHERE document_id=$1::uuid',
+        [id],
+      )
+    ).rows[0].n;
+    assert.deepEqual(
+      (
+        await links.readOriginal(
+          created.token,
+          id,
+          new globalThis.AbortController().signal,
+        )
+      ).bytes,
+      bytes,
+    );
+    assert.equal(
+      (
+        await runtime.query(
+          'SELECT count(*)::int n FROM fmv.document_events WHERE document_id=$1::uuid',
+          [id],
+        )
+      ).rows[0].n,
+      ownerEventsBefore,
+    );
+    assert.equal(
+      (
+        await runtime.query(
+          "SELECT count(*)::int n FROM fmv.temporary_link_access_events WHERE link_id=$1::uuid AND kind='original.accessed'",
+          [created.link.id],
+        )
+      ).rows[0].n,
+      1,
+    );
+    await assert.rejects(
+      links.readOriginal(
+        created.token,
+        f.id,
+        new globalThis.AbortController().signal,
+      ),
+      status(404),
+    );
+
     await assert.rejects(
       runtime.query(
         `INSERT INTO fmv.temporary_links(id,patient_id,creator_account_id,patient_name,request_id,payload_sha256,token_sha256,selection_sha256,source_snapshot,expires_at) SELECT $2::uuid,patient_id,$3::uuid,patient_name,$4::uuid,payload_sha256,$5,selection_sha256,source_snapshot,expires_at FROM fmv.temporary_links WHERE id=$1::uuid`,
@@ -110,6 +153,21 @@ export async function verifyTemporaryLinks(f) {
       !JSON.stringify(await links.list(principal, patient.id)).includes(
         created.token,
       ),
+    );
+    const activity = await links.activity(
+      principal,
+      patient.id,
+      created.link.id,
+    );
+    assert.ok(
+      activity.events.some(
+        (e) => e.kind === 'original.accessed' && e.documentId === id,
+      ),
+    );
+    assert.ok(activity.events.some((e) => e.kind === 'link.opened'));
+    await assert.rejects(
+      links.activity(reader, patient.id, created.link.id),
+      status(404),
     );
     await assert.rejects(links.inspect('bad'), status(404));
     await assert.rejects(links.inspect('x'.repeat(43)), status(404));
@@ -169,6 +227,53 @@ export async function verifyTemporaryLinks(f) {
       );
     }
     await assert.rejects(links.inspect(expiry.token), status(404));
+    const delivery = await links.create(
+        principal,
+        patient.id,
+        body(await prepare()),
+      ),
+      objects = links.objects;
+    links.objects = {
+      ready: true,
+      get: async (key) => {
+        const result = await objects.get(key);
+        await other.revoke(principal, patient.id, delivery.link.id);
+        return result;
+      },
+    };
+    try {
+      await assert.rejects(
+        links.readOriginal(
+          delivery.token,
+          id,
+          new globalThis.AbortController().signal,
+        ),
+        status(404),
+      );
+    } finally {
+      links.objects = objects;
+    }
+    const intact = await links.create(
+      principal,
+      patient.id,
+      body(await prepare()),
+    );
+    links.objects = {
+      ready: true,
+      get: async (key) => (await objects.get(key)).subarray(1),
+    };
+    try {
+      await assert.rejects(
+        links.readOriginal(
+          intact.token,
+          id,
+          new globalThis.AbortController().signal,
+        ),
+        status(503),
+      );
+    } finally {
+      links.objects = objects;
+    }
     for (const sql of [
       'DELETE FROM fmv.temporary_links',
       'TRUNCATE fmv.temporary_links',

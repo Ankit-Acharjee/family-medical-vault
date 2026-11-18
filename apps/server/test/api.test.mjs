@@ -53,13 +53,18 @@ test('OpenAPI documents implemented health, authentication, patient and vault ro
         path === '/health' ||
         path.startsWith('/api/auth/') ||
         path.startsWith('/api/patients') ||
-        path.startsWith('/api/access/'),
+        path.startsWith('/api/access/') ||
+        ['/api/sharing/open', '/api/sharing/original'].includes(path),
     ),
   );
   assert.ok(document.paths['/health'].get.responses['200']);
   assert.ok(document.paths['/api/patients'].get);
   assert.ok(document.paths['/api/patients/{patientId}/documents'].get);
   assert.ok(!document.paths['/api/trends']);
+  for (const path of ['/api/sharing/open', '/api/sharing/original']) {
+    assert.ok(document.paths[path].post);
+    assert.ok(!document.paths[path].get);
+  }
   const ui = await globalThis.fetch(`${base}/api/docs`);
   assert.equal(ui.status, 200);
   await ui.text();

@@ -1,3 +1,8 @@
+import { useStableDialogHeight } from '../../components/ui/use-stable-dialog-height';
+import {
+  OriginalSelection,
+  formatFileSize as formatSize,
+} from './OriginalSelection';
 import { useEffect, useId, useRef, useState } from 'react';
 import { Download } from 'lucide-react';
 import {
@@ -16,12 +21,6 @@ import {
 } from '../../components/ui/dialog';
 import { ManualApiError } from '../manual-readings/api';
 import { originalExportRequest } from './original-export-api';
-const formatSize = (bytes: number) =>
-  bytes < 1024
-    ? `${bytes} B`
-    : bytes < 1048576
-      ? `${(bytes / 1024).toFixed(1)} KiB`
-      : `${(bytes / 1048576).toFixed(2)} MiB`;
 export function OriginalExportDialog({
   patientId,
   patientName,
@@ -43,6 +42,7 @@ export function OriginalExportDialog({
     [phase, setPhase] = useState<
       'idle' | 'pending' | 'success' | 'failed' | 'conflict' | 'denied'
     >('idle');
+  const stableDialog = useStableDialogHeight(enabled);
   const controller = useRef<AbortController | null>(null),
     id = useId();
   const choices = documents.filter((d) => d.canExport),
@@ -168,6 +168,7 @@ export function OriginalExportDialog({
       }}
     >
       <DialogContent
+        {...stableDialog}
         className="max-w-2xl"
         onCloseAutoFocus={(event) => {
           event.preventDefault();
@@ -283,41 +284,15 @@ export function OriginalExportDialog({
                           Choose up to {maximumOriginalExportFiles} files, 32
                           MiB combined. No documents are selected automatically.
                         </p>
-                        <fieldset disabled={busy} className="min-w-0 space-y-2">
-                          <legend className="mb-2 text-sm font-medium">
-                            Originals available for export
-                          </legend>
-                          {choices.map((d) => (
-                            <label
-                              key={d.id}
-                              className="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-border p-3 text-sm"
-                            >
-                              <input
-                                type="checkbox"
-                                className="mt-1 size-5 shrink-0 accent-primary"
-                                checked={selected.includes(d.id)}
-                                disabled={
-                                  !selected.includes(d.id) &&
-                                  selected.length >= maximumOriginalExportFiles
-                                }
-                                onChange={(e) => {
-                                  setPhase('idle');
-                                  setSelected((ids) =>
-                                    e.target.checked
-                                      ? [...ids, d.id]
-                                      : ids.filter((id) => id !== d.id),
-                                  );
-                                }}
-                              />
-                              <span className="min-w-0 break-words">
-                                {d.title}
-                                <span className="block text-xs text-muted-foreground">
-                                  {formatSize(d.bytes)}
-                                </span>
-                              </span>
-                            </label>
-                          ))}
-                        </fieldset>
+                        <OriginalSelection
+                          documents={choices}
+                          selected={selected}
+                          disabled={busy}
+                          onChange={(ids) => {
+                            setPhase('idle');
+                            setSelected(ids);
+                          }}
+                        />
                         {!choices.length && (
                           <p>
                             No originals are currently available for export.

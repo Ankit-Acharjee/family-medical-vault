@@ -1,3 +1,4 @@
+import { OwnerSharingDialog } from '../sharing/OwnerSharingDialog';
 import { OriginalExportDialog } from './OriginalExportDialog';
 import { ProcessingConsentDialog } from './ProcessingConsentDialog';
 import { RelatedDocumentsDialog } from './RelatedDocumentsDialog';
@@ -156,6 +157,8 @@ export function DocumentsPanel({
   const patientId = selectedPatient?.id ?? null;
   const [view, setView] = useState<'active' | 'trash'>('active');
   const [exportOpen, setExportOpen] = useState(false);
+  const [sharingOpen, setSharingOpen] = useState(false);
+  const sharingTrigger = useRef<HTMLButtonElement | null>(null);
   const exportTrigger = useRef<HTMLButtonElement | null>(null);
   const [list, setList] = useState<
     | (
@@ -308,6 +311,7 @@ export function DocumentsPanel({
     }
     if (listPatient.current !== patientId) {
       setExportOpen(false);
+      setSharingOpen(false);
       setList(null);
       setEditing(null);
       setLifecycle(null);
@@ -727,6 +731,40 @@ export function DocumentsPanel({
           Export originals
         </Button>
       )}
+      {view === 'active' && displayPatient.relationship === 'self' && (
+        <Button
+          variant="outline"
+          disabled={busy || patientsLoading}
+          onClick={(event) => {
+            sharingTrigger.current = event.currentTarget;
+            setSharingOpen(true);
+          }}
+        >
+          Share originals
+        </Button>
+      )}
+      {sharingOpen && displayPatient.relationship === 'self' && (
+        <OwnerSharingDialog
+          key={displayPatient.id}
+          patientId={displayPatient.id}
+          patientName={displayPatient.displayName}
+          documents={
+            list?.id === displayPatient.id && list.view === 'active'
+              ? list.value.documents
+              : []
+          }
+          enabled={!busy && !patientsLoading && view === 'active'}
+          onClose={() => setSharingOpen(false)}
+          onRestoreFocus={() => {
+            if (
+              sharingTrigger.current?.isConnected &&
+              !sharingTrigger.current.disabled
+            )
+              sharingTrigger.current.focus();
+            else panel.current?.focus();
+          }}
+        />
+      )}
       {exportOpen && (
         <OriginalExportDialog
           key={displayPatient.id}
@@ -740,7 +778,10 @@ export function DocumentsPanel({
           enabled={!busy && !patientsLoading && view === 'active' && !!current}
           onClose={() => setExportOpen(false)}
           onRestoreFocus={() => {
-            if (exportTrigger.current?.isConnected)
+            if (
+              exportTrigger.current?.isConnected &&
+              !exportTrigger.current.disabled
+            )
               exportTrigger.current.focus();
             else panel.current?.focus();
           }}
@@ -752,6 +793,7 @@ export function DocumentsPanel({
           if (next !== view) {
             setLifecycle(null);
             setExportOpen(false);
+            setSharingOpen(false);
             setLifecycleError('');
             setEditing(null);
             setPreview(null);
