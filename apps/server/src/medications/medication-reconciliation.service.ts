@@ -336,61 +336,70 @@ export class MedicationReconciliationService implements OnModuleDestroy {
   }
   async list(principal: Principal, patientId: string, query: unknown = {}) {
     const p = patientId.toLowerCase();
-    return this.tx(p, async (db) => {
-      const actor = await this.auth(db, principal, p);
-      if (
-        !query ||
-        typeof query !== 'object' ||
-        Array.isArray(query) ||
-        Object.keys(query).some((k) => k !== 'cursor')
-      )
+    return this.tx(p, (db) =>
+      this.readPageInTransaction(db, principal, p, query),
+    );
+  }
+  /** Internal composition only: caller holds the canonical patient-access lock. */
+  async readPageInTransaction(
+    db: Tx,
+    principal: Principal,
+    p: string,
+    query: unknown = {},
+  ) {
+    const actor = await this.auth(db, principal, p);
+    if (
+      !query ||
+      typeof query !== 'object' ||
+      Array.isArray(query) ||
+      Object.keys(query).some((k) => k !== 'cursor')
+    )
+      throw new BadRequestException();
+    const raw = (query as Record<string, unknown>).cursor;
+    let cursor: MedicationReconciliationCursor | null = null;
+    if (raw !== undefined) {
+      if (typeof raw !== 'string' || raw.length > 180)
         throw new BadRequestException();
-      const raw = (query as Record<string, unknown>).cursor;
-      let cursor: MedicationReconciliationCursor | null = null;
-      if (raw !== undefined) {
-        if (typeof raw !== 'string' || raw.length > 180)
-          throw new BadRequestException();
-        try {
-          cursor = JSON.parse(raw) as MedicationReconciliationCursor;
-        } catch {
-          throw new BadRequestException();
-        }
-        if (!isMedicationReconciliationCursor(cursor))
-          throw new BadRequestException();
+      try {
+        cursor = JSON.parse(raw) as MedicationReconciliationCursor;
+      } catch {
+        throw new BadRequestException();
       }
-      const stamp = cursor?.recordedAt ?? '1970-01-01T00:00:00.000Z',
-        id = cursor?.medicationId ?? '00000000-0000-4000-8000-000000000000';
-      const pointers = await db.$queryRaw<
-        { medicationId: string; documentId: string }[]
-      >`WITH latest AS(SELECT DISTINCT ON(medication_id) medication_id,document_id,recorded_at FROM fmv.medication_reconciliations WHERE patient_id=${p}::uuid ORDER BY medication_id,revision DESC) SELECT m.medication_id AS "medicationId",m.document_id AS "documentId" FROM latest m JOIN fmv.documents d ON d.id=m.document_id AND d.patient_id=${p}::uuid WHERE (${actor.owner} OR(d.state='ready' AND d.deleted_at IS NULL)) AND (${cursor === null} OR(m.recorded_at,m.medication_id)<(${stamp}::timestamptz,${id}::uuid)) ORDER BY m.recorded_at DESC,m.medication_id DESC LIMIT 21`;
-      const docs = [...new Set(pointers.map((r) => r.documentId))];
-      await this.lockDocs(db, p, docs);
-      await this.auth(db, principal, p, docs);
-      const rows: Row[] = [];
-      for (const pointer of pointers.slice(0, 20)) {
-        const r = await this.latest(db, p, pointer.medicationId);
-        if (!r) throw new ServiceUnavailableException();
-        rows.push(r);
-      }
-      const last = rows.at(-1),
-        result = {
-          patientId: p,
-          canWrite: actor.owner,
-          entries: await Promise.all(rows.map((r) => this.view(db, r))),
-          nextCursor:
-            pointers.length > 20 && last
-              ? {
-                  recordedAt: last.recordedAt.toISOString(),
-                  medicationId: last.medicationId,
-                }
-              : null,
-        };
-      if (!isMedicationReconciliationsPage(result))
-        throw new ServiceUnavailableException();
-      await this.audit(db, p, actor.accountId, rows, 'medication.viewed');
-      result.canWrite = (await this.auth(db, principal, p, docs)).owner;
-      return result;
-    });
+      if (!isMedicationReconciliationCursor(cursor))
+        throw new BadRequestException();
+    }
+    const stamp = cursor?.recordedAt ?? '1970-01-01T00:00:00.000Z',
+      id = cursor?.medicationId ?? '00000000-0000-4000-8000-000000000000';
+    const pointers = await db.$queryRaw<
+      { medicationId: string; documentId: string }[]
+    >`WITH latest AS(SELECT DISTINCT ON(medication_id) medication_id,document_id,recorded_at FROM fmv.medication_reconciliations WHERE patient_id=${p}::uuid ORDER BY medication_id,revision DESC) SELECT m.medication_id AS "medicationId",m.document_id AS "documentId" FROM latest m JOIN fmv.documents d ON d.id=m.document_id AND d.patient_id=${p}::uuid WHERE (${actor.owner} OR(d.state='ready' AND d.deleted_at IS NULL)) AND (${cursor === null} OR(m.recorded_at,m.medication_id)<(${stamp}::timestamptz,${id}::uuid)) ORDER BY m.recorded_at DESC,m.medication_id DESC LIMIT 21`;
+    const docs = [...new Set(pointers.map((r) => r.documentId))];
+    await this.lockDocs(db, p, docs);
+    await this.auth(db, principal, p, docs);
+    const rows: Row[] = [];
+    for (const pointer of pointers.slice(0, 20)) {
+      const r = await this.latest(db, p, pointer.medicationId);
+      if (!r) throw new ServiceUnavailableException();
+      rows.push(r);
+    }
+    const last = rows.at(-1),
+      result = {
+        patientId: p,
+        canWrite: actor.owner,
+        entries: await Promise.all(rows.map((r) => this.view(db, r))),
+        nextCursor:
+          pointers.length > 20 && last
+            ? {
+                recordedAt: last.recordedAt.toISOString(),
+                medicationId: last.medicationId,
+              }
+            : null,
+      };
+    if (!isMedicationReconciliationsPage(result))
+      throw new ServiceUnavailableException();
+    await this.audit(db, p, actor.accountId, rows, 'medication.viewed');
+    result.canWrite = (await this.auth(db, principal, p, docs)).owner;
+    return result;
   }
   async history(
     principal: Principal,

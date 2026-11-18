@@ -1,3 +1,5 @@
+import { GroundedSummaryService } from '../summaries/grounded-summary.service.js';
+import { GroundedSummaryController } from '../summaries/grounded-summary.controller.js';
 import { MedicationReconciliationService } from '../medications/medication-reconciliation.service.js';
 import { MedicationReconciliationController } from '../medications/medication-reconciliation.controller.js';
 import { Module } from '@nestjs/common';
@@ -141,8 +143,22 @@ class DisabledAccessStore extends AccessStore {
     MeasurementWorkspaceController,
     ManualReadingsController,
     MedicationReconciliationController,
+    GroundedSummaryController,
   ],
   providers: [
+    {
+      provide: GroundedSummaryService,
+      inject: [ManualReadingsService, MedicationReconciliationService],
+      useFactory: (
+        manual: ManualReadingsService,
+        medications: MedicationReconciliationService,
+      ) =>
+        new GroundedSummaryService(
+          authConfig()?.databaseUrl ?? null,
+          manual,
+          medications,
+        ),
+    },
     AuthBoundaryGuard,
     {
       provide: MeasurementComparisonsService,

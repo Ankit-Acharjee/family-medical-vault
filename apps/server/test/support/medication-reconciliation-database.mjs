@@ -1,3 +1,4 @@
+import { verifyGroundedSummary } from './grounded-summary-database.mjs';
 import { verifyMedicationSchedule } from './medication-schedule-database.mjs';
 import { verifyMedicationInventory } from './medication-inventory-database.mjs';
 import assert from 'node:assert/strict';
@@ -103,6 +104,7 @@ export async function verifyMedicationReconciliation(f) {
         .existingRecord,
       { medicationId: reconcileId, revision: 1 },
     );
+    await verifyGroundedSummary(f, ledger, reconcileId);
     await verifyMedicationInventory(f, ledger, other, reconcileId);
     const scheduleFixture = await verifyMedicationSchedule(
       f,

@@ -135,52 +135,60 @@ export class ManualReadingsService implements OnModuleDestroy {
   }
   async list(principal: Principal, patientId: string, query: unknown = {}) {
     const p = patientId.toLowerCase();
-    return this.tx(p, async (db) => {
-      const actor = await this.auth(db, principal, p);
-      if (
-        !query ||
-        typeof query !== 'object' ||
-        Array.isArray(query) ||
-        Object.keys(query).some((k) => k !== 'cursor')
-      )
+    return this.tx(p, (db) =>
+      this.readPageInTransaction(db, principal, p, query),
+    );
+  }
+  /** Internal composition only: caller holds the canonical patient-access lock. */
+  async readPageInTransaction(
+    db: Tx,
+    principal: Principal,
+    p: string,
+    query: unknown = {},
+  ) {
+    const actor = await this.auth(db, principal, p);
+    if (
+      !query ||
+      typeof query !== 'object' ||
+      Array.isArray(query) ||
+      Object.keys(query).some((k) => k !== 'cursor')
+    )
+      throw new BadRequestException();
+    const raw = (query as Record<string, unknown>).cursor;
+    let cursor: ManualReadingCursor | null = null;
+    if (raw !== undefined) {
+      if (typeof raw !== 'string' || raw.length > 180)
         throw new BadRequestException();
-      const raw = (query as Record<string, unknown>).cursor;
-      let cursor: ManualReadingCursor | null = null;
-      if (raw !== undefined) {
-        if (typeof raw !== 'string' || raw.length > 180)
-          throw new BadRequestException();
-        try {
-          cursor = JSON.parse(raw) as ManualReadingCursor;
-        } catch {
-          throw new BadRequestException();
-        }
-        if (!isManualReadingCursor(cursor)) throw new BadRequestException();
+      try {
+        cursor = JSON.parse(raw) as ManualReadingCursor;
+      } catch {
+        throw new BadRequestException();
       }
-      const stamp = cursor?.recordedAt ?? '1970-01-01T00:00:00.000Z',
-        id = cursor?.readingId ?? '00000000-0000-4000-8000-000000000000';
-      const rows = await db.$queryRaw<
-        Row[]
-      >`WITH latest AS(SELECT DISTINCT ON(reading_id) id,reading_id AS "readingId",patient_id AS "patientId",revision,action,request_id AS "requestId",payload_hash AS "payloadHash",actor_account_id AS "actorAccountId",reading,recorded_at AS "recordedAt" FROM fmv.manual_measurements WHERE patient_id=${p}::uuid ORDER BY reading_id,revision DESC) SELECT * FROM latest WHERE (${cursor === null} OR ("recordedAt","readingId")<(${stamp}::timestamptz,${id}::uuid)) ORDER BY "recordedAt" DESC,"readingId" DESC LIMIT 21`;
-      const visible = rows.slice(0, 20),
-        last = visible.at(-1);
-      const result: ManualReadingsPage = {
-        patientId: p,
-        canWrite: actor.owner,
-        entries: visible.map(entry),
-        nextCursor:
-          rows.length > 20 && last
-            ? {
-                recordedAt: last.recordedAt.toISOString(),
-                readingId: last.readingId,
-              }
-            : null,
-      };
-      if (!isManualReadingsPage(result))
-        throw new ServiceUnavailableException();
-      await this.audit(db, p, actor.accountId, visible, 'manual.viewed');
-      result.canWrite = (await this.auth(db, principal, p)).owner;
-      return result;
-    });
+      if (!isManualReadingCursor(cursor)) throw new BadRequestException();
+    }
+    const stamp = cursor?.recordedAt ?? '1970-01-01T00:00:00.000Z',
+      id = cursor?.readingId ?? '00000000-0000-4000-8000-000000000000';
+    const rows = await db.$queryRaw<
+      Row[]
+    >`WITH latest AS(SELECT DISTINCT ON(reading_id) id,reading_id AS "readingId",patient_id AS "patientId",revision,action,request_id AS "requestId",payload_hash AS "payloadHash",actor_account_id AS "actorAccountId",reading,recorded_at AS "recordedAt" FROM fmv.manual_measurements WHERE patient_id=${p}::uuid ORDER BY reading_id,revision DESC) SELECT * FROM latest WHERE (${cursor === null} OR ("recordedAt","readingId")<(${stamp}::timestamptz,${id}::uuid)) ORDER BY "recordedAt" DESC,"readingId" DESC LIMIT 21`;
+    const visible = rows.slice(0, 20),
+      last = visible.at(-1);
+    const result: ManualReadingsPage = {
+      patientId: p,
+      canWrite: actor.owner,
+      entries: visible.map(entry),
+      nextCursor:
+        rows.length > 20 && last
+          ? {
+              recordedAt: last.recordedAt.toISOString(),
+              readingId: last.readingId,
+            }
+          : null,
+    };
+    if (!isManualReadingsPage(result)) throw new ServiceUnavailableException();
+    await this.audit(db, p, actor.accountId, visible, 'manual.viewed');
+    result.canWrite = (await this.auth(db, principal, p)).owner;
+    return result;
   }
   async history(
     principal: Principal,
