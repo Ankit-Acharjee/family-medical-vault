@@ -33,3 +33,7 @@ Period summaries use exact reported collection/observation calendar dates for la
 ## Approved initial summary export authority — 18 November 2026
 
 The explicit Person owner may export a patient summary. Other users require patient-wide View and Export plus current View and Export for every included source. Summary read authority alone does not authorize export. Revalidate the current summary/source snapshot and these independent permissions before generation and immediately before download; downloaded copies cannot be revoked. This does not authorize public sharing, external processing or any change to the original records or clinical verification state.
+
+## Approved initial temporary-link authority — 18 November 2026
+
+Only the explicit Person owner may create or revoke external temporary sharing links initially. Delegate link issuance remains deferred; existing View, Export or Manage permissions do not grant this new external-sharing authority. This decision does not enable an anonymous endpoint or settle the recipient access/expiry policy, which must be approved separately before implementation.
