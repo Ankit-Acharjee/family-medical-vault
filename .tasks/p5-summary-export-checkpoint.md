@@ -8,3 +8,6 @@ The earlier automatic approval-review usage failure is resolved for current exec
 
 
 Delivery update: `ca63bcd` pushed to `origin/develop`. The approved dependency audit wrapper passed (production zero advisories; one exact development exception); four gate tests, final lint/format/secrets and diff checks passed. Hosted migration26 approval has been requested separately and is pending. Next selected-original ZIP readiness is documented in `p5-selected-original-export-plan.md`; no hosted writes performed.
+
+
+Hosted delivery — 18 November 2026: user explicitly approved migration `20261118000100_summary_exports`. Fresh read-only preflight confirmed the dedicated development target, verified TLS and exactly one pending migration. Prisma applied that migration successfully. Read-only postflight verified all26 migration checksums, FORCE RLS, SELECT plus narrow column INSERT grants, no runtime UPDATE/DELETE/TRUNCATE or timestamp/retention INSERT grants, two backend audit policies, and database-controlled retention defaults. No clinical fields were read or verification records inserted; no original or access grant changed. Hosted authenticated export/download remains unverified; this is schema/role verification only.

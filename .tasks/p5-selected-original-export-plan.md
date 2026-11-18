@@ -1,6 +1,6 @@
 # SHARE-01 — next slice: selected-original ZIP export
 
-Status: readiness inspection started after summary-export commit `ca63bcd` was pushed to develop. Summary export migration26 awaits its separate hosted approval; no hosted write is authorized by this plan.
+Status: readiness inspection started after summary-export commit `ca63bcd` was pushed to develop. Summary export migration26 is now separately approved, applied and verified on development. No additional hosted write is authorized by this plan.
 
 ## Existing foundations and authority
 
