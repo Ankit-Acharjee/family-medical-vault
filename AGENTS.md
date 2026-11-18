@@ -2,6 +2,13 @@
 
 > **Canonical project instructions.** Read only the relevant domain documents before modifying a module. Do not load the entire docs tree for every task.
 
+## Persistent communication and execution preferences — reconfirmed 18 November 2026
+
+- Omit optional progress narration about plans, findings, fixes, tests, commits and pushes. Speak during work only for necessary input/approval, a material blocker, or an update required by higher-priority instructions; keep required updates to one short line. Final summaries stay within five lines unless more detail is requested. Client tool/status indicators are outside this preference.
+- Execute the approved roadmap loop continuously within the active session. A completed task, an approval reply or context compaction must not trigger a routine final response or a request for another “continue/go ahead.” After verified commit/push, select and work on the next ready task; do not merely announce it as “Next.”
+- Stop only at an explicit user stop, completion of authorized scope, a genuinely required decision/separate approval, or a concrete blocker with no meaningful independent work remaining. Continue independent authorized work while waiting, then automatically resume the dependent work when answered.
+- Keep the next runnable task and real blockers in the durable task checkpoint so subsequent Codex chats can resume. Do not claim unattended/background execution after an active session ends.
+
 ## Non-negotiable
 - `docs/product/scope.md` defines scope; requirements are indexed in `docs/product/requirements-index.md` and specified by their domain owners.
 - `docs/architecture/decisions.md` is the authority for approved stack choices and explicitly unverified deployment assumptions.
