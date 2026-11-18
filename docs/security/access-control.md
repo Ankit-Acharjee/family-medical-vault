@@ -104,3 +104,7 @@ Schedule use also follows the approved source-bound lifecycle in the medication 
 ## Approved initial reminder authority — 18 November 2026
 
 Open-page reminders follow the owner-only explicit opt-in policy in the medication domain. Revalidate current ownership and patient/source access before showing a due notice; stored client intent is not authority. Generic notices contain no medical details. No delegate reminder authority, background delivery, shared schedule mutation or adherence recording is introduced by local reminder preferences.
+
+## Approved initial in-app summary read authority — 18 November 2026
+
+An aggregate patient summary requires patient-wide View and current permission for each included source; the explicit Person owner remains allowed. Check aggregate authority and every source's current authorization/verification/lifecycle before disclosure. Never treat a client capability hint or a previously generated summary as permission, and do not infer export/share authority from summary read access.

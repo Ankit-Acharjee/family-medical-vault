@@ -21,3 +21,11 @@
 **Requirement:** Allow scoped, expiring and revocable sharing links with access events.
 
 **Acceptance check:** Revoked or expired links stop serving content; downloaded copies cannot be recalled.
+
+## Approved initial in-app summary read authority — 18 November 2026
+
+The explicit Person owner may read an in-app patient summary. Other users require patient-wide View and current permission for every source included in that summary. Revalidate the included sources and their verification/lifecycle state; source-document access alone does not authorize the aggregate. This authority does not grant export, temporary sharing, external processing or summary modification rights.
+
+## Approved initial summary date semantics — 18 November 2026
+
+Period summaries use exact reported collection/observation calendar dates for laboratory and manual readings. Keep unknown or imprecise dates separately; never substitute upload, recording or verification timestamps. Preserve the manual observation's recorded offset and calendar date. Medication status remains an explicitly labeled current record snapshot, including its owner-recorded current/historical labels; do not infer treatment intervals or historical medication status for a requested period.
