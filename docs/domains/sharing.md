@@ -41,3 +41,7 @@ Only the explicit Person owner may create or revoke external temporary sharing l
 ## Approved initial temporary-link access and lifecycle — 18 November 2026
 
 Initial external links are bearer capabilities: anyone holding the secret may access only the explicitly selected original documents, without an account or separate passcode. Require an explicit owner-chosen expiry of at most seven days. Bind the selection to exact original/source versions and permanently invalidate it after Trash/Restore or source change; do not silently follow a restored or replaced source. Revocation stops future serving, while downloaded copies cannot be recalled. This does not permit implicit whole-vault/category sharing, clinical summaries, delegate issuance, external processing or public record enumeration.
+
+## Approved initial private emergency-profile authority — 18 November 2026
+
+Only the explicit Person owner may edit the initial private emergency profile. Other readers require current patient-wide View; source-document access alone does not grant access to this separate aggregate. The owner may read it. Public QR exposure remains disabled until its exact fields and consent policy are separately approved. This authority grants no external sharing, clinical verification or inferred diagnosis/medication status.
