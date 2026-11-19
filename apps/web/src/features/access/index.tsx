@@ -1,3 +1,4 @@
+import { ActivationIssuerEntry } from '../activation/ActivationIssuerEntry';
 import { EmergencyProfileEntry } from '../emergency/EmergencyProfileEntry';
 import { useEffect, useRef, useState } from 'react';
 import { permissionActions } from '@fmv/contracts';
@@ -113,6 +114,7 @@ export function FamilyAccessPanel() {
   return (
     <>
       <EmergencyProfileEntry />
+      <ActivationIssuerEntry />
       <FamilyAccessContent key={selectedPatient?.id ?? 'no-patient'} />
     </>
   );

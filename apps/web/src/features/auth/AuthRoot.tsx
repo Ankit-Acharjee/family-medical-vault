@@ -1,3 +1,9 @@
+import { ActivationClaimView } from '../activation/ActivationClaimView';
+import {
+  captureIncomingActivation,
+  incomingActivationSeed,
+  clearActivationSeed,
+} from '../activation/incoming-activation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { AuthAccount, AuthBootstrap, AuthNotice } from '@fmv/contracts';
@@ -59,6 +65,8 @@ const modeFromHash = (): AuthMode => {
 };
 
 export function AuthRoot({ children }: { children: ReactNode }) {
+  const [activation, setActivation] = useState(incomingActivationSeed);
+  useEffect(() => clearActivationSeed(), []);
   const [bootstrap, setBootstrap] = useState<AuthBootstrap | null>(null);
   const [account, setAccount] = useState<AuthAccount | null>(null);
   const [loading, setLoading] = useState(true);
@@ -138,6 +146,8 @@ export function AuthRoot({ children }: { children: ReactNode }) {
   }, [load]);
   useEffect(() => {
     const change = () => {
+      const incoming = captureIncomingActivation();
+      if (incoming) setActivation(incoming);
       setHash(window.location.hash);
       setMode(modeFromHash());
       setError('');
@@ -244,6 +254,18 @@ export function AuthRoot({ children }: { children: ReactNode }) {
     if (!account || accountPage)
       document.title = `${accountPage && account ? 'Your account' : 'Account access'} | Family Medical Vault`;
   }, [accountPage, account]);
+  if (account && activation && mode !== 'reset')
+    return (
+      <ActivationClaimView
+        key={account.contextId + ':' + (activation.token ?? 'missing')}
+        token={activation.token}
+        onExit={() => {
+          setActivation(null);
+          window.location.hash = 'account';
+          void load();
+        }}
+      />
+    );
   if (account && !accountPage && mode !== 'reset')
     return (
       <PatientProvider key={account.contextId} sessionKey={account.contextId}>
@@ -270,6 +292,13 @@ export function AuthRoot({ children }: { children: ReactNode }) {
           )}
         </Button>
       </div>
+      {activation && !account && (
+        <p className="mx-auto mb-4 max-w-md px-4 text-sm">
+          Sign in to review activation. After Google sign-in or a page reload,
+          reopen the original activation link; the secret is never stored in
+          this browser.
+        </p>
+      )}
       {loading ? (
         <p role="status">Checking your session…</p>
       ) : account && accountPage ? (

@@ -1,0 +1,11 @@
+# AUTH-04–AUTH-05 / AUTH-07 — Activation UI completion
+
+Creator controls in Family Access support explicit expiry/intent, a first-response-only fragment link, exact retry identity, bounded history, separate typed claimant-reference approval and revocation. Same-context revalidation preserves drafts while hiding protected content and requiring fresh consent. Denial clears protected state.
+
+The authenticated claimant entry intercepts activation before vault/onboarding controls. Fragment secrets are immediately stripped and held only in ephemeral memory; reload or external sign-in requires reopening the original link. Review and explicit claim create no record access. Status reports creator approval, existing identities remain deferred, and no automatic merge occurs. Response validators bind patient and claimant identity; stale work is aborted and result focus restored.
+
+Changed implementation: packages/contracts/src/profile-activation.ts; apps/web/src/features/activation/{incoming-activation.ts,ActivationClaimView.tsx,ActivationIssuerDialog.tsx,ActivationIssuerEntry.tsx}; features/auth/AuthRoot.tsx; features/access/index.tsx. Tests: e2e/profile-activation.spec.ts and test/incoming-activation.test.mjs. No dependencies or global/Overview styling changes.
+
+Verification: server387, frontend70, activation/auth/managed/sharing browser58 and patient/family-context browser20 passed. Final reference-wrapping polish rebuilt and reran activation12. Workspace build/types, lint, format, secrets and dependency gates passed; the approved temporary advisory-specific audit configuration is unchanged. Backend native27/all30 migrations and focused SQL rollback tests previously passed. All30 hosted migrations are applied and postflight verified; no hosted ownership transfer was performed.
+
+Eight synthetic screenshots inspected: .local/screenshots/activation-{creator,claimant}-{desktop,mobile}-{light,dark}.png. Mobile narrow-width, focus, denial, retry, no-token-storage, light/dark accessibility and unchanged auth/context flows are covered. Live hosted authenticated browser, Safari and operating-system clipboard remain unverified. Supervisor implementation/review; native worker quota unavailable, no OpenCode fallback or independent-review claim.
