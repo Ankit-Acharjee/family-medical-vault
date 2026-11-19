@@ -1,3 +1,4 @@
+import { retainOrdinaryAccess } from '../../../../infra/scripts/access-history-retention.mjs';
 import { Buffer } from 'node:buffer';
 import assert from 'node:assert/strict';
 import { randomUUID, createHash } from 'node:crypto';
@@ -225,6 +226,96 @@ export async function verifyAccessActivity(runtimeUrl, owner) {
       return ++checks === 2 ? randomUUID() : result;
     };
     await assert.rejects(service.read(principal, patient.id), status(404));
+    // SEC-04: only ordinary events after BOTH age and deadline expire.
+    const old = new Date(Date.now() - 91 * 86400000),
+      ended = new Date(Date.now() - 86400000);
+    const oldView = await insert('document.viewed', actor, old, ended),
+      oldExport = await insert('document.exported', actor, old, ended),
+      critical = await insert('document.uploaded', actor, old, ended),
+      recent = await insert(
+        'document.viewed',
+        actor,
+        new Date(Date.now() - 1000),
+        ended,
+      );
+    const oldLink = randomUUID();
+    await owner.query(
+      "INSERT INTO fmv.temporary_link_access_events(id,link_id,kind,recorded_at,retention_until) VALUES($1,$2,'link.opened',$3,$4)",
+      [oldLink, share.link.id, old, new Date(old.getTime() + 90 * 86400000)],
+    );
+    const exists = async (table, id) =>
+      (
+        await owner.query(
+          `SELECT count(*)::int n FROM fmv.${table} WHERE id=$1`,
+          [id],
+        )
+      ).rows[0].n === 1;
+    const dry = await retainOrdinaryAccess(owner, { batchSize: 1 });
+    assert.equal(dry.mode, 'dry-run');
+    assert.equal(dry.documentAccess.eligible, 1);
+    assert.equal(dry.documentAccess.limited, true);
+    assert.ok(await exists('document_events', oldView));
+    assert.ok(await exists('temporary_link_access_events', oldLink));
+    await assert.rejects(
+      retainOrdinaryAccess(runtime, { apply: true }),
+      /maintenance connection/,
+    );
+    assert.ok(await exists('document_events', oldView));
+    const broken = {
+      query: (sql, args) =>
+        sql.startsWith('WITH candidates') &&
+        sql.includes('DELETE FROM fmv.temporary_link_access_events')
+          ? Promise.reject(Error('synthetic maintenance failure'))
+          : owner.query(sql, args),
+    };
+    await assert.rejects(
+      retainOrdinaryAccess(broken, { apply: true }),
+      /synthetic maintenance failure/,
+    );
+    assert.ok(await exists('document_events', oldView));
+    assert.ok(await exists('temporary_link_access_events', oldLink));
+    const contender = new pg.Client({
+      host: owner.host,
+      port: owner.port,
+      user: owner.user,
+      password: owner.password,
+      database: owner.database,
+      ssl: owner.ssl,
+      connectionTimeoutMillis: 5000,
+    });
+    await contender.connect();
+    await owner.query(
+      "SELECT pg_advisory_lock(hashtextextended('fmv-ordinary-access-retention-v1',0))",
+    );
+    try {
+      assert.equal(
+        (await retainOrdinaryAccess(contender, { apply: true })).busy,
+        true,
+      );
+    } finally {
+      await owner.query(
+        "SELECT pg_advisory_unlock(hashtextextended('fmv-ordinary-access-retention-v1',0))",
+      );
+      await contender.end();
+    }
+    const pass = await retainOrdinaryAccess(owner, {
+      apply: true,
+      batchSize: 1,
+    });
+    assert.equal(pass.documentAccess, 1);
+    assert.equal(pass.anonymousLinkAccess, 1);
+    assert.equal(await exists('temporary_link_access_events', oldLink), false);
+    await retainOrdinaryAccess(owner, { apply: true });
+    assert.equal(await exists('document_events', oldView), false);
+    assert.equal(await exists('document_events', oldExport), false);
+    for (const keep of [critical, recent, expired, deadline])
+      assert.ok(
+        await exists('document_events', keep),
+        'Critical, young and unexpired-deadline records remain',
+      );
+    const again = await retainOrdinaryAccess(owner, { apply: true });
+    assert.equal(again.documentAccess, 0);
+    assert.equal(again.anonymousLinkAccess, 0);
   } finally {
     await Promise.allSettled([
       runtime.end(),
