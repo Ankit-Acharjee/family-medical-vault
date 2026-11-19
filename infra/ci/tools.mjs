@@ -72,12 +72,27 @@ export async function withTool(name, run) {
   verifyArchive(bytes, asset.sha256);
   const directory = await mkdtemp(join(tmpdir(), 'fmv-ci-tool-'));
   try {
+    const members = spec.members ?? [name];
+    const binary = spec.binary ?? name;
+    if (
+      !Array.isArray(members) ||
+      !members.length ||
+      !members.includes(binary) ||
+      members.some(
+        (member) =>
+          typeof member !== 'string' ||
+          !/^[A-Za-z0-9_/-]+$/.test(member) ||
+          member.startsWith('/') ||
+          member.split('/').some((part) => !part || part === '..'),
+      )
+    )
+      throw new CheckError('CI tool members are invalid.');
     const extraction = spawnSync(
       'tar',
-      ['-xzf', archive, '-C', directory, '--', name],
+      ['-xzf', archive, '-C', directory, '--', ...members],
       { encoding: 'utf8' },
     );
-    const executable = join(directory, name);
+    const executable = join(directory, binary);
     if (
       extraction.error ||
       extraction.status !== 0 ||
@@ -85,7 +100,12 @@ export async function withTool(name, run) {
     ) {
       throw new CheckError('CI tool extraction failed.');
     }
-    await chmod(executable, 0o700);
+    for (const member of members) {
+      const path = join(directory, member);
+      if (!(await lstat(path)).isFile())
+        throw new CheckError('CI tool member is not a regular file.');
+      await chmod(path, 0o700);
+    }
     return await run(executable);
   } finally {
     await rm(directory, { recursive: true, force: true });

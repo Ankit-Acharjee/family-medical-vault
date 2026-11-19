@@ -1,3 +1,4 @@
+import { verifyBackupEncryption } from '../../scripts/verify-backup-encryption.mjs';
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { randomBytes } from 'node:crypto';
@@ -92,4 +93,12 @@ test('workflow validation rejects malformed workflows', async () => {
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('approved backup tool performs a synthetic round-trip and rejects modified ciphertext', async () => {
+  const result = await verifyBackupEncryption();
+  assert.equal(result.version, '1.3.2');
+  assert.equal(result.roundTrip, true);
+  assert.equal(result.tamperRejected, true);
+  assert.equal(result.realRecoveryIdentityCreated, false);
 });
