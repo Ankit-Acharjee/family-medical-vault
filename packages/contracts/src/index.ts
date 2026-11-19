@@ -149,3 +149,4 @@ export * from './temporary-links.js';
 export * from './emergency-profile.js';
 export * from './managed-profiles.js';
 export * from './profile-activation.js';
+export * from './access-activity.js';

@@ -1,3 +1,4 @@
+import { verifyAccessActivity } from '../support/access-activity-database.mjs';
 import { verifyProfileActivation } from '../support/profile-activation-database.mjs';
 import { verifyManagedProfiles } from '../support/managed-profiles-database.mjs';
 import { verifyEmergencyProfile } from '../support/emergency-profile-database.mjs';
@@ -337,7 +338,7 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
         );
         assert.equal(
           result.rowCount,
-          30,
+          31,
           'All foundation through summary export migrations must exist',
         );
         assert.equal(
@@ -345,7 +346,7 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
             .map((row) => row.migration_name)
             .sort()
             .join(','),
-          '20261105000100_foundation,20261105000300_auth_sessions,20261105000400_person_identity,20261110000100_patient_permissions,20261110000200_document_intake,20261110000300_caregiver_approvals,20261111000100_object_generations,20261111000200_patient_object_layout,20261112000100_document_display_titles,20261112000200_document_trash,20261113000100_saved_extractions,20261113000200_extraction_search,20261114000100_saved_metadata,20261114000200_clinical_review,20261115000100_clinical_withdrawal,20261115000200_diagnosis_statements,20261115000300_medication_source_fields,20261115000400_processing_consent,20261116000100_pdf_pages_ocr,20261116000200_measurement_comparability,20261117000100_manual_readings,20261117000200_medication_reconciliation,20261117000300_medication_source_identity,20261117000400_medication_inventory,20261117000500_medication_schedules,20261118000100_summary_exports,20261118000200_temporary_links,20261118000300_private_emergency,20261118000400_managed_profiles,20261119000100_profile_activation',
+          '20261105000100_foundation,20261105000300_auth_sessions,20261105000400_person_identity,20261110000100_patient_permissions,20261110000200_document_intake,20261110000300_caregiver_approvals,20261111000100_object_generations,20261111000200_patient_object_layout,20261112000100_document_display_titles,20261112000200_document_trash,20261113000100_saved_extractions,20261113000200_extraction_search,20261114000100_saved_metadata,20261114000200_clinical_review,20261115000100_clinical_withdrawal,20261115000200_diagnosis_statements,20261115000300_medication_source_fields,20261115000400_processing_consent,20261116000100_pdf_pages_ocr,20261116000200_measurement_comparability,20261117000100_manual_readings,20261117000200_medication_reconciliation,20261117000300_medication_source_identity,20261117000400_medication_inventory,20261117000500_medication_schedules,20261118000100_summary_exports,20261118000200_temporary_links,20261118000300_private_emergency,20261118000400_managed_profiles,20261119000100_profile_activation,20261119000200_access_activity_index',
         );
         assert.ok(result.rows.every((row) => row.finished && row.active));
       }
@@ -3775,6 +3776,11 @@ test('disposable PostgreSQL migration and runtime security lifecycle', async (t)
     await stage(
       'activation requires creator approval, preserves Person identity and serializes onboarding',
       () => verifyProfileActivation(runtimeUrl, owner),
+    );
+
+    await stage(
+      'ordinary access activity is owner-only, bounded, retained and accurately attributed',
+      () => verifyAccessActivity(runtimeUrl, owner),
     );
 
     await stage('wrong password is rejected', async () => {

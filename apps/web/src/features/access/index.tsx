@@ -1,3 +1,4 @@
+import { AccessActivityEntry } from '../activity/AccessActivityEntry';
 import { ActivationIssuerEntry } from '../activation/ActivationIssuerEntry';
 import { EmergencyProfileEntry } from '../emergency/EmergencyProfileEntry';
 import { useEffect, useRef, useState } from 'react';
@@ -113,6 +114,7 @@ export function FamilyAccessPanel() {
   const { selectedPatient } = usePatientContext();
   return (
     <>
+      <AccessActivityEntry />
       <EmergencyProfileEntry />
       <ActivationIssuerEntry />
       <FamilyAccessContent key={selectedPatient?.id ?? 'no-patient'} />

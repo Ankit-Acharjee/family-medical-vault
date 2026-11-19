@@ -236,6 +236,7 @@ model DocumentEvent {
   document       Document   @relation(fields: [documentId], references: [id], onDelete: Restrict)
   actor          AppAccount @relation(fields: [actorAccountId], references: [id], onDelete: Restrict)
 
+  @@index([patientId, occurredAt(sort: Desc), id(sort: Desc)], map: "document_events_patient_time")
   @@index([retentionUntil], map: "document_events_retention")
   @@map("document_events")
   @@schema("fmv")

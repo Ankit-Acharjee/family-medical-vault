@@ -1,0 +1,238 @@
+import { Buffer } from 'node:buffer';
+import assert from 'node:assert/strict';
+import { randomUUID, createHash } from 'node:crypto';
+import pg from 'pg';
+import { PrismaPersonStore } from '../../dist/identity/person.store.js';
+import { PrismaDocumentStore } from '../../dist/documents/document.store.js';
+import { PrismaAccessStore } from '../../dist/access/access.store.js';
+import { PermissionService } from '../../dist/access/permission.service.js';
+import { DocumentIntake } from '../../dist/documents/intake.js';
+import { MemoryObjectStore } from '../../dist/documents/memory-object-store.js';
+import { TemporaryLinksService } from '../../dist/sharing/temporary-links.service.js';
+import { OriginalExportService } from '../../dist/documents/original-export.service.js';
+import { DocumentsService } from '../../dist/documents/documents.service.js';
+import { AccessActivityService } from '../../dist/activity/access-activity.service.js';
+export async function verifyAccessActivity(runtimeUrl, owner) {
+  const runtime = new pg.Client({ connectionString: runtimeUrl.href }),
+    people = new PrismaPersonStore(runtimeUrl.href),
+    store = new PrismaDocumentStore(runtimeUrl.href),
+    access = new PrismaAccessStore(runtimeUrl.href),
+    service = new AccessActivityService(runtimeUrl.href),
+    objects = new MemoryObjectStore(),
+    links = new TemporaryLinksService(runtimeUrl.href, objects);
+  await runtime.connect();
+  try {
+    const principal = {
+        issuer: 'https://activity.example.test',
+        subject: randomUUID(),
+      },
+      delegate = { ...principal, subject: randomUUID() },
+      patient = await people.create(principal, 'SYNTHETIC activity owner'),
+      other = await people.create(delegate, 'SYNTHETIC activity reader');
+    const actor = (
+        await runtime.query(
+          'SELECT owner_account_id id FROM fmv.persons WHERE id=$1',
+          [patient.id],
+        )
+      ).rows[0].id,
+      reader = (
+        await runtime.query(
+          'SELECT owner_account_id id FROM fmv.persons WHERE id=$1',
+          [other.id],
+        )
+      ).rows[0].id;
+    const status = (n) => (e) => e.getStatus?.() === n;
+    await assert.rejects(service.read(delegate, patient.id), status(404));
+    await runtime.query(
+      "INSERT INTO fmv.access_grants(id,patient_id,grantee_account_id,issuer_account_id,actions,scope_kind) VALUES($1,$2,$3,$4,ARRAY['view','manage'],'patient')",
+      [randomUUID(), patient.id, reader, actor],
+    );
+    await assert.rejects(service.read(delegate, patient.id), status(404));
+    assert.equal((await service.read(principal, patient.id)).events.length, 0);
+    const bytes = Buffer.from('%PDF-1.7\nSYNTHETIC activity fixture\n%%EOF'),
+      intake = new DocumentIntake(store.asActor(actor), objects),
+      permissions = new PermissionService(access),
+      auth = (p, a, t) => permissions.require(principal, p, a, t);
+    const up = await intake.begin(
+      patient.id,
+      {
+        title: 'SYNTHETIC private title.pdf',
+        mimeType: 'application/pdf',
+        bytes: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+        idempotencyKey: randomUUID(),
+      },
+      auth,
+    );
+    await intake.content(patient.id, up.uploadId, bytes, auth);
+    await intake.finalize(patient.id, up.uploadId, auth);
+    const otherIntake = new DocumentIntake(store.asActor(reader), objects),
+      otherAuth = (p, a, t) => permissions.require(delegate, p, a, t);
+    const otherUpload = await otherIntake.begin(
+      other.id,
+      {
+        title: 'SYNTHETIC other patient.pdf',
+        mimeType: 'application/pdf',
+        bytes: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+        idempotencyKey: randomUUID(),
+      },
+      otherAuth,
+    );
+    await otherIntake.content(other.id, otherUpload.uploadId, bytes, otherAuth);
+    await otherIntake.finalize(other.id, otherUpload.uploadId, otherAuth);
+    const wrongResource = randomUUID();
+    await owner.query(
+      "INSERT INTO fmv.document_events(id,patient_id,document_id,actor_account_id,kind) VALUES($1,$2,$3,$4,'document.viewed')",
+      [wrongResource, patient.id, otherUpload.documentId, actor],
+    );
+    await assert.rejects(service.read(principal, other.id), status(404));
+    const insert = async (
+      kind,
+      account = actor,
+      at = new Date(Date.now() - 1000),
+      ret = new Date(Date.now() + 86400000),
+    ) => {
+      const id = randomUUID();
+      await owner.query(
+        'INSERT INTO fmv.document_events(id,patient_id,document_id,actor_account_id,kind,occurred_at,retention_until) VALUES($1,$2,$3,$4,$5,$6,$7)',
+        [id, patient.id, up.documentId, account, kind, at, ret],
+      );
+      return id;
+    };
+    const expired = await insert(
+        'document.viewed',
+        actor,
+        new Date(Date.now() - 91 * 86400000),
+      ),
+      future = await insert(
+        'document.viewed',
+        actor,
+        new Date(Date.now() + 86400000),
+      ),
+      deadline = await insert(
+        'document.viewed',
+        actor,
+        new Date(Date.now() - 10000),
+        new Date(Date.now() - 1000),
+      );
+    const same = new Date(Date.now() - 2000),
+      ids = [];
+    for (let i = 0; i < 26; i++)
+      ids.push(
+        await insert(
+          i % 2 ? 'document.viewed' : 'document.exported',
+          i % 3 ? actor : reader,
+          same,
+        ),
+      );
+    const exporter = new OriginalExportService(
+      runtimeUrl.href,
+      new DocumentsService(permissions, store, objects),
+    );
+    const preview = await exporter.prepare(principal, patient.id, {
+      documentIds: [up.documentId],
+    });
+    await exporter.onModuleDestroy();
+    const share = await links.create(principal, patient.id, {
+      documentIds: [up.documentId],
+      requestId: randomUUID(),
+      expiresInHours: 1,
+      selectionSha256: preview.snapshotSha256,
+      confirmed: true,
+    });
+    await links.inspect(share.token);
+    await links.readOriginal(
+      share.token,
+      up.documentId,
+      new globalThis.AbortController().signal,
+    );
+    let page = await service.read(principal, patient.id),
+      all = [...page.events],
+      count = 0;
+    assert.equal(page.events.length, 20);
+    assert.ok(page.nextCursor);
+    while (page.nextCursor) {
+      assert.ok(++count < 5);
+      page = await service.read(principal, patient.id, page.nextCursor);
+      all.push(...page.events);
+    }
+    assert.equal(new Set(all.map((e) => e.source + e.id)).size, all.length);
+    assert.equal(all.filter((e) => ids.includes(e.id)).length, 26);
+    for (const id of [expired, future, deadline, wrongResource])
+      assert.ok(!all.some((e) => e.id === id));
+    assert.ok(all.some((e) => e.actor === 'you'));
+    assert.ok(all.some((e) => e.actor === 'authenticated-account'));
+    assert.ok(
+      all.some(
+        (e) => e.actor === 'anonymous-link-holder' && e.kind === 'link.opened',
+      ),
+    );
+    assert.ok(
+      all.some((e) => e.documentLabel === 'SYNTHETIC private title.pdf'),
+    );
+    assert.ok(!JSON.stringify(all).includes(principal.subject));
+    for (let i = 1; i < all.length; i++) {
+      const a = all[i - 1],
+        b = all[i];
+      assert.ok(
+        a.recordedAt > b.recordedAt ||
+          (a.recordedAt === b.recordedAt &&
+            (a.source > b.source || (a.source === b.source && a.id > b.id))),
+      );
+    }
+    await runtime.query('BEGIN');
+    await runtime.query('SET LOCAL enable_seqscan=off');
+    const plan = await runtime.query(
+      'EXPLAIN (FORMAT JSON) SELECT id FROM fmv.document_events WHERE patient_id=$1 ORDER BY occurred_at DESC,id DESC LIMIT 21',
+      [patient.id],
+    );
+    assert.match(JSON.stringify(plan.rows), /document_events_patient_time/);
+    await runtime.query('ROLLBACK');
+    const before = (
+      await runtime.query(
+        'SELECT count(*) n FROM fmv.document_events WHERE patient_id=$1',
+        [patient.id],
+      )
+    ).rows[0].n;
+    await service.read(principal, patient.id);
+    assert.equal(
+      (
+        await runtime.query(
+          'SELECT count(*) n FROM fmv.document_events WHERE patient_id=$1',
+          [patient.id],
+        )
+      ).rows[0].n,
+      before,
+      'Reading activity does not generate document-view events',
+    );
+    const cursor = (await service.read(principal, patient.id)).nextCursor;
+    await assert.rejects(service.read(delegate, other.id, cursor), status(400));
+    await assert.rejects(
+      runtime.query('DELETE FROM fmv.document_events WHERE patient_id=$1', [
+        patient.id,
+      ]),
+      (e) => e.code === '42501',
+    );
+    await assert.rejects(
+      service.read({ ...principal, subject: randomUUID() }, patient.id),
+      status(404),
+    );
+    const realOwner = service.owner.bind(service);
+    let checks = 0;
+    service.owner = async (...args) => {
+      const result = await realOwner(...args);
+      return ++checks === 2 ? randomUUID() : result;
+    };
+    await assert.rejects(service.read(principal, patient.id), status(404));
+  } finally {
+    await Promise.allSettled([
+      runtime.end(),
+      people.onModuleDestroy(),
+      store.onModuleDestroy(),
+      access.onModuleDestroy(),
+      service.onModuleDestroy(),
+      links.onModuleDestroy(),
+    ]);
+  }
+}

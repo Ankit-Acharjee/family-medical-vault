@@ -1,3 +1,5 @@
+import { AccessActivityController } from '../activity/access-activity.controller.js';
+import { AccessActivityService } from '../activity/access-activity.service.js';
 import {
   ProfileActivationController,
   ActivationClaimController,
@@ -148,6 +150,7 @@ class DisabledAccessStore extends AccessStore {
 
 @Module({
   controllers: [
+    AccessActivityController,
     AuthController,
     PatientsController,
     DocumentsController,
@@ -165,6 +168,11 @@ class DisabledAccessStore extends AccessStore {
     ActivationClaimController,
   ],
   providers: [
+    {
+      provide: AccessActivityService,
+      useFactory: () =>
+        new AccessActivityService(authConfig()?.databaseUrl ?? null),
+    },
     {
       provide: ProfileActivationService,
       useFactory: () =>

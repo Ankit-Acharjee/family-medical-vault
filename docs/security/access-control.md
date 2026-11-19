@@ -112,3 +112,7 @@ An aggregate patient summary requires patient-wide View and current permission f
 ## Approved initial summary export authority — 18 November 2026
 
 Summary export requires patient-wide View and Export and current View and Export for each included source, with the explicit Person owner allowed. Current read permission, a client capability hint or an older generated artifact is insufficient. Recheck source/permission freshness before generation and before serving bytes; preserve independent original-document Export behavior. Downloaded copies are outside future application revocation.
+
+## Approved initial aggregate activity authority — 19 November 2026
+
+Only the explicit Person owner may initially read the aggregate patient document-access activity feed. Delegate activity access is deferred; View, Manage or their combination does not confer this authority. Enforce current ownership server-side before and after disclosure. Ordinary90-day access history remains separate from critical security-event retention and visibility.

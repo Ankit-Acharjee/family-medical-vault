@@ -11,9 +11,9 @@ Activation UI is delivered in 74ae014 on develop; development migrations through
 - Current resource labels may be resolved only from same-patient authorized document registry; never persist historical clinical titles in audit. Prefer safe actor categories (You / authenticated account / anonymous link holder) rather than provider email/subject or unverified identity claims. Do not create recursive document-view events merely by inspecting audit history.
 - UI belongs in existing patient-scoped Family Access/Security Activity, using canonical theme/shared primitives; preserve Overview and all existing workflows. Include loading/empty/error/retry, stale-context abort, denial clearing, safe pagination and focus, desktop/mobile both themes.
 
-## Required policy decision
+## Approved policy
 
-Initial aggregate feed authority is not mapped to View or Manage in canonical rules. Asked whether explicit Person owner only initially, with delegate activity access deferred. Do not expose aggregate activity until answered; no new audit read permission inferred from unrelated grants.
+User approved explicit Person-owner-only initial aggregate activity access on19 November. Delegate activity access remains deferred; no read authority is inferred from View/Manage. Canonical security/access-control.md records this decision. Implementation and verification are recorded in p6-access-activity-report.md.
 
 ## Verification matrix
 
