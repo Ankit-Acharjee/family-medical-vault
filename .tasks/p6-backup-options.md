@@ -1,19 +1,21 @@
-# Independent backup options — researched19 November2026
+# Independent backup options — checked 19 November 2026
 
-Preliminary readiness research, not a provider selection or approval to create resources. Actual account tier, private-bucket permissions, usable capacity, restore costs and a synthetic verification probe must be checked before implementation. No credentials, bucket or paid resource was created.
+Provider comparison only: no accounts, buckets, paid resources or credentials were created. Actual account allowances and usable capacity must be verified before uploads.
 
-| Candidate | Current primary-source evidence | Project consequence |
+| Option | Verified allowance / constraint | Recommendation |
 | --- | --- | --- |
-| Oracle Object Storage | Official Always Free documentation lists20GB combined Standard/Infrequent/Archive for free-only accounts after trial, with50,000 monthly API requests. Paid/trial tier allocations differ; limits must be checked in the user's tenancy/home region. | Potential no-cost independent destination if actual Standard capacity covers the recovery window. Do not assume trial capacity, Archive retrieval behavior or VM availability. |
-| Backblaze B2 | Current official pricing describes S3-compatible storage starting at$6.95/TB/month. The current fetched page did not establish a guaranteed first10GB free allowance. | Independent fallback candidate requiring explicit cost approval; do not recommend as verified free storage based on older articles. |
+| **Backblaze B2** | Official developer documentation offers 10 GB storage free. Its pricing page describes S3-compatible storage and paid usage above allowances. This is an account allowance, not a guarantee for each bucket. | Recommended starting option for a small development vault, subject to capacity and spending-limit checks. Use a private dedicated bucket and verify constrained credentials. |
+| **Oracle Object Storage** | Official Always Free documentation lists 20 GB combined Standard/Infrequent/Archive storage for an eligible free-only account after trial, plus 50,000 monthly API requests. Trial/paid allocations differ. | More storage headroom if the user already has a functioning eligible Oracle tenancy; verify home-region and Standard-tier availability before selecting it. |
 
-Capacity must include every retained recovery set plus database/manifests/encryption overhead. Rough planning only: about13 weekly complete copies of a1GB vault require about13GB before overhead; full-copy retention could therefore exhaust a small free allocation. This is arithmetic, not a prediction of actual stored size. Incremental/deduplicated archives would need their own correctness and restore design.
+A rough capacity example: about 13 weekly full copies of a 1 GB vault need about 13 GB before database, manifests and encryption overhead. A 10 GB free allowance would not cover that example. This is planning arithmetic, not measured project usage. Do not reduce the approved 90-day recovery window to fit a provider quota; fail safely or request a revised storage budget.
 
-Encryption candidate: the established `age` CLI supports public-recipient encryption, streaming via standard input/output and separate private identity files. A proposed runner would receive only a backup-specific public recipient; offline recovery identities and rotation/recovery drills remain separate. Installing/pinning a new tool requires explicit approval; nothing installed and no keys generated. Do not reuse Git SSH or application session keys by default, and do not invent a custom cryptographic protocol.
+**Encryption proposal:** install the standalone `age` **v1.3.2** CLI in the ignored project-local tools directory, with pinned release integrity verification. No frontend/server package dependency or global installation. Use a dedicated backup public recipient on the runner and keep the private recovery identity offline. No keys generated yet; installation requires explicit approval. Encryption alone does not attest who produced a backup: the implementation plan must independently authenticate the completed ciphertext manifest and verify it during recovery.
 
-Primary sources checked:
-- [Oracle Always Free resources](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm), Object and Archive Storage section.
-- [Backblaze B2 pricing](https://www.backblaze.com/cloud-storage/pricing).
-- [age project and usage](https://github.com/FiloSottile/age).
+Sources:
+- [Backblaze developer quickstart — free storage allowance](https://www.backblaze.com/docs/cloud-storage-python-developer-quick-start-guide).
+- [Backblaze B2 pricing — storage and usage costs](https://www.backblaze.com/cloud-storage/pricing).
+- [Oracle Always Free resources — Object and Archive Storage](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm).
+- [Oracle S3 Compatibility API](https://docs.oracle.com/en-us/iaas/Content/Object/Tasks/s3compatibleapi.htm).
+- [age usage and key handling](https://github.com/FiloSottile/age), [pinned v1.3.2 release](https://github.com/FiloSottile/age/releases/tag/v1.3.2).
 
-Destination choice remains pending. If an independent destination already exists, validate that candidate instead of provisioning another service. Scheduler, consistent database/object snapshot, provider Auth recovery, critical-retention governance and stale-backup revocation/deletion reconciliation remain separate release requirements described in p6-backup-readiness.md.
+Pending choices: destination and approval for the new encryption tool. Then guide private account/bucket setup and offline recovery-key custody; separately approve hosted probes, uploads and scheduler activation. See p6-backup-readiness.md for consistency, provider Auth recovery, restore reconciliation and release gates. No restore guarantee or regulatory certification is claimed.
