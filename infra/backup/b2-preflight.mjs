@@ -19,6 +19,7 @@ const readCapabilities = new Set([
   'readBucketReplications',
   'readBucketNotifications',
   'readBucketLogging',
+  'readBucketLifecycleRules',
 ]);
 const object = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const text = (v) =>

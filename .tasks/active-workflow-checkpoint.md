@@ -91,3 +91,8 @@
 - Encryption bootstrap pushed as 0952936. User confirmed empty private B2 development bucket ready.
 - Added dependency-free B2 metadata preflight, 13 passing infra tests, private .env.example fields and updated setup guide. Lint/format/secrets/diff passed. No actual B2 calls or object operations performed; read-key configuration is required next. See p6-b2-destination-preflight-report.md.
 - Ask user to create single-bucket Read Only standard application key and append private BACKUP_B2 settings, keeping BACKUP_ENABLED=false; do not request credential values. Then run node --env-file=.env infra/scripts/check-backup-destination.mjs. Do not infer upload/delete/scheduler approval or claim capacity/recoverability verified.
+
+## B2 hosted metadata verified — 19 November
+- User configured private read key and corrected endpoint protocol. Actual authenticated read-only preflight passed: private single-bucket destination, restricted read key. No object access/write/delete or backup activation occurred; capacity remains unverified.
+- Fixed checker omission of Backblaze's documented readBucketLifecycleRules read capability; regression fixture includes it. Infra13/lint pass. Credentials never printed.
+- Next required gate: select offline recovery-key custody before generating a real age identity or processing real records; authenticated completion and restore design still required.

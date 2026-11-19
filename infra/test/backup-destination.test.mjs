@@ -25,6 +25,7 @@ const auth = () => ({
           'listBuckets',
           'listFiles',
           'readFiles',
+          'readBucketLifecycleRules',
           'readBucketEncryption',
         ],
         namePrefix: null,
