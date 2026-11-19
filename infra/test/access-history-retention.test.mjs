@@ -1,12 +1,23 @@
+import { URL } from 'node:url';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   retentionConfig,
   retainOrdinaryAccess,
 } from '../scripts/access-history-retention.mjs';
+// Deliberately fake, configuration-only fixtures: no network or .env reads.
+// Use explicit non-secret fields instead of realistic credentialed URI literals.
+function fixtureUrl(base, username) {
+  const url = new URL(base);
+  url.username = username;
+  url.password = 'synthetic';
+  return url.href;
+}
 const local = {
-  DATABASE_MAINTENANCE_URL:
-    'postgresql://fmv_owner:synthetic@127.0.0.1:5544/fmv_dev?schema=fmv',
+  DATABASE_MAINTENANCE_URL: fixtureUrl(
+    'postgresql://127.0.0.1:5544/fmv_dev?schema=fmv',
+    'fmv_owner',
+  ),
 };
 test('ordinary retention defaults to dry-run and requires an exact development target and apply confirmation', () => {
   assert.equal(retentionConfig(['--target=local'], local).apply, false);
@@ -27,9 +38,9 @@ test('ordinary retention defaults to dry-run and requires an exact development t
   ])
     assert.throws(() => retentionConfig(args, local));
   for (const connection of [
-    'postgresql://fmv_owner:synthetic@localhost:5544/fmv_dev',
-    'postgresql://fmv_app:synthetic@127.0.0.1:5544/fmv_dev',
-    'postgresql://fmv_owner:synthetic@127.0.0.1:5544/production',
+    fixtureUrl('postgresql://localhost:5544/fmv_dev', 'fmv_owner'),
+    fixtureUrl('postgresql://127.0.0.1:5544/fmv_dev', 'fmv_app'),
+    fixtureUrl('postgresql://127.0.0.1:5544/production', 'fmv_owner'),
   ])
     assert.throws(() =>
       retentionConfig(['--target=local'], {
@@ -43,8 +54,10 @@ test('ordinary retention defaults to dry-run and requires an exact development t
   );
 });
 test('hosted configuration rejects wrong projects, insecure TLS and relative certificates', () => {
-  const value =
-      'postgresql://postgres.nyjkrcznezyrgntwvpjj:synthetic@aws-0-ap-south-1.pooler.supabase.com:5432/postgres?schema=fmv&sslmode=verify-full&sslrootcert=/synthetic/ca.crt',
+  const value = fixtureUrl(
+      'postgresql://aws-0-ap-south-1.pooler.supabase.com:5432/postgres?schema=fmv&sslmode=verify-full&sslrootcert=/synthetic/ca.crt',
+      'postgres.nyjkrcznezyrgntwvpjj',
+    ),
     args = ['--target=nyjkrcznezyrgntwvpjj'];
   assert.equal(
     retentionConfig(args, { DATABASE_MAINTENANCE_URL: value }).local,
