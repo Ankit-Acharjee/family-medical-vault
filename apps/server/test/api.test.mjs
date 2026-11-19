@@ -54,6 +54,11 @@ test('OpenAPI documents implemented health, authentication, patient and vault ro
         path.startsWith('/api/auth/') ||
         path.startsWith('/api/patients') ||
         path.startsWith('/api/access/') ||
+        [
+          '/api/profile-activation/inspect',
+          '/api/profile-activation/claim',
+          '/api/profile-activation/status',
+        ].includes(path) ||
         ['/api/sharing/open', '/api/sharing/original'].includes(path),
     ),
   );

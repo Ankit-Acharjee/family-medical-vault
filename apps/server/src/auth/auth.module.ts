@@ -1,3 +1,8 @@
+import {
+  ProfileActivationController,
+  ActivationClaimController,
+} from '../identity/profile-activation.controller.js';
+import { ProfileActivationService } from '../identity/profile-activation.service.js';
 import { ManagedProfilesService } from '../identity/managed-profiles.service.js';
 import { EmergencyProfileController } from '../emergency/emergency-profile.controller.js';
 import { EmergencyProfileService } from '../emergency/emergency-profile.service.js';
@@ -156,8 +161,15 @@ class DisabledAccessStore extends AccessStore {
     TemporaryLinksController,
     RecipientController,
     EmergencyProfileController,
+    ProfileActivationController,
+    ActivationClaimController,
   ],
   providers: [
+    {
+      provide: ProfileActivationService,
+      useFactory: () =>
+        new ProfileActivationService(authConfig()?.databaseUrl ?? null),
+    },
     {
       provide: ManagedProfilesService,
       useFactory: () =>

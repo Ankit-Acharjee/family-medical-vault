@@ -45,6 +45,8 @@ export class PrismaPersonStore extends PersonStore implements OnModuleDestroy {
         SELECT id FROM fmv.app_accounts WHERE issuer = ${issuer} AND subject = ${subject}`;
         const account = accounts[0];
         if (!account) throw new Error('Identity transaction failed');
+        // Shared with activation approval: serialize personal onboarding against ownership linkage.
+        await db.$queryRaw`SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtextextended(${'identity-account:' + account.id},0))`;
         await db.$executeRaw`INSERT INTO fmv.persons (id, owner_account_id, display_name)
         VALUES (${randomUUID()}::uuid, ${account.id}::uuid, ${displayName})
         ON CONFLICT (owner_account_id) DO NOTHING`;

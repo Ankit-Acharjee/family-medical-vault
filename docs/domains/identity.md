@@ -40,3 +40,7 @@
 ## Approved initial managed-profile creation authority — 18 November 2026
 
 A verified user with an existing personal Person may create a private managed Person without login credentials and receive explicit patient-wide View, Upload, Edit, Export and Manage grants. The creator remains a caregiver, not that Person's owner. Existing owner-only clinical verification, emergency-profile editing and external-link issuance remain unavailable until activation establishes ownership under its separately defined policy. Do not infer guardian clinical authority, public exposure or automatic identity merging from these caregiver grants.
+
+## Approved initial activation authority and identity safeguards — 19 November 2026
+
+Only the original managed-profile creator, while retaining current patient-wide View and Manage, may initially issue, approve or revoke activation links. Other delegates' Manage grants do not transfer Person ownership. A verified authenticated claimant must claim the expiring single-use activation link; possession alone grants no ownership or record access. Require distinct explicit issuer approval of that claimant before ownership changes. Claimants already owning a personal Person are deferred for identity review, without automatic merging, moving originals or replacing Person IDs. Activation preserves the managed Person and its records; the creator remains a caregiver under current explicit grants afterward.
