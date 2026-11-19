@@ -5,8 +5,12 @@ import {
 } from '@nestjs/common';
 import type { OnModuleDestroy } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { isAccessActivity, isActivityCursor } from '@fmv/contracts';
-import type { AccessActivityEvent } from '@fmv/contracts';
+import {
+  isAccessActivity,
+  isActivityCursor,
+  isSecurityChanges,
+} from '@fmv/contracts';
+import type { AccessActivityEvent, SecurityChangeEvent } from '@fmv/contracts';
 import { PrismaClient } from '../generated/prisma/client.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import type { Principal } from '../identity/person.store.js';
@@ -19,6 +23,7 @@ type Cursor = { patientId: string; at: string; source: string; id: string };
 export function decodeActivityCursor(
   value: unknown,
   patientId: string,
+  sources: readonly string[] = ['document', 'shared-link'],
 ): Cursor | null {
   if (value === undefined) return null;
   if (!isActivityCursor(value)) throw new BadRequestException();
@@ -33,7 +38,7 @@ export function decodeActivityCursor(
       c.patientId !== patientId ||
       !isUuid(c.id) ||
       c.id !== c.id.toLowerCase() ||
-      !['document', 'shared-link'].includes(c.source) ||
+      !sources.includes(c.source) ||
       typeof c.at !== 'string' ||
       !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(c.at) ||
       new Date(c.at).toISOString() !== c.at
@@ -135,6 +140,87 @@ export class AccessActivityService implements OnModuleDestroy {
                 : null,
           };
           if (!isAccessActivity(result))
+            throw new ServiceUnavailableException();
+          if ((await this.owner(db, principal, p)) !== actor)
+            throw new NotFoundException();
+          return result;
+        },
+        { maxWait: 5000, timeout: 15000 },
+      );
+    } catch (e) {
+      if (e instanceof NotFoundException || e instanceof BadRequestException)
+        throw e;
+      throw new ServiceUnavailableException();
+    }
+  }
+  async readChanges(
+    principal: Principal,
+    patientId: string,
+    cursor: unknown = undefined,
+  ) {
+    if (!isUuid(patientId)) throw new NotFoundException();
+    const p = patientId.toLowerCase(),
+      before = decodeActivityCursor(cursor, p, [
+        'grant',
+        'link-created',
+        'link-revoked',
+      ]);
+    if (!this.db) throw new ServiceUnavailableException();
+    try {
+      return await this.db.$transaction(
+        async (db) => {
+          await db.$executeRaw`SET LOCAL statement_timeout='8s'`;
+          await lockAccessPatient(db, p);
+          const actor = await this.owner(db, principal, p);
+          // Critical changes stay outside the ordinary-access purge and90-day window.
+          // Grant/link identity is resolved within the current owned patient only.
+          const rows = await db.$queryRaw<
+            (Omit<SecurityChangeEvent, 'recordedAt'> & { recordedAt: Date })[]
+          >`
+      WITH events AS (
+        (SELECT e.id,'grant'::text AS source,e.kind,
+          CASE WHEN e.actor_account_id=${actor}::uuid THEN 'you' ELSE 'authenticated-account' END AS actor,
+          e.occurred_at AS "recordedAt",
+          CASE g.scope_kind WHEN 'patient' THEN 'Whole-patient access' WHEN 'category' THEN 'Category access' ELSE 'Document access' END AS "resourceLabel"
+        FROM fmv.access_events e JOIN fmv.access_grants g ON g.id=e.grant_id AND g.patient_id=e.patient_id
+        WHERE e.patient_id=${p}::uuid AND e.kind IN ('grant.created','grant.revoked') AND e.occurred_at<=statement_timestamp()
+          AND (${before?.at ?? null}::timestamptz IS NULL OR (e.occurred_at,'grant'::text,e.id)<(${before?.at ?? null}::timestamptz,${before?.source ?? ''}::text,${before?.id ?? null}::uuid))
+        ORDER BY e.occurred_at DESC,e.id DESC LIMIT 21)
+        UNION ALL
+        (SELECT id,'link-created'::text AS source,'link.created'::text AS kind,
+          CASE WHEN creator_account_id=${actor}::uuid THEN 'you' ELSE 'authenticated-account' END AS actor,
+          created_at AS "recordedAt",'Selected originals'::text AS "resourceLabel"
+        FROM fmv.temporary_links WHERE patient_id=${p}::uuid AND created_at<=statement_timestamp()
+          AND (${before?.at ?? null}::timestamptz IS NULL OR (created_at,'link-created'::text,id)<(${before?.at ?? null}::timestamptz,${before?.source ?? ''}::text,${before?.id ?? null}::uuid))
+        ORDER BY created_at DESC,id DESC LIMIT 21)
+        UNION ALL
+        (SELECT id,'link-revoked'::text AS source,'link.revoked'::text AS kind,
+          CASE WHEN revoker_account_id=${actor}::uuid THEN 'you' ELSE 'authenticated-account' END AS actor,
+          revoked_at AS "recordedAt",'Selected originals'::text AS "resourceLabel"
+        FROM fmv.temporary_links WHERE patient_id=${p}::uuid AND revoked_at IS NOT NULL AND revoker_account_id IS NOT NULL AND revoked_at<=statement_timestamp()
+          AND (${before?.at ?? null}::timestamptz IS NULL OR (revoked_at,'link-revoked'::text,id)<(${before?.at ?? null}::timestamptz,${before?.source ?? ''}::text,${before?.id ?? null}::uuid))
+        ORDER BY revoked_at DESC,id DESC LIMIT 21)
+      ) SELECT * FROM events ORDER BY "recordedAt" DESC,source DESC,id DESC LIMIT 21`;
+          const events = rows
+              .slice(0, 20)
+              .map((e) => ({ ...e, recordedAt: e.recordedAt.toISOString() })),
+            last = events.at(-1);
+          const result = {
+            patientId: p,
+            events,
+            nextCursor:
+              rows.length > 20 && last
+                ? Buffer.from(
+                    JSON.stringify({
+                      patientId: p,
+                      at: last.recordedAt,
+                      source: last.source,
+                      id: last.id,
+                    }),
+                  ).toString('base64url')
+                : null,
+          };
+          if (!isSecurityChanges(result))
             throw new ServiceUnavailableException();
           if ((await this.owner(db, principal, p)) !== actor)
             throw new NotFoundException();

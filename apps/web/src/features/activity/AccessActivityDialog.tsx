@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { isAccessActivity } from '@fmv/contracts';
-import type { AccessActivity } from '@fmv/contracts';
+import { isAccessActivity, isSecurityChanges } from '@fmv/contracts';
+import type { AccessActivity, SecurityChanges } from '@fmv/contracts';
 import { Eye, Download, Link, ShieldCheck } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import {
@@ -16,6 +16,10 @@ const labels = {
   'document.exported': 'Original accessed for export',
   'link.opened': 'Shared selection opened',
   'original.accessed': 'Shared original accessed',
+  'grant.created': 'Access grant created',
+  'grant.revoked': 'Access grant revoked',
+  'link.created': 'Sharing link created',
+  'link.revoked': 'Sharing link revoked',
 };
 const actors = {
   you: 'You',
@@ -25,10 +29,12 @@ const actors = {
 export function AccessActivityDialog({
   patientId,
   patientName,
+  security = false,
   enabled,
   onClose,
   onRestoreFocus,
 }: {
+  security?: boolean;
   enabled: boolean;
   patientId: string;
   patientName: string;
@@ -39,7 +45,7 @@ export function AccessActivityDialog({
     [attempt, setAttempt] = useState(0),
     [state, setState] = useState<
       | { phase: 'loading' | 'failed' | 'denied' }
-      | { phase: 'ready'; value: AccessActivity }
+      | { phase: 'ready'; value: AccessActivity | SecurityChanges }
     >({ phase: 'loading' });
   const generation = useRef(0),
     heading = useRef<HTMLHeadingElement>(null),
@@ -83,13 +89,15 @@ export function AccessActivityDialog({
       if (generation.current === version) setState({ phase: 'failed' });
     }, 15000);
     void manualJson(
-      `/api/patients/${encodeURIComponent(patientId)}/access-activity${cursor ? '?cursor=' + encodeURIComponent(cursor) : ''}`,
+      `/api/patients/${encodeURIComponent(patientId)}/${security ? 'security-changes' : 'access-activity'}${cursor ? '?cursor=' + encodeURIComponent(cursor) : ''}`,
       abort.signal,
     )
       .then((value) => {
+        const valid: (v: unknown) => v is AccessActivity | SecurityChanges =
+          security ? isSecurityChanges : isAccessActivity;
         if (abort.signal.aborted || version !== generation.current) return;
         if (
-          !isAccessActivity(value) ||
+          !valid(value) ||
           value.patientId !== patientId ||
           (value.nextCursor !== null && value.nextCursor === cursor)
         )
@@ -111,7 +119,7 @@ export function AccessActivityDialog({
       abort.abort();
       window.clearTimeout(timer);
     };
-  }, [patientId, cursor, attempt, enabled]);
+  }, [patientId, cursor, attempt, enabled, security]);
   const value = state.phase === 'ready' ? state.value : null;
   return (
     <Dialog
@@ -128,16 +136,24 @@ export function AccessActivityDialog({
         }}
       >
         <DialogHeader>
-          <DialogTitle>Document access history</DialogTitle>
+          <DialogTitle>
+            {security
+              ? 'Grant and sharing activity'
+              : 'Document access history'}
+          </DialogTitle>
           <DialogDescription>
-            Patient: {patientName}. Ordinary access events from the last 90
-            days. Owner access only.
+            Patient: {patientName}.{' '}
+            {security
+              ? 'Access grants and sharing-link changes, separate from ordinary document access.'
+              : 'Ordinary access events from the last 90 days.'}{' '}
+            Owner access only.
           </DialogDescription>
         </DialogHeader>
         <p className="flex items-start gap-2 text-sm text-muted-foreground">
           <ShieldCheck size={18} className="shrink-0" aria-hidden="true" />
-          Activity records access, not proof that a downloaded copy was saved.
-          Critical security history is separate.
+          {security
+            ? 'These are recorded grant and sharing changes. This list does not include every account or clinical event.'
+            : 'Activity records access, not proof that a downloaded copy was saved. Critical security history is separate.'}
         </p>
         {!enabled || state.phase === 'loading' ? (
           <p role="status">Checking activity access…</p>
@@ -163,14 +179,19 @@ export function AccessActivityDialog({
               {value.events.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   {cursor
-                    ? 'No earlier events remain in the retention window.'
-                    : 'No ordinary document access is recorded in the last 90 days.'}
+                    ? security
+                      ? 'No earlier grant or sharing changes are recorded.'
+                      : 'No earlier events remain in the retention window.'
+                    : security
+                      ? 'No grant or sharing changes are recorded.'
+                      : 'No ordinary document access is recorded in the last 90 days.'}
                 </p>
               ) : (
                 <ol className="divide-y divide-border">
                   {value.events.map((event) => {
-                    const Icon =
-                      event.kind === 'document.viewed'
+                    const Icon = event.kind.startsWith('grant.')
+                      ? ShieldCheck
+                      : event.kind === 'document.viewed'
                         ? Eye
                         : event.kind === 'document.exported'
                           ? Download
@@ -190,7 +211,8 @@ export function AccessActivityDialog({
                             {labels[event.kind]}
                           </p>
                           <p className="text-sm text-muted-foreground">
-                            {actors[event.actor]} · Access recorded
+                            {actors[event.actor]} ·{' '}
+                            {security ? 'Change recorded' : 'Access recorded'}
                           </p>
                           <time
                             dateTime={event.recordedAt}
@@ -199,9 +221,10 @@ export function AccessActivityDialog({
                             {new Date(event.recordedAt).toLocaleString()}
                           </time>
                           <p className="break-words text-xs text-muted-foreground">
-                            {event.documentId
-                              ? event.documentLabel
-                              : 'Selected shared documents'}
+                            {'resourceLabel' in event
+                              ? event.resourceLabel
+                              : (event.documentLabel ??
+                                'Selected shared documents')}
                           </p>
                         </div>
                       </li>

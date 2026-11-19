@@ -26,27 +26,40 @@ function Entry({
   patientId: string;
   patientName: string;
 }) {
-  const [open, setOpen] = useState(false),
+  const [open, setOpen] = useState<'ordinary' | 'security' | null>(null),
     trigger = useRef<HTMLButtonElement>(null);
   return (
-    <div className="my-4">
+    <div className="my-4 flex flex-wrap gap-3">
       <Button
         disabled={!enabled}
         variant="outline"
         onClick={(event) => {
           trigger.current = event.currentTarget;
-          setOpen(true);
+          setOpen('ordinary');
         }}
       >
         <History size={18} aria-hidden="true" />
         Document access history
       </Button>
+      <Button
+        variant="outline"
+        disabled={!enabled}
+        onClick={(event) => {
+          trigger.current = event.currentTarget;
+          setOpen('security');
+        }}
+      >
+        <History size={18} aria-hidden="true" />
+        Grant and sharing activity
+      </Button>
       {open && (
         <AccessActivityDialog
+          security={open === 'security'}
+          key={open}
           enabled={enabled}
           patientId={patientId}
           patientName={patientName}
-          onClose={() => setOpen(false)}
+          onClose={() => setOpen(null)}
           onRestoreFocus={() => {
             if (trigger.current?.isConnected) trigger.current.focus();
             else document.getElementById('main-content')?.focus();

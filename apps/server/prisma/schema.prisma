@@ -253,6 +253,7 @@ model AccessEvent {
   actor          AppAccount   @relation(fields: [actorAccountId], references: [id], onDelete: Restrict)
   grant          AccessGrant? @relation(fields: [grantId], references: [id], onDelete: Restrict)
 
+  @@index([patientId, occurredAt(sort: Desc), id(sort: Desc)], map: "access_events_patient_time")
   @@map("access_events")
   @@schema("fmv")
 }
@@ -639,6 +640,7 @@ model TemporaryLink {
  accessEvents TemporaryLinkAccessEvent[]
  @@unique([patientId,requestId])
  @@index([patientId,createdAt(sort:Desc),id],map:"temporary_links_patient")
+ @@index([patientId,revokedAt(sort:Desc),id(sort:Desc)],map:"temporary_links_revoked")
  @@map("temporary_links")
  @@schema("fmv")
 }

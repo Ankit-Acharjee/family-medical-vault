@@ -2,7 +2,11 @@ import { Buffer } from 'node:buffer';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { isAccessActivity, isActivityCursor } from '@fmv/contracts';
+import {
+  isAccessActivity,
+  isActivityCursor,
+  isSecurityChanges,
+} from '@fmv/contracts';
 import {
   AccessActivityService,
   decodeActivityCursor,
@@ -104,3 +108,67 @@ test('activity unavailable database fails closed without exposing diagnostic tex
     (e) => e.getStatus() === 404,
   );
 });
+
+test('security change contracts and cursors stay separate from ordinary access', () => {
+  const patientId = randomUUID(),
+    event = {
+      id: randomUUID(),
+      source: 'grant',
+      kind: 'grant.created',
+      actor: 'you',
+      recordedAt: new Date().toISOString(),
+      resourceLabel: 'Whole-patient access',
+    },
+    page = { patientId, events: [event], nextCursor: null };
+  assert.ok(isSecurityChanges(page));
+  assert.equal(isAccessActivity(page), false);
+  for (const patch of [
+    { kind: 'document.viewed' },
+    { source: 'link-created' },
+    { actor: 'anonymous-link-holder' },
+    { resourceLabel: 'x'.repeat(241) },
+    { secret: 'no' },
+  ])
+    assert.equal(
+      isSecurityChanges({ ...page, events: [{ ...event, ...patch }] }),
+      false,
+    );
+  const cursor = Buffer.from(
+    JSON.stringify({
+      patientId,
+      at: event.recordedAt,
+      source: event.source,
+      id: event.id,
+    }),
+  ).toString('base64url');
+  assert.throws(
+    () => decodeActivityCursor(cursor, patientId),
+    (e) => e.getStatus() === 400,
+  );
+  assert.equal(
+    decodeActivityCursor(cursor, patientId, [
+      'grant',
+      'link-created',
+      'link-revoked',
+    ]).source,
+    'grant',
+  );
+});
+test('security change route uses the existing verified-session boundary and strict query', async () =>
+  documentSetup(async (f) => {
+    const service = f.app.get(AccessActivityService);
+    let count = 0;
+    service.readChanges = async () => {
+      count++;
+      return { synthetic: true };
+    };
+    const path = f.path('security-changes');
+    assert.equal((await f.request('GET', path)).status, 401);
+    const session = await f.login();
+    assert.equal((await f.request('GET', path, session)).status, 200);
+    assert.equal(
+      (await f.request('GET', path + '?kind=anything', session)).status,
+      400,
+    );
+    assert.equal(count, 1);
+  }));

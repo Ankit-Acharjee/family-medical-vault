@@ -64,3 +64,49 @@ export function isAccessActivity(v: unknown): v is AccessActivity {
     (v.nextCursor === null || v.events.length === 20)
   );
 }
+
+export type SecurityChangeEvent = {
+  id: string;
+  source: 'grant' | 'link-created' | 'link-revoked';
+  kind: 'grant.created' | 'grant.revoked' | 'link.created' | 'link.revoked';
+  actor: 'you' | 'authenticated-account';
+  recordedAt: string;
+  resourceLabel: string;
+};
+export type SecurityChanges = {
+  patientId: string;
+  events: SecurityChangeEvent[];
+  nextCursor: string | null;
+};
+export function isSecurityChanges(v: unknown): v is SecurityChanges {
+  return (
+    object(v) &&
+    Object.keys(v).length === 3 &&
+    uuid(v.patientId) &&
+    (v.nextCursor === null || isActivityCursor(v.nextCursor)) &&
+    Array.isArray(v.events) &&
+    v.events.length <= 20 &&
+    v.events.every(
+      (e) =>
+        object(e) &&
+        Object.keys(e).length === 6 &&
+        uuid(e.id) &&
+        ['you', 'authenticated-account'].includes(e.actor as string) &&
+        typeof e.recordedAt === 'string' &&
+        /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(e.recordedAt) &&
+        Number.isFinite(Date.parse(e.recordedAt)) &&
+        new Date(e.recordedAt).toISOString() === e.recordedAt &&
+        typeof e.resourceLabel === 'string' &&
+        Array.from(e.resourceLabel).length > 0 &&
+        Array.from(e.resourceLabel).length <= 240 &&
+        (e.source === 'grant'
+          ? ['grant.created', 'grant.revoked'].includes(e.kind as string)
+          : e.source === 'link-created'
+            ? e.kind === 'link.created'
+            : e.source === 'link-revoked' && e.kind === 'link.revoked'),
+    ) &&
+    new Set(v.events.map((e) => e.source + ':' + e.id)).size ===
+      v.events.length &&
+    (v.nextCursor === null || v.events.length === 20)
+  );
+}

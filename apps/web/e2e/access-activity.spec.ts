@@ -35,6 +35,43 @@ async function setup(page: Page, owner = true) {
         ],
       });
     if (path.endsWith('/access')) return json({ grants: [], invitations: [] });
+    if (path.endsWith('/security-changes')) {
+      calls++;
+      expect(req.method()).toBe('GET');
+      if (mode === 'denied') return json({}, 404);
+      if (mode === 'failed') return json({}, 503);
+      if (mode === 'empty')
+        return json({ patientId: patient, events: [], nextCursor: null });
+      if (mode === 'mismatch')
+        return json({ patientId: doc, events: [], nextCursor: null });
+      if (url.searchParams.has('cursor'))
+        return json({
+          patientId: patient,
+          events: [
+            {
+              id: '33333333-3333-4333-8333-333333333333',
+              source: 'link-revoked',
+              kind: 'link.revoked',
+              actor: 'you',
+              recordedAt: '2026-01-01T00:00:00.000Z',
+              resourceLabel: 'Selected originals',
+            },
+          ],
+          nextCursor: null,
+        });
+      return json({
+        patientId: patient,
+        events: Array.from({ length: 20 }, (_, i) => ({
+          id: `55555555-5555-4555-8555-${String(i).padStart(12, '0')}`,
+          source: 'grant',
+          kind: i % 2 ? 'grant.revoked' : 'grant.created',
+          actor: i % 3 ? 'you' : 'authenticated-account',
+          recordedAt: '2026-11-19T01:00:00.000Z',
+          resourceLabel: 'Whole-patient access',
+        })),
+        nextCursor: 'syntheticsecuritycursor',
+      });
+    }
     if (path.endsWith('/access-activity')) {
       calls++;
       expect(req.method()).toBe('GET');
@@ -237,4 +274,86 @@ test('wrong-patient response fails closed and 320px viewport remains scrollable'
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
+});
+
+test('security changes use a separate owner-only feed with both-theme accessible pagination', async ({
+  page,
+}, info) => {
+  const f = await setup(page);
+  await page
+    .getByRole('button', { name: 'Grant and sharing activity', exact: true })
+    .click();
+  await expect(
+    dialog(page).getByRole('heading', { name: 'Recent activity', exact: true }),
+  ).toBeVisible();
+  await expect(
+    dialog(page).getByText('Access grant created', { exact: true }),
+  ).toHaveCount(10);
+  await expect(dialog(page).getByText(/last 90 days/)).toHaveCount(0);
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(
+      (t) => (document.documentElement.dataset.theme = t),
+      theme,
+    );
+    await dialog(page).evaluate((el) => {
+      el.scrollTop = 0;
+    });
+    await page.screenshot({
+      path: `/Users/ankitacharjee/personal/Project/family-medical-vault/.local/screenshots/security-changes-${info.project.name}-${theme}.png`,
+    });
+    expect(
+      (await new AxeBuilder({ page }).include('[role="dialog"]').analyze())
+        .violations,
+    ).toEqual([]);
+  }
+  await dialog(page)
+    .getByRole('button', { name: 'Earlier activity', exact: true })
+    .click();
+  await expect(
+    dialog(page).getByText('Sharing link revoked', { exact: true }),
+  ).toBeVisible();
+  await expect(
+    dialog(page).getByRole('heading', {
+      name: 'Earlier activity',
+      exact: true,
+    }),
+  ).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(
+    page.getByRole('button', {
+      name: 'Grant and sharing activity',
+      exact: true,
+    }),
+  ).toBeFocused();
+  expect(f.errors).toEqual([]);
+});
+test('security change retries and refresh denial remove prior grant history', async ({
+  page,
+}) => {
+  const f = await setup(page);
+  f.mode('failed');
+  await page
+    .getByRole('button', { name: 'Grant and sharing activity', exact: true })
+    .click();
+  await expect(dialog(page).getByRole('alert')).toContainText(
+    'could not be loaded',
+  );
+  f.mode('empty');
+  await dialog(page).getByRole('button', { name: 'Try history again' }).click();
+  await expect(
+    dialog(page).getByText('No grant or sharing changes are recorded.'),
+  ).toBeVisible();
+  f.mode('ok');
+  await dialog(page).getByRole('button', { name: 'Refresh history' }).click();
+  await expect(
+    dialog(page).getByText('Access grant created', { exact: true }),
+  ).toHaveCount(10);
+  f.mode('denied');
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(dialog(page).getByRole('alert')).toContainText(
+    'unavailable for your current access',
+  );
+  await expect(
+    dialog(page).getByText('Access grant created', { exact: true }),
+  ).toHaveCount(0);
 });

@@ -1,3 +1,4 @@
+import { CaregiverService } from '../../dist/access/caregiver.service.js';
 import { retainOrdinaryAccess } from '../../../../infra/scripts/access-history-retention.mjs';
 import { Buffer } from 'node:buffer';
 import assert from 'node:assert/strict';
@@ -316,6 +317,86 @@ export async function verifyAccessActivity(runtimeUrl, owner) {
     const again = await retainOrdinaryAccess(owner, { apply: true });
     assert.equal(again.documentAccess, 0);
     assert.equal(again.anonymousLinkAccess, 0);
+
+    service.owner = realOwner;
+    const grant = (
+      await runtime.query(
+        'SELECT id FROM fmv.access_grants WHERE patient_id=$1 AND grantee_account_id=$2',
+        [patient.id, reader],
+      )
+    ).rows[0].id;
+    const caregiverService = new CaregiverService(runtimeUrl.href);
+    try {
+      await caregiverService.revoke(principal, patient.id, grant);
+    } finally {
+      await caregiverService.onModuleDestroy();
+    }
+    await links.revoke(principal, patient.id, share.link.id);
+    const securityIds = [];
+    for (let i = 0; i < 24; i++) {
+      const id = randomUUID();
+      securityIds.push(id);
+      await owner.query(
+        "INSERT INTO fmv.access_events(id,patient_id,actor_account_id,kind,grant_id,occurred_at) VALUES($1,$2,$3,'grant.created',$4,$5)",
+        [id, patient.id, i % 2 ? actor : reader, grant, old],
+      );
+    }
+    let changes = await service.readChanges(principal, patient.id),
+      changed = [...changes.events],
+      pages = 0;
+    assert.equal(changes.events.length, 20);
+    while (changes.nextCursor) {
+      assert.ok(++pages < 5);
+      changes = await service.readChanges(
+        principal,
+        patient.id,
+        changes.nextCursor,
+      );
+      changed.push(...changes.events);
+    }
+    assert.equal(
+      changed.filter((e) => securityIds.includes(e.id)).length,
+      24,
+      'Critical events older than90 days remain visible separately',
+    );
+    for (const kind of [
+      'grant.created',
+      'grant.revoked',
+      'link.created',
+      'link.revoked',
+    ])
+      assert.ok(changed.some((e) => e.kind === kind));
+    assert.equal(
+      new Set(changed.map((e) => e.source + e.id)).size,
+      changed.length,
+    );
+    assert.ok(!JSON.stringify(changed).includes(share.token));
+    assert.ok(!JSON.stringify(changed).includes('private title'));
+    await assert.rejects(
+      service.readChanges(delegate, patient.id),
+      status(404),
+    );
+    await assert.rejects(service.readChanges(principal, other.id), status(404));
+    await retainOrdinaryAccess(owner, { apply: true });
+    assert.equal(
+      (
+        await owner.query(
+          'SELECT count(*)::int n FROM fmv.access_events WHERE id=ANY($1::uuid[])',
+          [securityIds],
+        )
+      ).rows[0].n,
+      24,
+    );
+    let securityChecks = 0;
+    service.owner = async (...args) => {
+      const id = await realOwner(...args);
+      return ++securityChecks === 2 ? randomUUID() : id;
+    };
+    await assert.rejects(
+      service.readChanges(principal, patient.id),
+      status(404),
+    );
+    service.owner = realOwner;
   } finally {
     await Promise.allSettled([
       runtime.end(),
