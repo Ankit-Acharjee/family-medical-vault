@@ -17,9 +17,34 @@ In **B2 Cloud Storage → Buckets → Create a Bucket**:
 
 These steps follow [Backblaze's bucket guide](https://www.backblaze.com/docs/cloud-storage-create-and-manage-buckets). No real records should be manually uploaded during setup.
 
-## 3. Stop at bucket ready
+## 3. Bucket-restricted read key
 
-Reply **“bucket ready”**. Do not send keys, passwords, account IDs or screenshots containing credentials. Application-key scope and private local configuration will be configured when the destination adapter is ready. The integration will use a standard bucket-restricted application key, not the master key; see [B2 application-key documentation](https://www.backblaze.com/docs/cloud-storage-application-keys).
+The bucket is ready. In **B2 Cloud Storage → Application Keys → Add a New Application Key**:
+
+- Name it `fmv-backup-dev-read`.
+- Restrict **Allow access to buckets** to this development backup bucket, never All.
+- Choose **Read Only**. This key is for metadata checks and later read verification, not backup writes or deletion.
+- Set the file-name prefix to `fmv-backups/v1/development/` (or leave it empty initially).
+- Leave **Allow list all bucket names** unchecked: this preflight uses the Native API with an explicit bucket filter, not S3 List Buckets.
+- Create the standard application key. Save the **keyID** and one-time **applicationKey** directly in private local configuration. Do not use the master key or send either value in chat.
+
+These controls follow [B2 application keys](https://www.backblaze.com/docs/cloud-storage-application-keys). The [bucket-list API](https://www.backblaze.com/apidocs/b2-list-buckets) supports a restricted key when the selected bucket is specified explicitly.
+
+## 4. Private local configuration
+
+Append the following settings to the existing repository-root `.env`, replacing placeholders locally. **Do not overwrite the existing file or change R2/source settings.**
+
+```dotenv
+BACKUP_ENABLED=false
+BACKUP_B2_BUCKET=replace_with_your_private_bucket_name
+BACKUP_B2_ENDPOINT=replace_with_the_actual_https_s3_endpoint
+BACKUP_B2_READ_KEY_ID=replace_with_keyID
+BACKUP_B2_READ_APPLICATION_KEY=replace_with_applicationKey
+```
+
+Run `chmod 600 .env` from the repository root, then reply **“configured”**. Do not paste values. The agent can then run `node --env-file=.env infra/scripts/check-backup-destination.mjs` during the active session.
+
+The preflight authenticates only to official B2 API hosts, verifies one private bucket and a bucket-restricted read-only key, and reports value-free flags. It does not list/download objects, upload/delete files, enable backups or prove sufficient capacity. Master/multi-bucket/write-capable keys, public buckets, unexpected redirects and mismatched endpoints fail closed. Writer/retention credentials and real recovery-key custody remain separate setup steps.
 
 The account/bucket setup does not establish that 90 days of recovery points fit. A rough planning example is about 13 GB for 13 weekly full copies of a 1 GB vault, before database and encryption overhead. Capacity and spending behavior must be checked before enabling uploads; the retention window will not be shortened silently.
 
