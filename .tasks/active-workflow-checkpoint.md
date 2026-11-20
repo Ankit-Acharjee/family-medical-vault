@@ -101,3 +101,8 @@
 - User has no password manager/offline USB and explicitly deferred recovery-key custody. Real backups remain disabled; no real age identity or archive generated.
 - BACKUP-02 pure retention planning foundation prepared: authenticated caller-supplied metadata only, rolling90-day age candidates, no snapshot cap, incomplete records excluded, no deletion execution. See p6-backup-retention-planner-report.md. No cloud or app changes.
 - Next independent slice: value-free weekly backup freshness evaluation, no notifier/scheduler activation. Actual backup execution remains gated on custody/authenticated manifests/consistent snapshots/restore reconciliation.
+
+## Independent backup foundations verified — 20 November
+- Advisory retention planner committed/pushed93e288a. No cloud deletion/execution or recovery-point authentication is provided by that pure module.
+- Weekly freshness evaluator prepared and tested: missing/current/overdue from latest caller-authenticated verified completion; failed/incomplete work cannot mask stale backups. Value-free output, no alert sending/scheduler. Infra21/lint/format/secrets/diff gates passed. See p6-backup-freshness-report.md.
+- User deferred private recovery-key custody; do not repeatedly request it or enable real backups. B2 private single-bucket read-only metadata verification passed earlier. No real backup/recovery point exists. Remaining BACKUP delivery requires consistent snapshot/object capture, authenticated completion format, independent deletion/revocation reconciliation and isolated restore; these must not be claimed complete by local planning helpers. Future work may use synthetic-only recovery fixtures without creating real recovery keys or cloud writes.
