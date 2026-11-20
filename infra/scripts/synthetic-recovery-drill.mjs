@@ -8,6 +8,11 @@ import path from 'node:path';
 import { URL } from 'node:url';
 import { Buffer } from 'node:buffer';
 import { captureOriginals } from '../backup/capture-originals.mjs';
+import {
+  encodeBackupCompletion,
+  verifySignedBackupCompletion,
+} from '../backup/completion-manifest.mjs';
+import { backupSignatureNamespace } from '../backup/verify-signature.mjs';
 import console from 'node:console';
 import { withTool } from '../ci/tools.mjs';
 const { Client } = createRequire(
@@ -167,6 +172,69 @@ export async function verifySyntheticRecovery({
       const recipient = command(keygen, ['-y', identity]);
       const encrypted = path.join(temporary, 'synthetic-database.dump.age');
       command(age, ['-r', recipient, '-o', encrypted, database]);
+      const signingKey = path.join(
+        path.dirname(age),
+        'synthetic-recovery-signing-key',
+      );
+      command('/usr/bin/ssh-keygen', [
+        '-q',
+        '-t',
+        'ed25519',
+        '-N',
+        '',
+        '-C',
+        'synthetic',
+        '-f',
+        signingKey,
+      ]);
+      const trustedPublicKey = command('/usr/bin/ssh-keygen', [
+        '-y',
+        '-f',
+        signingKey,
+      ])
+        .split(/\s+/)
+        .slice(0, 2)
+        .join(' ');
+      const ciphertext = await readFile(encrypted);
+      const expectedSetId = randomUUID().replaceAll('-', '');
+      const measured = { bytes: ciphertext.length, sha256: hash(ciphertext) };
+      const manifest = encodeBackupCompletion({
+        format: 'fmv-encrypted-recovery-v1',
+        environment: 'development',
+        setId: expectedSetId,
+        completedAt: Date.now(),
+        ciphertextBytes: measured.bytes,
+        ciphertextSha256: measured.sha256,
+      });
+      const signature = Buffer.from(
+        command(
+          '/usr/bin/ssh-keygen',
+          ['-Y', 'sign', '-f', signingKey, '-n', backupSignatureNamespace],
+          { input: manifest },
+        ) + '\n',
+      );
+      const receipt = {
+        manifest,
+        signature,
+        trustedPublicKey,
+        expectedSetId,
+        observedCiphertext: measured,
+        now: Date.now(),
+      };
+      assert.equal(
+        (await verifySignedBackupCompletion(receipt)).setId,
+        expectedSetId,
+      );
+      const changed = Buffer.from(ciphertext);
+      changed[changed.length - 1] ^= 1;
+      await assert.rejects(
+        verifySignedBackupCompletion({
+          ...receipt,
+          observedCiphertext: { bytes: changed.length, sha256: hash(changed) },
+        }),
+        /^Error: Backup completion validation failed$/,
+      );
+
       const expected = hash(await readFile(database));
       const encryptedOriginal = path.join(temporary, 'synthetic-original.age');
       command(age, ['-r', recipient, '-o', encryptedOriginal, originalFile]);
@@ -318,6 +386,7 @@ export async function verifySyntheticRecovery({
         syntheticDatabaseRoundTrip: true,
         concurrentSnapshotIsolation: true,
         encryptedDumpRoundTrip: true,
+        signedCiphertextReceiptVerified: true,
         tableAclAndRlsPreserved: true,
         foreignKeysEnforced: true,
         providerSchemaExcluded: true,

@@ -1,0 +1,9 @@
+# BACKUP-01/04 — Signed ciphertext in the synthetic recovery drill
+
+The native disposable recovery drill now signs an actual age-encrypted database dump's metadata-only completion receipt with a fresh ephemeral Ed25519 signing key, verifies it against the separately held expected set ID/public key and actual ciphertext byte count/SHA-256, and rejects a modified ciphertext measurement under the otherwise valid signature. This integrates the completion helpers with real dump/encryption/restore operations rather than only artificial receipt bytes.
+
+The signing identity is separate from the synthetic decryption identity; both are temporary. System OpenSSH's public-key output may include a comment, so the trusted synthetic producer output is normalized to its key type and key blob before calling the strict verifier. Arbitrary caller-supplied signer text is not relaxed. An isolated diagnostic confirmed the platform's three-field output and successful normalized verification. No real GitHub SSH key, backup recovery identity or cloud credential is used.
+
+The drill still proves a database snapshot plus one selected original fixture only. It does not publish a complete backup or prove recovery of all originals/Auth, current independent revocation evidence, latest-state authenticity or a safe production reopen. No real producer key, cloud upload, scheduled job or source-data write is enabled.
+
+Corrected native integration rerun passed: all 28 database lifecycle tests plus real exported-snapshot/encrypted database/selected-original/signed-receipt recovery checks. Also passed 29 infra tests, lint, formatting, secret detection and diff checks. Disposable cluster and synthetic identities were cleaned up. Supervisor implementation/review; no worker completion claimed. See p6-independent-ledger-boundary.md for the next restore-safety policy and trust gates.
