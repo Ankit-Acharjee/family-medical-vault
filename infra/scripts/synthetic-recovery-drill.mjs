@@ -1,0 +1,282 @@
+// Invoked only inside test-db-native's disposable cluster. No cloud or .env input.
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { createHash, randomUUID } from 'node:crypto';
+import { readFile, writeFile, rm } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import path from 'node:path';
+import { URL } from 'node:url';
+import console from 'node:console';
+import { withTool } from '../ci/tools.mjs';
+const { Client } = createRequire(
+  new URL('../../apps/server/package.json', import.meta.url),
+)('pg');
+const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+export async function verifySyntheticRecovery({
+  bin,
+  temporary,
+  port,
+  ownerPassword,
+  appPassword,
+}) {
+  assert.ok(Number.isInteger(port) && port >= 1024 && port < 65536);
+  assert.match(path.basename(temporary), /^fmv-db-verification-/);
+  const passfile = path.join(temporary, 'recovery.pgpass');
+  await writeFile(
+    passfile,
+    `127.0.0.1:${port}:*:fmv_owner:${ownerPassword}\n`,
+    { mode: 0o600, flag: 'wx' },
+  );
+  const command = (binary, args, extra = {}) => {
+    const r = spawnSync(binary, args, {
+      encoding: 'utf8',
+      timeout: 60000,
+      maxBuffer: 1024 * 1024,
+      env: { PATH: '/usr/bin:/bin', TMPDIR: temporary, PGPASSFILE: passfile },
+      ...extra,
+    });
+    assert.ok(
+      !r.error && r.status === 0,
+      'Synthetic recovery command must succeed (output suppressed)',
+    );
+    return r.stdout.trim();
+  };
+  const client = (database, user = 'fmv_owner', password = ownerPassword) =>
+    new Client({
+      host: '127.0.0.1',
+      port,
+      database,
+      user,
+      password,
+      connectionTimeoutMillis: 5000,
+    });
+  const source = client('fmv_dev');
+  let restored, runtime;
+  try {
+    await source.connect();
+    await source.query('CREATE SCHEMA synthetic_provider_excluded');
+    await source.query(
+      'CREATE TABLE synthetic_provider_excluded.must_not_restore(id integer)',
+    );
+    const inventory = async (db) => {
+      const tables = (
+        await db.query(
+          "SELECT relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='fmv' AND c.relkind='r' ORDER BY relname",
+        )
+      ).rows;
+      assert.ok(tables.length > 20);
+      const result = [];
+      for (const { relname } of tables) {
+        assert.match(relname, /^[a-z_]+$/);
+        const rows = (
+          await db.query(
+            `SELECT to_jsonb(t)::text AS data FROM fmv."${relname}" t ORDER BY to_jsonb(t)::text COLLATE "C"`,
+          )
+        ).rows;
+        const acl = (
+          await db.query(
+            "SELECT c.relacl::text, c.relrowsecurity, c.relforcerowsecurity FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='fmv' AND c.relname=$1",
+            [relname],
+          )
+        ).rows[0];
+        result.push({
+          table: relname,
+          count: rows.length,
+          digest: hash(rows.map((r) => r.data).join('\n')),
+          acl,
+        });
+      }
+      return result;
+    };
+    await source.query(
+      'CREATE TABLE fmv.recovery_snapshot_probe(id integer PRIMARY KEY)',
+    );
+    await source.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const snapshot = (
+      await source.query('SELECT pg_export_snapshot() AS snapshot')
+    ).rows[0].snapshot;
+    assert.match(snapshot, /^[0-9A-F-]+$/);
+    const laterWriter = client('fmv_dev');
+    try {
+      await laterWriter.connect();
+      await laterWriter.query(
+        'INSERT INTO fmv.recovery_snapshot_probe(id) VALUES(1)',
+      );
+    } finally {
+      await laterWriter.end();
+    }
+    const before = await inventory(source);
+    assert.ok(
+      before.find((t) => t.table === '_prisma_migrations')?.count >= 32,
+    );
+    assert.ok(before.find((t) => t.table === 'documents')?.count > 0);
+    const database = path.join(temporary, 'synthetic-database.dump');
+    command(path.join(bin, 'pg_dump'), [
+      '-h',
+      '127.0.0.1',
+      '-p',
+      String(port),
+      '-U',
+      'fmv_owner',
+      '-d',
+      'fmv_dev',
+      '--schema=fmv',
+      '--snapshot',
+      snapshot,
+      '--format=custom',
+      '--no-owner',
+      '--file',
+      database,
+    ]);
+    await source.query('COMMIT');
+    await withTool('age', async (age) => {
+      const keygen = path.join(path.dirname(age), 'age-keygen');
+      const identity = path.join(
+        path.dirname(age),
+        'synthetic-restore-identity',
+      );
+      command(keygen, ['-o', identity]);
+      const recipient = command(keygen, ['-y', identity]);
+      const encrypted = path.join(temporary, 'synthetic-database.dump.age');
+      command(age, ['-r', recipient, '-o', encrypted, database]);
+      const expected = hash(await readFile(database));
+      await rm(database);
+      command(age, ['-d', '-i', identity, '-o', database, encrypted]);
+      assert.equal(
+        hash(await readFile(database)),
+        expected,
+        'Recovered dump integrity must match',
+      );
+    });
+    await source.query('CREATE DATABASE fmv_restore_test');
+    command(path.join(bin, 'pg_restore'), [
+      '-h',
+      '127.0.0.1',
+      '-p',
+      String(port),
+      '-U',
+      'fmv_owner',
+      '-d',
+      'fmv_restore_test',
+      '--exit-on-error',
+      '--single-transaction',
+      '--no-owner',
+      database,
+    ]);
+    restored = client('fmv_restore_test');
+    await restored.connect();
+    assert.deepEqual(
+      await inventory(restored),
+      before,
+      'All synthetic table data, migration history and runtime table ACL/RLS must round-trip',
+    );
+    assert.equal(
+      (
+        await restored.query(
+          "SELECT to_regnamespace('synthetic_provider_excluded') IS NULL AS absent",
+        )
+      ).rows[0].absent,
+      true,
+    );
+    assert.equal(
+      (
+        await source.query(
+          'SELECT count(*)::integer AS n FROM fmv.recovery_snapshot_probe',
+        )
+      ).rows[0].n,
+      1,
+    );
+    assert.equal(
+      (
+        await restored.query(
+          'SELECT count(*)::integer AS n FROM fmv.recovery_snapshot_probe',
+        )
+      ).rows[0].n,
+      0,
+      'Post-snapshot writes must not enter the dump',
+    );
+    const invalid = randomUUID();
+    await assert.rejects(
+      restored.query(
+        'INSERT INTO fmv.persons(id,owner_account_id,display_name) VALUES($1,$2,$3)',
+        [invalid, randomUUID(), 'SYNTHETIC invalid foreign key'],
+      ),
+      (e) => e.code === '23503',
+    );
+    runtime = client('fmv_restore_test', 'fmv_app', appPassword);
+    await runtime.connect();
+    await assert.rejects(
+      runtime.query('CREATE TABLE fmv.forbidden_restore_probe(id integer)'),
+      (e) => e.code === '42501',
+    );
+    await assert.rejects(
+      runtime.query('DELETE FROM fmv.persons'),
+      (e) => e.code === '42501',
+    );
+    assert.ok(
+      (await runtime.query('SELECT count(*)::integer AS n FROM fmv.persons'))
+        .rows[0].n > 0,
+    );
+    // Demonstrate the stale-snapshot hazard: later revocation is absent from a dump.
+    // This is a synthetic evidence fixture, not an independent hosted ledger.
+    const active = (
+      await source.query(
+        'SELECT id FROM fmv.access_grants WHERE revoked_at IS NULL LIMIT 1',
+      )
+    ).rows[0];
+    assert.ok(
+      active,
+      'Synthetic suite must leave a grant for stale-restore testing',
+    );
+    const revokedAt = new Date();
+    await source.query(
+      'UPDATE fmv.access_grants SET revoked_at=$2 WHERE id=$1',
+      [active.id, revokedAt],
+    );
+    assert.equal(
+      (
+        await restored.query(
+          'SELECT revoked_at FROM fmv.access_grants WHERE id=$1',
+          [active.id],
+        )
+      ).rows[0].revoked_at,
+      null,
+    );
+    // Reopening a real service must stay gated until separately trusted evidence is reconciled.
+    await restored.query(
+      'UPDATE fmv.access_grants SET revoked_at=$2 WHERE id=$1 AND revoked_at IS NULL',
+      [active.id, revokedAt],
+    );
+    assert.ok(
+      (
+        await restored.query(
+          'SELECT revoked_at IS NOT NULL AS denied FROM fmv.access_grants WHERE id=$1',
+          [active.id],
+        )
+      ).rows[0].denied,
+    );
+    console.log(
+      JSON.stringify({
+        syntheticDatabaseRoundTrip: true,
+        concurrentSnapshotIsolation: true,
+        encryptedDumpRoundTrip: true,
+        tableAclAndRlsPreserved: true,
+        foreignKeysEnforced: true,
+        providerSchemaExcluded: true,
+        staleRevocationDemonstrated: true,
+        syntheticReconciliationApplied: true,
+        productionRestoreApproved: false,
+        originalsRecoveryVerified: false,
+      }),
+    );
+  } catch {
+    throw new Error(
+      'Synthetic recovery drill failed; database contents and credentials suppressed',
+    );
+  } finally {
+    for (const db of [runtime, restored, source])
+      if (db) await db.end().catch(() => {});
+    await rm(passfile, { force: true });
+  }
+}

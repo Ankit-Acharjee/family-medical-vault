@@ -1,6 +1,7 @@
 // Optional disposable verification using an already-installed PostgreSQL binary.
 // Never reads project/cloud credentials or touches a retained database cluster.
 import { spawnSync } from 'node:child_process';
+import { verifySyntheticRecovery } from './synthetic-recovery-drill.mjs';
 import { randomBytes } from 'node:crypto';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
@@ -94,6 +95,13 @@ try {
   );
   if (result.error || result.status !== 0)
     throw new Error('Disposable database checks failed');
+  await verifySyntheticRecovery({
+    bin,
+    temporary,
+    port,
+    ownerPassword,
+    appPassword,
+  });
 } finally {
   if (started) command('pg_ctl', ['-D', data, '-m', 'fast', '-w', 'stop']);
   await rm(temporary, { recursive: true, force: true });
