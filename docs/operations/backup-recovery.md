@@ -46,3 +46,7 @@
 **Requirement:** Monitor quota, failed uploads, missed/failed backups and critical security events without storing medical content in telemetry.
 
 **Acceptance check:** Operator receives actionable failures without medical data disclosure.
+
+## Approved restore-safety evidence retention — 20 November 2026
+
+Retain encrypted deletion/revocation evidence while any affected backup could restore the superseded data or access. Automatic deletion of this evidence remains disabled until a separate critical-event retention policy is approved. This is a minimum restore-safety rule, not a statutory retention period or authority to erase primary records. The existing 90-day ordinary-access-event policy and 90-day backup retention remain separate. This approval does not activate hosted ledger writes, Object Lock, backups, purges or restored services.

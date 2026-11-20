@@ -15,6 +15,10 @@ import {
 import { backupSignatureNamespace } from '../backup/verify-signature.mjs';
 import console from 'node:console';
 import { withTool } from '../ci/tools.mjs';
+import {
+  prepareSyntheticEvidenceFixture,
+  verifySyntheticEvidenceReconciliation,
+} from './synthetic-evidence-reconciliation.mjs';
 const { Client } = createRequire(
   new URL('../../apps/server/package.json', import.meta.url),
 )('pg');
@@ -62,6 +66,13 @@ export async function verifySyntheticRecovery({
   let restored, runtime;
   try {
     await source.connect();
+    const selectedBytes = Buffer.from(
+      '%PDF-1.7\nSYNTHETIC activity fixture\n%%EOF',
+    );
+    const evidenceFixture = await prepareSyntheticEvidenceFixture(
+      source,
+      selectedBytes,
+    );
     await source.query('CREATE SCHEMA synthetic_provider_excluded');
     await source.query(
       'CREATE TABLE synthetic_provider_excluded.must_not_restore(id integer)',
@@ -113,13 +124,10 @@ export async function verifySyntheticRecovery({
     } finally {
       await laterWriter.end();
     }
-    const selectedBytes = Buffer.from(
-      '%PDF-1.7\nSYNTHETIC activity fixture\n%%EOF',
-    );
     const selectedReference = (
       await source.query(
-        `SELECT id AS "documentId",object_key AS "objectKey",bytes,sha256 FROM fmv.documents WHERE sha256=$1 AND state='ready' AND deleted_at IS NULL LIMIT 1`,
-        [hash(selectedBytes)],
+        `SELECT id AS "documentId",object_key AS "objectKey",bytes,sha256 FROM fmv.documents WHERE id=$1 AND state='ready' AND deleted_at IS NULL`,
+        [evidenceFixture.documentId],
       )
     ).rows[0];
     assert.ok(
@@ -343,46 +351,16 @@ export async function verifySyntheticRecovery({
       (await runtime.query('SELECT count(*)::integer AS n FROM fmv.persons'))
         .rows[0].n > 0,
     );
-    // Demonstrate the stale-snapshot hazard: later revocation is absent from a dump.
-    // This is a synthetic evidence fixture, not an independent hosted ledger.
-    const active = (
-      await source.query(
-        'SELECT id FROM fmv.access_grants WHERE revoked_at IS NULL LIMIT 1',
-      )
-    ).rows[0];
-    assert.ok(
-      active,
-      'Synthetic suite must leave a grant for stale-restore testing',
-    );
-    const revokedAt = new Date();
-    await source.query(
-      'UPDATE fmv.access_grants SET revoked_at=$2 WHERE id=$1',
-      [active.id, revokedAt],
-    );
-    assert.equal(
-      (
-        await restored.query(
-          'SELECT revoked_at FROM fmv.access_grants WHERE id=$1',
-          [active.id],
-        )
-      ).rows[0].revoked_at,
-      null,
-    );
-    // Reopening a real service must stay gated until separately trusted evidence is reconciled.
-    await restored.query(
-      'UPDATE fmv.access_grants SET revoked_at=$2 WHERE id=$1 AND revoked_at IS NULL',
-      [active.id, revokedAt],
-    );
-    assert.ok(
-      (
-        await restored.query(
-          'SELECT revoked_at IS NOT NULL AS denied FROM fmv.access_grants WHERE id=$1',
-          [active.id],
-        )
-      ).rows[0].denied,
-    );
+    const evidenceResult = await verifySyntheticEvidenceReconciliation({
+      source,
+      restored,
+      port,
+      appPassword,
+      fixture: evidenceFixture,
+    });
     console.log(
       JSON.stringify({
+        ...evidenceResult,
         syntheticDatabaseRoundTrip: true,
         concurrentSnapshotIsolation: true,
         encryptedDumpRoundTrip: true,

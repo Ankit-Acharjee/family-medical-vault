@@ -1,6 +1,6 @@
 # DEL-03 — Independent restore-safety ledger boundary
 
-Status: design/readiness only. The user is being asked whether encrypted deletion/revocation evidence must remain while any affected backup exists, with automatic evidence deletion disabled until a separate critical-event retention policy is approved. No retention duration, statutory basis, hosted write, Object Lock setting or purge authority is inferred.
+Status: retention rule approved by the user on 20 November 2026: encrypted deletion/revocation evidence must remain while any affected backup exists, with automatic evidence deletion disabled until a separate critical-event retention policy is approved. Storage/receipt implementation and hosted activation are still pending. No retention duration, statutory basis, hosted write, Object Lock setting or purge authority is inferred.
 
 ## Necessary evidence
 
@@ -18,4 +18,4 @@ Only opaque event/resource identities, exact lifecycle/version, transition kind,
 
 ## Remaining integration gates
 
-Define protected storage/receipt trust and source-loss behavior; obtain the retention decision; provision separate constrained write credentials; test out-of-order delivery, missing tail, overwritten/hidden versions, database loss, rollback and failed reconciliation; then seek concrete hosted-write approval. No real ledger, producer signing key or hosted write exists yet.
+Define protected storage/receipt trust and source-loss behavior; provision separate constrained write credentials; test out-of-order delivery, missing tail, overwritten/hidden versions, database loss, rollback and failed reconciliation; then seek concrete hosted-write approval. No real ledger, producer signing key or hosted write exists yet.
