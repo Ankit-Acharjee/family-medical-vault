@@ -1,0 +1,7 @@
+# BACKUP-01/03 — Signed completion validation
+
+Defined a strict, provider-independent development completion receipt containing only format/environment, opaque recovery-set ID, completion time and encrypted-payload byte length/SHA-256. Fixed-order UTF-8 JSON rejects duplicate keys, extra/private fields and ambiguous serializations. Standard SSH signature verification precedes interpretation; acceptance additionally requires an independently selected expected set ID, nonfuture completion time and exact caller-measured ciphertext size/hash.
+
+Inputs are copied before asynchronous verification to prevent caller-side mutation races. No source filename, patient ID, plaintext digest, medical content or storage credentials belong in this public receipt. No signing key, cloud writer or publication marker is created. The expected ID/trust key must not be taken solely from the untrusted backup. This does not establish latest-backup freshness, source completeness, capacity, key-rotation safety or restore reconciliation; all remain separate gates.
+
+Actual system OpenSSH tests accept a matching receipt and reject wrong set, future timestamp, wrong size/hash, tampered or invalid signature, signed malformed/extra/duplicate-field JSON and signed noncanonical bytes. No real key or record used. Verification: 29 infra tests, lint, formatting, secret detection and diff checks pass. Supervisor implementation/review, no worker review claimed.
