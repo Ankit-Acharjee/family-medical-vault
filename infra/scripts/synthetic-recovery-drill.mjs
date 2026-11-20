@@ -6,6 +6,8 @@ import { readFile, writeFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { URL } from 'node:url';
+import { Buffer } from 'node:buffer';
+import { captureOriginals } from '../backup/capture-originals.mjs';
 import console from 'node:console';
 import { withTool } from '../ci/tools.mjs';
 const { Client } = createRequire(
@@ -106,6 +108,31 @@ export async function verifySyntheticRecovery({
     } finally {
       await laterWriter.end();
     }
+    const selectedBytes = Buffer.from(
+      '%PDF-1.7\nSYNTHETIC activity fixture\n%%EOF',
+    );
+    const selectedReference = (
+      await source.query(
+        `SELECT id AS "documentId",object_key AS "objectKey",bytes,sha256 FROM fmv.documents WHERE sha256=$1 AND state='ready' AND deleted_at IS NULL LIMIT 1`,
+        [hash(selectedBytes)],
+      )
+    ).rows[0];
+    assert.ok(
+      selectedReference,
+      'The synthetic activity original must exist in the snapshot',
+    );
+    const originalFile = path.join(temporary, 'synthetic-original.bin');
+    const capture = await captureOriginals([selectedReference], {
+      maxObjectBytes: selectedBytes.length,
+      maxTotalBytes: selectedBytes.length,
+      read: async (key) => {
+        assert.equal(key, selectedReference.objectKey);
+        return selectedBytes;
+      },
+      write: async (_reference, bytes) =>
+        writeFile(originalFile, bytes, { mode: 0o600, flag: 'wx' }),
+    });
+    assert.equal(capture.capturedObjects, 1);
     const before = await inventory(source);
     assert.ok(
       before.find((t) => t.table === '_prisma_migrations')?.count >= 32,
@@ -141,6 +168,17 @@ export async function verifySyntheticRecovery({
       const encrypted = path.join(temporary, 'synthetic-database.dump.age');
       command(age, ['-r', recipient, '-o', encrypted, database]);
       const expected = hash(await readFile(database));
+      const encryptedOriginal = path.join(temporary, 'synthetic-original.age');
+      command(age, ['-r', recipient, '-o', encryptedOriginal, originalFile]);
+      await rm(originalFile);
+      command(age, [
+        '-d',
+        '-i',
+        identity,
+        '-o',
+        originalFile,
+        encryptedOriginal,
+      ]);
       await rm(database);
       command(age, ['-d', '-i', identity, '-o', database, encrypted]);
       assert.equal(
@@ -196,6 +234,25 @@ export async function verifySyntheticRecovery({
       0,
       'Post-snapshot writes must not enter the dump',
     );
+    const recoveredReference = (
+      await restored.query(
+        'SELECT id AS "documentId",object_key AS "objectKey",bytes,sha256 FROM fmv.documents WHERE id=$1',
+        [selectedReference.documentId],
+      )
+    ).rows[0];
+    assert.deepEqual(recoveredReference, selectedReference);
+    const recoveredOriginal = await readFile(originalFile);
+    const recoveredCapture = await captureOriginals([recoveredReference], {
+      maxObjectBytes: selectedBytes.length,
+      maxTotalBytes: selectedBytes.length,
+      read: async (key) => {
+        assert.equal(key, selectedReference.objectKey);
+        return recoveredOriginal;
+      },
+      write: async (_reference, bytes) =>
+        assert.deepEqual(bytes, selectedBytes),
+    });
+    assert.equal(recoveredCapture.capturedObjects, 1);
     const invalid = randomUUID();
     await assert.rejects(
       restored.query(
@@ -267,6 +324,7 @@ export async function verifySyntheticRecovery({
         staleRevocationDemonstrated: true,
         syntheticReconciliationApplied: true,
         productionRestoreApproved: false,
+        selectedSyntheticOriginalRecovered: true,
         originalsRecoveryVerified: false,
       }),
     );

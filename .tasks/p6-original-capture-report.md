@@ -1,0 +1,9 @@
+# BACKUP-01/03/04 — Matching original capture foundation
+
+Added a provider-independent sequential capture helper. It takes a bounded inventory from the caller's consistent database snapshot, rejects duplicate document/key identities and invalid metadata or exceeded caller-supplied byte budgets before any reads, and checks exact size plus SHA-256 before handing original bytes to a private writer. It copies input metadata/bytes, returns only counts, supports cancellation and suppresses provider error details. Missing/corrupt/truncated objects, partial failure or writer failure cannot return successful capture. A partial output must never become a published recovery point.
+
+Extended the actual native encrypted recovery drill with one known synthetic PDF whose registry row is selected from the exported database snapshot. Its exact bytes are captured, separately age-encrypted/decrypted, and checked again against the restored document ID, object key, length and digest. This proves one selected synthetic original, not restoration of every object represented by the larger synthetic database fixture.
+
+This helper has no cloud credentials, directory traversal/extraction, network client, publication marker or deletion authority. Callers must use bounded readers, private encrypted output, authenticated completion receipts, an object-retention/consistency fence and independent restore verification. It does not authenticate snapshot provenance or activate uploads. No real recovery key or record is used in the drill. Full originals/Auth recovery and independently protected deletion/revocation reconciliation remain release gates.
+
+Validation: all 26 infra tests, 28 native database lifecycle tests plus actual selected-original/snapshot/encrypted-restore drill, lint, formatting, secret detection and diff checks passed. Temporary cluster and synthetic identities cleaned up. Supervisor implementation/review; no external model completion claimed.
