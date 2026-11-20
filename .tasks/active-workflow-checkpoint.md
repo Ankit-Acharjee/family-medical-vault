@@ -96,3 +96,8 @@
 - User configured private read key and corrected endpoint protocol. Actual authenticated read-only preflight passed: private single-bucket destination, restricted read key. No object access/write/delete or backup activation occurred; capacity remains unverified.
 - Fixed checker omission of Backblaze's documented readBucketLifecycleRules read capability; regression fixture includes it. Infra13/lint pass. Credentials never printed.
 - Next required gate: select offline recovery-key custody before generating a real age identity or processing real records; authenticated completion and restore design still required.
+
+## Backup custody deferred; independent local work — 20 November
+- User has no password manager/offline USB and explicitly deferred recovery-key custody. Real backups remain disabled; no real age identity or archive generated.
+- BACKUP-02 pure retention planning foundation prepared: authenticated caller-supplied metadata only, rolling90-day age candidates, no snapshot cap, incomplete records excluded, no deletion execution. See p6-backup-retention-planner-report.md. No cloud or app changes.
+- Next independent slice: value-free weekly backup freshness evaluation, no notifier/scheduler activation. Actual backup execution remains gated on custody/authenticated manifests/consistent snapshots/restore reconciliation.

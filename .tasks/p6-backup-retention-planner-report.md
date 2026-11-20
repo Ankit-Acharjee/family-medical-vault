@@ -1,0 +1,7 @@
+# BACKUP-02 — Local retention planning foundation
+
+Implemented a pure, provider-independent planner for authenticated recovery-point metadata. Verified points strictly older than 90 days are expiration candidates; the exact cutoff remains retained. No eight-snapshot cap is used. Incomplete points are classified separately and never treated as verified recovery points or automatic deletion candidates. Input is bounded and rejects duplicates, future timestamps, extra fields and invalid identifiers without echoing metadata. Ordering is deterministic and inputs are unchanged.
+
+The planner has no credentials, network, filesystem deletion, scheduler or provider adapter. It cannot authenticate a completion manifest or authorize deletion. Callers must supply independently authenticated completion evidence; currently no production caller exists. It does not silently retain an expired last point under an invented exception. An advisory candidate list alone must never trigger deletion. Real capacity, key custody, manifest authenticity, restore reconciliation and separately approved hosted writes remain gates.
+
+Verification: 17 infrastructure tests, lint, formatting, secret detection and diff checks. Synthetic tests cover exact millisecond boundary, more than eight retained points, incomplete/empty histories, deterministic ties, expired-only histories and invalid/sparse/oversized input. No application, API, database or UI changes. Supervisor implementation/review; quota-limited workers not retried.
