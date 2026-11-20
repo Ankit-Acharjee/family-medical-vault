@@ -1,0 +1,9 @@
+# BACKUP-01/03 — Authenticated completion signature foundation
+
+Added bounded verification of exact manifest bytes using standard OpenSSH detached signatures and the already installed /usr/bin/ssh-keygen. Only a caller-provided independently trusted Ed25519 public key and the fixed fmv-backup identity/backup-completion namespace are accepted. Private temporary allowed-signers/signature files are removed; manifest bytes go through stdin, provider credentials are not inherited and tool output is suppressed. No custom cryptographic primitive or new dependency is introduced.
+
+Actual synthetic signing/verification tests reject changed bytes, wrong signer/key, wrong namespace, malformed signature, injected signer lines, oversized inputs and incorrect input types. Both test signing identities are ephemeral and removed. No GitHub login SSH key, real recovery identity or producer signing key is read or created. The implementation follows the standard OpenSSH ssh-keygen -Y sign/verify format documented at https://man.openbsd.org/ssh-keygen.
+
+A verified signature authenticates bytes to the configured key only: manifest schema, expected recovery-set identity, anti-rollback/freshness, encrypted object receipts, database/file completeness and restore safety must still be validated. A public key fetched solely from the same untrusted backup cannot establish trust. Producer-key provisioning, independently pinned trust/rotation and cloud activation are not implemented or authorized by this test-only foundation. No actual backup completion is published.
+
+Validation: 27 infra tests with actual system OpenSSH operations, lint, formatting, secret detection and diff checks pass. Supervisor implementation/review; no external worker completion claimed. No app, UI, API, database schema or hosted-service changes.
