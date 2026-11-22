@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { URL } from 'node:url';
+import { inspectLedgerVersionMetadata } from './ledger-version-metadata.mjs';
 export class BackupDestinationError extends Error {}
 const fail = () =>
   new BackupDestinationError(
@@ -80,7 +81,7 @@ export function backupDestinationConfig(env) {
     throw fail();
   }
 }
-async function json(response) {
+async function json(response, maximumBytes = 65536) {
   if (response.status !== 200 || !response.body) throw fail();
   const reader = response.body.getReader(),
     chunks = [];
@@ -90,7 +91,7 @@ async function json(response) {
       const next = await reader.read();
       if (next.done) break;
       size += next.value.byteLength;
-      if (size > 65536) throw fail();
+      if (size > maximumBytes) throw fail();
       chunks.push(Buffer.from(next.value));
     }
     return JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -108,7 +109,9 @@ async function checkPrivateDestination(config, fetcher, policy) {
     BACKUP_B2_READ_KEY_ID: config?.keyId,
     BACKUP_B2_READ_APPLICATION_KEY: config?.applicationKey,
   });
-  const signal = globalThis.AbortSignal.timeout(15000);
+  const signal = globalThis.AbortSignal.timeout(
+    policy.discoverVersions ? 30000 : 15000,
+  );
   try {
     const auth = await json(
       await fetcher(
@@ -200,7 +203,42 @@ async function checkPrivateDestination(config, fetcher, policy) {
     )
       throw fail();
     signal.throwIfAborted();
+    let versionMetadata;
+    if (policy.discoverVersions) {
+      versionMetadata = await inspectLedgerVersionMetadata(
+        async (cursor) =>
+          json(
+            await fetcher(api + '/b2api/v4/b2_list_file_versions', {
+              method: 'POST',
+              redirect: 'error',
+              credentials: 'omit',
+              cache: 'no-store',
+              signal,
+              headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                Authorization: auth.authorizationToken,
+              },
+              body: JSON.stringify({
+                bucketId: selected.id,
+                prefix: 'fmv-restore-evidence/v1/development/',
+                maxFileCount: 100,
+                ...cursor,
+              }),
+            }),
+            8 * 1024 * 1024,
+          ),
+        {
+          accountId: auth.accountId,
+          bucketId: selected.id,
+          prefix: 'fmv-restore-evidence/v1/development/',
+          signal,
+        },
+      );
+    }
+    signal.throwIfAborted();
     return {
+      ...versionMetadata,
       destination: 'backblaze-b2',
       privateBucket: true,
       singleBucketReadKey: true,
@@ -248,10 +286,7 @@ export function restoreLedgerDestinationConfig(env) {
   }
 }
 
-export async function checkRestoreLedgerDestination(
-  config,
-  fetcher = globalThis.fetch,
-) {
+async function checkLedgerDestination(config, fetcher, discoverVersions) {
   try {
     if (
       !bucketName(config?.backupBucket) ||
@@ -262,8 +297,22 @@ export async function checkRestoreLedgerDestination(
     const result = await checkPrivateDestination(config, fetcher, {
       prefixes: ['fmv-restore-evidence/v1/development/'],
       noLifecycleRules: true,
+      discoverVersions,
     });
     return {
+      ...(discoverVersions
+        ? {
+            versionPaginationExhausted: result.versionPaginationExhausted,
+            pagesRead: result.pagesRead,
+            versionMetadataCount: result.versionMetadataCount,
+            uploadedVersions: result.uploadedVersions,
+            hideMarkers: result.hideMarkers,
+            unfinishedVersions: result.unfinishedVersions,
+            immutableHistoryVerified: false,
+            consistentSnapshotVerified: false,
+            recoverySafetyVerified: false,
+          }
+        : {}),
       destination: result.destination,
       privateBucket: true,
       singleBucketReadKey: true,
@@ -276,4 +325,17 @@ export async function checkRestoreLedgerDestination(
   } catch {
     throw fail();
   }
+}
+
+export function checkRestoreLedgerDestination(
+  config,
+  fetcher = globalThis.fetch,
+) {
+  return checkLedgerDestination(config, fetcher, false);
+}
+export function checkRestoreLedgerVersionDiscovery(
+  config,
+  fetcher = globalThis.fetch,
+) {
+  return checkLedgerDestination(config, fetcher, true);
 }

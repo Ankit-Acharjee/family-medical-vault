@@ -41,3 +41,11 @@ BACKUP_LEDGER_B2_READ_APPLICATION_KEY=replace_with_applicationKey
 The endpoint needs `https://` even if the B2 dashboard omits it. Use the actual displayed S3 endpoint without the bucket name/path. Keep the existing `BACKUP_ENABLED=false` too. Run `chmod 600 .env`, then reply **“ledger configured.”**
 
 The agent can run `node --env-file=.env infra/scripts/check-restore-ledger-destination.mjs`. It verifies distinct private bucket, restricted Read Only access and an explicit empty lifecycle-rule list. Missing/hidden lifecycle metadata, any configured lifecycle rule, source-bucket/key reuse, broad/write/admin capabilities and unrestricted/wrong prefixes fail closed. Output contains only verification flags. It performs no object listing/download/upload/deletion and does not prove immutable storage, sufficient capacity or actual restore readiness. Producer keys, complete version discovery, signing trust and hosted writes remain later gates.
+
+## Read-only version-metadata readiness
+
+After private-bucket verification, `node --env-file=.env infra/scripts/check-restore-ledger-versions.mjs` checks the same bucket/key/prefix again and scans matching version metadata through the [Native version-list API](https://www.backblaze.com/apidocs/b2-list-file-versions). It includes hide markers, older versions and unfinished uploads rather than assuming the newest filename represents the current ledger.
+
+The scan is bounded to 100 pages of at most 100 entries, a 30-second operation deadline and an 8 MiB maximum version-page response; authorization/bucket responses retain the tighter 64 KiB limit. Scope mismatch, duplicate IDs, malformed/stuck cursors, unknown actions, provider errors, budget exhaustion or cancellation fail without partial-success flags. Console output contains only counts/flags, never names, IDs, tokens or file contents.
+
+`versionPaginationExhausted` means only that the API returned a terminal cursor within this scan. Listings are not atomic: concurrent inserts or previously deleted versions can remain unknown. Snapshot consistency, immutable history, authoritative current-head trust and recovery safety remain explicitly unverified. The checker does not download/decrypt objects, create producer keys, upload/delete anything, modify lifecycle rules or enable ledger writes.

@@ -50,3 +50,7 @@
 ## Approved restore-safety evidence retention — 20 November 2026
 
 Retain encrypted deletion/revocation evidence while any affected backup could restore the superseded data or access. Automatic deletion of this evidence remains disabled until a separate critical-event retention policy is approved. This is a minimum restore-safety rule, not a statutory retention period or authority to erase primary records. The existing 90-day ordinary-access-event policy and 90-day backup retention remain separate. This approval does not activate hosted ledger writes, Object Lock, backups, purges or restored services.
+
+## Approved deletion/revocation completion — 22 November 2026
+
+Deletion and access revocation must deny local access immediately, but may be reported completed only after independent restore-ledger confirmation. If confirmation fails, show pending protection rather than false completion; preserve the local denial. Restored services remain closed when evidence is incomplete. This defines completion/failure behavior, not new mutation authority or an automatic owner-assisted recovery fallback. Source transaction, receipt authenticity and crash-ordering guarantees must be verified before activation.

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   restoreLedgerDestinationConfig,
   checkRestoreLedgerDestination,
+  checkRestoreLedgerVersionDiscovery,
 } from '../backup/b2-preflight.mjs';
 const env = {
   BACKUP_ENABLED: 'false',
@@ -179,4 +180,74 @@ test('rejects expiration rules, missing lifecycle evidence, write keys and backu
     ),
   );
   assert.equal(f.calls.length, 0);
+});
+
+test('version discovery uses explicit prefix and version API only, without object downloads', async () => {
+  const calls = [];
+  const values = [
+    auth(),
+    result(),
+    { files: [], nextFileName: null, nextFileId: null },
+  ];
+  const flags = await checkRestoreLedgerVersionDiscovery(
+    restoreLedgerDestinationConfig(env),
+    async (url, options) => {
+      calls.push({ url, options });
+      return response(values[calls.length - 1]);
+    },
+  );
+  assert.equal(calls.length, 3);
+  assert.ok(calls[2].url.endsWith('/b2_list_file_versions'));
+  assert.deepEqual(JSON.parse(calls[2].options.body), {
+    bucketId: 'fixture-bucket',
+    prefix: 'fmv-restore-evidence/v1/development/',
+    maxFileCount: 100,
+  });
+  assert.equal(flags.versionPaginationExhausted, true);
+  assert.equal(flags.versionMetadataCount, 0);
+  assert.equal(flags.immutableHistoryVerified, false);
+  assert.equal(flags.recoverySafetyVerified, false);
+  assert.equal(flags.ledgerWritesEnabled, false);
+});
+
+test('populated version pages have their own bounded transport budget', async () => {
+  const page = {
+    files: Array.from({ length: 100 }, (_, index) => ({
+      accountId: 'fixture-account',
+      bucketId: 'fixture-bucket',
+      action: 'upload',
+      fileId: 'fixture-version-' + index,
+      fileName: 'fmv-restore-evidence/v1/development/opaque-' + index + '.age',
+      contentLength: 100,
+      uploadTimestamp: 1000,
+      fileInfo: { synthetic: 'x'.repeat(800) },
+    })),
+    nextFileName: null,
+    nextFileId: null,
+  };
+  assert.ok(
+    new globalThis.TextEncoder().encode(JSON.stringify(page)).length > 65536,
+  );
+  let call = 0;
+  const values = [auth(), result(), page];
+  const flags = await checkRestoreLedgerVersionDiscovery(
+    restoreLedgerDestinationConfig(env),
+    async () => response(values[call++]),
+  );
+  assert.equal(flags.versionMetadataCount, 100);
+  assert.equal(flags.versionPaginationExhausted, true);
+  const oversized = {
+    files: [],
+    nextFileName: null,
+    nextFileId: null,
+    padding: 'x'.repeat(8 * 1024 * 1024 + 1),
+  };
+  call = 0;
+  const bad = [auth(), result(), oversized];
+  await assert.rejects(
+    checkRestoreLedgerVersionDiscovery(
+      restoreLedgerDestinationConfig(env),
+      async () => response(bad[call++]),
+    ),
+  );
 });
