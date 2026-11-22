@@ -47,6 +47,12 @@ function endpoint(value, kind) {
     throw fail();
   return u.origin;
 }
+const bucketName = (value) =>
+  typeof value === 'string' &&
+  value.length >= 3 &&
+  value.length <= 63 &&
+  /^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(value) &&
+  !value.startsWith('replace_');
 export function backupDestinationConfig(env) {
   try {
     if (env.BACKUP_ENABLED !== undefined && env.BACKUP_ENABLED !== 'false')
@@ -57,11 +63,7 @@ export function backupDestinationConfig(env) {
       keyId = env.BACKUP_B2_READ_KEY_ID,
       applicationKey = env.BACKUP_B2_READ_APPLICATION_KEY;
     if (
-      typeof bucket !== 'string' ||
-      bucket.length < 3 ||
-      bucket.length > 63 ||
-      !/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(bucket) ||
-      bucket.startsWith('replace_') ||
+      !bucketName(bucket) ||
       !text(keyId) ||
       !/^[A-Za-z0-9_-]+$/.test(keyId) ||
       !text(applicationKey) ||
@@ -97,10 +99,7 @@ async function json(response) {
     reader.releaseLock();
   }
 }
-export async function checkBackupDestination(
-  config,
-  fetcher = globalThis.fetch,
-) {
+async function checkPrivateDestination(config, fetcher, policy) {
   // Revalidate structured callers as well as the CLI; never inherit R2/AWS keys.
   const c = backupDestinationConfig({
     BACKUP_ENABLED: 'false',
@@ -148,7 +147,10 @@ export async function checkBackupDestination(
       allowed.capabilities.some(
         (k) => typeof k !== 'string' || !readCapabilities.has(k),
       ) ||
-      ![null, '', 'fmv-backups/v1/development/'].includes(allowed.namePrefix) ||
+      !policy.prefixes.includes(allowed.namePrefix) ||
+      (policy.noLifecycleRules &&
+        (allowed.capabilities.includes('listAllBucketNames') ||
+          !allowed.capabilities.includes('readBucketLifecycleRules'))) ||
       endpoint(storage.s3ApiUrl, 's3') !== c.endpoint
     )
       throw fail();
@@ -191,7 +193,10 @@ export async function checkBackupDestination(
       bucket.accountId !== auth.accountId ||
       bucket.bucketId !== selected.id ||
       bucket.bucketName !== c.bucket ||
-      bucket.bucketType !== 'allPrivate'
+      bucket.bucketType !== 'allPrivate' ||
+      (policy.noLifecycleRules &&
+        (!Array.isArray(bucket.lifecycleRules) ||
+          bucket.lifecycleRules.length !== 0))
     )
       throw fail();
     signal.throwIfAborted();
@@ -202,6 +207,71 @@ export async function checkBackupDestination(
       objectAccessTested: false,
       capacityVerified: false,
       backupsEnabled: false,
+    };
+  } catch {
+    throw fail();
+  }
+}
+
+export function checkBackupDestination(config, fetcher = globalThis.fetch) {
+  return checkPrivateDestination(config, fetcher, {
+    prefixes: [null, '', 'fmv-backups/v1/development/'],
+    noLifecycleRules: false,
+  });
+}
+
+export function restoreLedgerDestinationConfig(env) {
+  try {
+    if (
+      (env.BACKUP_LEDGER_ENABLED !== undefined &&
+        env.BACKUP_LEDGER_ENABLED !== 'false') ||
+      !bucketName(env.BACKUP_B2_BUCKET) ||
+      env.BACKUP_LEDGER_B2_BUCKET === env.BACKUP_B2_BUCKET ||
+      (env.BACKUP_B2_READ_KEY_ID !== undefined &&
+        env.BACKUP_LEDGER_B2_READ_KEY_ID === env.BACKUP_B2_READ_KEY_ID)
+    )
+      throw fail();
+    const selected = backupDestinationConfig({
+      ...env,
+      BACKUP_B2_BUCKET: env.BACKUP_LEDGER_B2_BUCKET,
+      BACKUP_B2_ENDPOINT: env.BACKUP_LEDGER_B2_ENDPOINT,
+      BACKUP_B2_READ_KEY_ID: env.BACKUP_LEDGER_B2_READ_KEY_ID,
+      BACKUP_B2_READ_APPLICATION_KEY: env.BACKUP_LEDGER_B2_READ_APPLICATION_KEY,
+    });
+    return {
+      ...selected,
+      backupBucket: env.BACKUP_B2_BUCKET,
+      backupKeyId: env.BACKUP_B2_READ_KEY_ID,
+    };
+  } catch {
+    throw fail();
+  }
+}
+
+export async function checkRestoreLedgerDestination(
+  config,
+  fetcher = globalThis.fetch,
+) {
+  try {
+    if (
+      !bucketName(config?.backupBucket) ||
+      config.backupBucket === config.bucket ||
+      (config.backupKeyId !== undefined && config.backupKeyId === config.keyId)
+    )
+      throw fail();
+    const result = await checkPrivateDestination(config, fetcher, {
+      prefixes: ['fmv-restore-evidence/v1/development/'],
+      noLifecycleRules: true,
+    });
+    return {
+      destination: result.destination,
+      privateBucket: true,
+      singleBucketReadKey: true,
+      separateFromBackupBucket: true,
+      automaticExpirationRulesAbsent: true,
+      objectAccessTested: false,
+      immutabilityVerified: false,
+      ledgerWritesEnabled: false,
     };
   } catch {
     throw fail();
