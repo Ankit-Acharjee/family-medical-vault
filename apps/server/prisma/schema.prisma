@@ -745,3 +745,17 @@ model ProfileActivationEvent {
  @@map("profile_activation_events")
  @@schema("fmv")
 }
+
+// Pending source evidence only; no receipt/confirmed state or source cascade.
+model RestoreLedgerEvent {
+ id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+ patientId String @map("patient_id") @db.Uuid
+ resourceId String @map("resource_id") @db.Uuid
+ kind String
+ occurredAt DateTime @map("occurred_at") @db.Timestamptz(3)
+ recordedAt DateTime @default(dbgenerated("clock_timestamp()")) @map("recorded_at") @db.Timestamptz(3)
+ @@unique([kind,resourceId],map:"restore_ledger_event_source")
+ @@index([recordedAt,id],map:"restore_ledger_events_recorded")
+ @@map("restore_ledger_events")
+ @@schema("fmv")
+}

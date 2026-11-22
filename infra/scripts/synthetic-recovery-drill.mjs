@@ -148,7 +148,7 @@ export async function verifySyntheticRecovery({
     assert.equal(capture.capturedObjects, 1);
     const before = await inventory(source);
     assert.ok(
-      before.find((t) => t.table === '_prisma_migrations')?.count >= 32,
+      before.find((t) => t.table === '_prisma_migrations')?.count >= 33,
     );
     assert.ok(before.find((t) => t.table === 'documents')?.count > 0);
     const database = path.join(temporary, 'synthetic-database.dump');

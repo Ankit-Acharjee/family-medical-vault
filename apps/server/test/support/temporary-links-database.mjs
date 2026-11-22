@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { verifyLinkRevocationOutbox } from './link-revocation-outbox-database.mjs';
 import { randomUUID } from 'node:crypto';
 import { createHash } from 'node:crypto';
 import {
@@ -274,6 +275,17 @@ export async function verifyTemporaryLinks(f) {
     } finally {
       links.objects = objects;
     }
+    await verifyLinkRevocationOutbox({
+      links,
+      other,
+      owner,
+      runtime,
+      principal,
+      reader,
+      patient,
+      prepare,
+      body,
+    });
     for (const sql of [
       'DELETE FROM fmv.temporary_links',
       'TRUNCATE fmv.temporary_links',
