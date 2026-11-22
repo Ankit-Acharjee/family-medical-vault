@@ -241,15 +241,25 @@ export class TemporaryLinksService implements OnModuleDestroy {
   async revoke(principal: Principal, patientId: string, id: string) {
     if (!isUuid(id)) throw new NotFoundException();
     const p = patientId.toLowerCase();
-    return this.transaction(p, async (db) => {
+    await this.transaction(p, async (db) => {
       const account = await this.owner(db, principal, p),
         row = await this.row(db, p, id.toLowerCase());
       if (!row) throw new NotFoundException();
       if (!row.revokedAt)
         await db.$executeRaw`UPDATE fmv.temporary_links SET revoked_at=date_trunc('milliseconds',clock_timestamp()),revoker_account_id=${account}::uuid WHERE id=${row.id}::uuid AND patient_id=${p}::uuid`;
       await this.owner(db, principal, p);
-      return { revoked: true };
     });
+    // Local denial is already committed. Projection must never undo it, and
+    // a local outbox row is not an independently confirmed restore receipt.
+    try {
+      await this.transaction(p, async (db) => {
+        await this.owner(db, principal, p);
+        await db.$executeRaw`SELECT fmv.capture_temporary_link_revocation(${id.toLowerCase()}::uuid)`;
+      });
+    } catch {
+      // The retained source intent supports retry after failure or a crash.
+    }
+    return { revoked: true as const, protection: 'pending' as const };
   }
   private async capability(db: Tx, p: string, id: string) {
     const initial = await this.row(db, p, id);

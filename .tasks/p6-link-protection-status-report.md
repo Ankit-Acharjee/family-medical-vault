@@ -1,0 +1,11 @@
+# DEL-03 / SHARE-02 — explicit pending link protection
+
+Local revocation commits before a separate bounded, owner-revalidated capture attempt. Capture failure or missing deployment cannot undo local denial. Repeating revocation repairs the retained source intent when capture is available. Every result stays `{revoked:true,protection:'pending'}` because a local outbox row is not independent evidence confirmation.
+
+Owner sharing feedback and revoked history distinguish blocked access from pending restore protection, retain the warning about downloaded copies, and never label truncated history as completed protection. Existing routes, owner checks, bearer denial, draft revalidation and one-time secret handling are preserved. No independent receipt, background publisher, cloud upload or restore reopen is enabled. This is the temporary-link path only; broader grant/deletion paths remain future integration.
+
+Actual tooling: existing Baseline UI and React Best Practices guidance, canonical sharing screen/flow and theme tokens; existing Radix dialog unchanged. Native Sol updated scoped HTTP/browser/native assertions. Astra reviewed the service/UI flow; its remaining misleading pagination wording was corrected. Actual desktop/mobile light/dark synthetic screenshots were inspected; pending text is readable, the mobile screenshot is scrolled within the existing dialog. No visual redesign or dependency addition.
+
+Verification: final native28 plus encrypted recovery drill and API392 passed. Browser8 passed including both themes, axe, narrow-width checks, owner denial and stable revalidation. Server/web builds, lint, formatting and typecheck were run; all passed; secret detection and diff checks also passed. The first sandbox API run could not bind localhost; not a product-test failure. Approval quota initially blocked native execution; after its stated reset time, execution was approved and rerun.
+
+Hosted: user separately approved migration33, successfully deployed and migrate status up to date. Read-only TLS/UTC/runtime privilege plus all33 migration checksum checks passed. No record values were queried. Source cleanup remains blocked for revoked links until a separately implemented independent confirmation/retention mechanism exists.

@@ -189,7 +189,9 @@ export function OwnerSharingDialog({
           !result ||
           typeof result !== 'object' ||
           !('revoked' in result) ||
-          result.revoked !== true
+          result.revoked !== true ||
+          !('protection' in result) ||
+          result.protection !== 'pending'
         )
           throw Error();
         if (created?.link.id === revokeId)
@@ -200,7 +202,7 @@ export function OwnerSharingDialog({
           });
         setRevokeId(null);
         setNotice(
-          'Link revoked. Previously downloaded copies cannot be recalled.',
+          'Access blocked. Restore protection pending. Previously downloaded copies cannot be recalled.',
         );
         history.reload();
       }
@@ -524,6 +526,11 @@ export function OwnerSharingDialog({
                             {link.documentIds.length === 1 ? '' : 's'} ·{' '}
                             {link.state.replace('-', ' ')}
                           </p>
+                          {link.state === 'revoked' && (
+                            <p className="text-muted-foreground">
+                              Access blocked. Restore protection pending.
+                            </p>
+                          )}
                           <p className="text-muted-foreground">
                             Expires {new Date(link.expiresAt).toLocaleString()}
                           </p>
@@ -552,7 +559,7 @@ export function OwnerSharingDialog({
                     )}
                     {history.value.limited && (
                       <p className="text-xs text-muted-foreground">
-                        Older completed history is limited; outstanding links
+                        Older link history is limited; outstanding links
                         are listed first.
                       </p>
                     )}

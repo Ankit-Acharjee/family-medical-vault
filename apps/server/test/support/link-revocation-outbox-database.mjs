@@ -14,6 +14,7 @@ export async function verifyLinkRevocationOutbox({
 }) {
   const status = (n) => (error) => error.getStatus?.() === n,
     denied = (error) => error.code === '42501',
+    pending = { revoked: true, protection: 'pending' },
     quote = (identifier) => `"${identifier.replaceAll('"', '""')}"`,
     createdIds = new Set(),
     capture = (id) =>
@@ -74,20 +75,26 @@ export async function verifyLinkRevocationOutbox({
     );
     assert.deepEqual(await events(concurrent.link.id), []);
     assert.equal((await source(concurrent.link.id)).revoked_at, null);
-    await Promise.all([
+    const replies = await Promise.all([
       links.revoke(principal, patient.id, concurrent.link.id),
       other.revoke(principal, patient.id, concurrent.link.id),
     ]);
+    assert.deepEqual(replies, [pending, pending]);
     // Local denial commits independently; capture is a retryable shadow step.
-    assert.deepEqual(await events(concurrent.link.id), []);
     await assert.rejects(links.inspect(concurrent.token), status(404));
+    const stable = await evidence(concurrent.link.id);
     await Promise.all([
       capture(concurrent.link.id),
       capture(concurrent.link.id),
     ]);
-    const stable = await evidence(concurrent.link.id);
-    await links.revoke(principal, patient.id, concurrent.link.id);
-    await other.revoke(principal, patient.id, concurrent.link.id);
+    assert.deepEqual(
+      await links.revoke(principal, patient.id, concurrent.link.id),
+      pending,
+    );
+    assert.deepEqual(
+      await other.revoke(principal, patient.id, concurrent.link.id),
+      pending,
+    );
     await capture(concurrent.link.id);
     await capture(concurrent.link.id);
     assert.deepEqual(await evidence(concurrent.link.id), stable);
@@ -129,7 +136,10 @@ export async function verifyLinkRevocationOutbox({
         `CREATE TRIGGER ${quote(failureName)} BEFORE INSERT ON fmv.restore_ledger_events FOR EACH ROW EXECUTE FUNCTION fmv.${quote(failureName)}()`,
       );
       failureTrigger = true;
-      await links.revoke(principal, patient.id, retry.link.id);
+      assert.deepEqual(
+        await links.revoke(principal, patient.id, retry.link.id),
+        pending,
+      );
       const committed = await source(retry.link.id);
       assert.ok(committed.revoked_at instanceof Date);
       await assert.rejects(links.inspect(retry.token), status(404));
@@ -139,7 +149,10 @@ export async function verifyLinkRevocationOutbox({
       );
       assert.deepEqual(await source(retry.link.id), committed);
       assert.deepEqual(await events(retry.link.id), []);
-      await links.revoke(principal, patient.id, retry.link.id);
+      assert.deepEqual(
+        await links.revoke(principal, patient.id, retry.link.id),
+        pending,
+      );
       assert.deepEqual(await source(retry.link.id), committed);
       await assert.rejects(links.inspect(retry.token), status(404));
     } finally {
@@ -150,9 +163,13 @@ export async function verifyLinkRevocationOutbox({
       if (failureFunction)
         await owner.query(`DROP FUNCTION fmv.${quote(failureName)}()`);
     }
-    await links.revoke(principal, patient.id, retry.link.id);
+    assert.deepEqual(
+      await links.revoke(principal, patient.id, retry.link.id),
+      pending,
+    );
+    const retriedEvidence = await evidence(retry.link.id);
     await capture(retry.link.id);
-    await evidence(retry.link.id);
+    assert.deepEqual(await evidence(retry.link.id), retriedEvidence);
     await assert.rejects(links.inspect(retry.token), status(404));
 
     // The generated owner proves SECURITY DEFINER capture works with FORCE RLS
@@ -200,9 +217,15 @@ export async function verifyLinkRevocationOutbox({
         ).rows,
         [{ rolsuper: false, rolbypassrls: false }],
       );
-      await links.revoke(principal, patient.id, portable.link.id);
-      await capture(portable.link.id);
+      assert.deepEqual(
+        await links.revoke(principal, patient.id, portable.link.id),
+        pending,
+      );
       const portableEvidence = await evidence(portable.link.id);
+      assert.deepEqual(
+        await other.revoke(principal, patient.id, portable.link.id),
+        pending,
+      );
       await capture(portable.link.id);
       assert.deepEqual(await evidence(portable.link.id), portableEvidence);
       await assert.rejects(links.inspect(portable.token), status(404));
@@ -261,20 +284,35 @@ export async function verifyLinkRevocationOutbox({
     assert.deepEqual(await source(concurrent.link.id), retainedSource);
     assert.deepEqual(await events(concurrent.link.id), retained);
 
-    // Existing revoked intent can remain pending until explicit capture. A
-    // repeated revoke alone does not assert independent confirmation.
+    // Simulate a crash after local denial commits but before shadow capture.
+    // Retry captures the durable intent and still reports protection pending.
     const legacy = await create();
-    await links.revoke(principal, patient.id, legacy.link.id);
+    await runtime.query(
+      "UPDATE fmv.temporary_links SET revoked_at=date_trunc('milliseconds',clock_timestamp()),revoker_account_id=creator_account_id WHERE id=$1::uuid",
+      [legacy.link.id],
+    );
     const legacySource = await source(legacy.link.id);
     assert.ok(legacySource.revoked_at instanceof Date);
     assert.deepEqual(await events(legacy.link.id), []);
-    await links.revoke(principal, patient.id, legacy.link.id);
-    await other.revoke(principal, patient.id, legacy.link.id);
+    await assert.rejects(
+      owner.query('DELETE FROM fmv.temporary_links WHERE id=$1::uuid', [
+        legacy.link.id,
+      ]),
+      (error) => error.code === '23514',
+    );
     assert.deepEqual(await source(legacy.link.id), legacySource);
     assert.deepEqual(await events(legacy.link.id), []);
     await assert.rejects(links.inspect(legacy.token), status(404));
-    await capture(legacy.link.id);
+    assert.deepEqual(
+      await links.revoke(principal, patient.id, legacy.link.id),
+      pending,
+    );
     const capturedLegacy = await evidence(legacy.link.id);
+    assert.deepEqual(
+      await other.revoke(principal, patient.id, legacy.link.id),
+      pending,
+    );
+    assert.deepEqual(await source(legacy.link.id), legacySource);
     await capture(legacy.link.id);
     assert.deepEqual(await evidence(legacy.link.id), capturedLegacy);
   } finally {

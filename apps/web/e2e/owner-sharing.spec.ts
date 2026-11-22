@@ -117,7 +117,7 @@ async function setup(page: Page, owner = true) {
           state: 'revoked',
           revokedAt: new Date().toISOString(),
         };
-      return json({ revoked: true });
+      return json({ revoked: true, protection: 'pending' });
     }
     return json({}, 404);
   });
@@ -207,8 +207,28 @@ test('owner explicitly scopes expiry and bearer access, receives a one-time frag
     .getByRole('button', { name: 'Confirm revocation' })
     .click();
   await expect(
-    dialog(page).getByRole('status').filter({ hasText: 'Link revoked' }),
-  ).toContainText('Link revoked');
+    dialog(page).getByRole('status').filter({ hasText: 'Access blocked.' }),
+  ).toHaveText(
+    'Access blocked. Restore protection pending. Previously downloaded copies cannot be recalled.',
+  );
+  await page.setViewportSize(
+    info.project.use.viewport ?? { width: 390, height: 844 },
+  );
+  await dialog(page)
+    .getByRole('status')
+    .filter({ hasText: 'Access blocked.' })
+    .scrollIntoViewIfNeeded();
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate((t) => {
+      document.documentElement.dataset.theme = t;
+      document.documentElement.classList.toggle('dark', t === 'dark');
+    }, theme);
+    expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+    await page.screenshot({
+      path: `../../.local/screenshots/link-protection-${info.project.name}-${theme}.png`,
+    });
+  }
+  await page.setViewportSize({ width: 320, height: 844 });
   await expect(
     dialog(page).getByRole('button', { name: 'Copy secret link' }),
   ).toHaveCount(0);
@@ -216,6 +236,11 @@ test('owner explicitly scopes expiry and bearer access, receives a one-time frag
     .locator('summary')
     .filter({ hasText: 'Outstanding and recent links' })
     .click();
+  await expect(
+    dialog(page)
+      .getByRole('listitem')
+      .filter({ hasText: '1 original · revoked' }),
+  ).toContainText('Restore protection pending.');
   await dialog(page)
     .locator('summary')
     .filter({ hasText: 'Recent access activity' })
@@ -271,8 +296,10 @@ test('an uncertain creation retries the identical request and never fabricates r
     .getByRole('button', { name: 'Confirm revocation' })
     .click();
   await expect(
-    dialog(page).getByRole('status').filter({ hasText: 'Link revoked' }),
-  ).toContainText('Link revoked');
+    dialog(page).getByRole('status').filter({ hasText: 'Access blocked.' }),
+  ).toHaveText(
+    'Access blocked. Restore protection pending. Previously downloaded copies cannot be recalled.',
+  );
   expect(f.errors).toEqual([]);
 });
 test('delegate View and Export never expose owner external-sharing controls', async ({

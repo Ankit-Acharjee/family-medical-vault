@@ -50,7 +50,9 @@ test('owner management HTTP endpoints enforce current session and Origin/CSRF; b
     for (const name of ['prepare', 'create', 'list', 'revoke'])
       service[name] = async (...args) => {
         calls.push({ name, args });
-        return { synthetic: true };
+        return name === 'revoke'
+          ? { revoked: true, protection: 'pending' }
+          : { synthetic: true };
       };
     assert.equal(
       (await f.request('POST', path, undefined, input())).status,
@@ -80,17 +82,17 @@ test('owner management HTTP endpoints enforce current session and Origin/CSRF; b
     assert.equal(calls.length, 0);
     assert.equal((await f.request('POST', path, session, input())).status, 200);
     assert.equal((await f.request('GET', path, session)).status, 200);
-    assert.equal(
-      (
-        await f.request(
-          'POST',
-          path + '/' + randomUUID() + '/revoke',
-          session,
-          {},
-        )
-      ).status,
-      200,
+    const revocation = await f.request(
+      'POST',
+      path + '/' + randomUUID() + '/revoke',
+      session,
+      {},
     );
+    assert.equal(revocation.status, 200);
+    assert.deepEqual(await revocation.json(), {
+      revoked: true,
+      protection: 'pending',
+    });
     assert.equal(calls.length, 3);
     assert.equal((await f.request('GET', '/api/sharing/open')).status, 404);
     const response = await f.request('GET', path, session);
