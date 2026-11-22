@@ -559,8 +559,8 @@ export function OwnerSharingDialog({
                     )}
                     {history.value.limited && (
                       <p className="text-xs text-muted-foreground">
-                        Older link history is limited; outstanding links
-                        are listed first.
+                        Older link history is limited; outstanding links are
+                        listed first.
                       </p>
                     )}
                   </>

@@ -8,6 +8,7 @@ import path from 'node:path';
 import { URL } from 'node:url';
 import { Buffer } from 'node:buffer';
 import { captureOriginals } from '../backup/capture-originals.mjs';
+import { verifySyntheticLinkPublication } from './synthetic-link-publication.mjs';
 import {
   encodeBackupCompletion,
   verifySignedBackupCompletion,
@@ -66,6 +67,11 @@ export async function verifySyntheticRecovery({
   let restored, runtime;
   try {
     await source.connect();
+    const linkPublication = await verifySyntheticLinkPublication({
+      source,
+      client,
+      temporary,
+    });
     const selectedBytes = Buffer.from(
       '%PDF-1.7\nSYNTHETIC activity fixture\n%%EOF',
     );
@@ -361,6 +367,7 @@ export async function verifySyntheticRecovery({
     console.log(
       JSON.stringify({
         ...evidenceResult,
+        ...linkPublication,
         syntheticDatabaseRoundTrip: true,
         concurrentSnapshotIsolation: true,
         encryptedDumpRoundTrip: true,
