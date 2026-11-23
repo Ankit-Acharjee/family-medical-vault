@@ -75,15 +75,38 @@ Apply locks the policy table, rechecks prerequisites inside the transaction, ins
 
 The initial public recipient is now pinned. Ongoing preparation uses a dedicated `fmv_ledger_worker` identity; never use app or migration-owner credentials in the job. The reviewed bootstrap asset is `infra/postgres/create-development-ledger-operator.sql`. It creates the worker **NOLOGIN**, without a password, with a two-connection limit and only a SET-only membership in `fmv_ledger_stager`. Existing operators or unexpected capability memberships abort instead of being overwritten. Apply it only through the separately approved, verified development owner connection.
 
-After that operator activation is explicitly approved, set its password privately in the established development owner psql session:
+Once approved operator provisioning has succeeded, open a private owner session from the repository root:
+
+```sh
+node --env-file=.env infra/scripts/open-development-owner-psql.mjs --target=nyjkrcznezyrgntwvpjj
+```
+
+This Mac development helper uses installed Postgres.app and the verified owner connection already in root .env. It creates a mode600 temporary libpq password file inside a private directory, passes no password in child arguments or environment, disables psql startup files, and removes the file when the session exits or handled termination completes. It executes no setup SQL itself. The optional final --check flag checks target/tool availability without opening a session or creating a password file.
+
+At the postgres prompt, enter these steps separately so a later SQL command is never consumed as password input.
+
+1. Choose SCRAM encryption:
 
 ```sql
 SET password_encryption='scram-sha-256';
-\password fmv_ledger_worker
-ALTER ROLE fmv_ledger_worker LOGIN;
 ```
 
-Choose a strong unique password, keep it private, and save it in the password manager. The password prompt does not echo it or put it into SQL command history; see the [PostgreSQL psql reference](https://www.postgresql.org/docs/17/app-psql.html). No extra paper recovery identity is required for this replaceable database credential. Keep recovery **private keys** outside this operator entirely.
+2. Start the private password prompts:
+
+```text
+\password fmv_ledger_worker
+```
+
+Choose a strong unique password (64 random letters/digits avoids URL-escaping issues), save it in the password manager, and enter it twice at the hidden prompts. Wait until the postgres prompt returns. The prompts keep the plaintext out of SQL history; see the [PostgreSQL psql reference](https://www.postgresql.org/docs/17/app-psql.html). No extra paper recovery identity is needed for this replaceable database credential.
+
+3. Only after successful password setup, enable the approved login and leave:
+
+```sql
+ALTER ROLE fmv_ledger_worker LOGIN;
+\q
+```
+
+Keep recovery private keys outside this operator entirely.
 
 Add `DATABASE_LEDGER_STAGING_URL` privately to root `.env`, using the same verified session-pooler host, database and CA settings as the existing connections, but user `fmv_ledger_worker.nyjkrcznezyrgntwvpjj` and this worker's password. URL-encode reserved password characters. Keep `.env` mode600 and both execution flags false. Never add a VITE-prefixed copy. The CLI rejects owner/app identities, relaxed TLS, query-parameter overrides and unapproved memberships in either direction.
 
