@@ -8,6 +8,10 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { URL } from 'node:url';
 import { withTool } from '../../../../infra/ci/tools.mjs';
+import {
+  configureInitialLedgerPolicy,
+  initialLedgerPolicyPlan,
+} from '../../../../infra/backup/ledger-policy.mjs';
 
 const { Client } = createRequire(
   new URL('../../package.json', import.meta.url),
@@ -179,8 +183,65 @@ export async function verifyLedgerStaging({ owner, runtime }) {
             hash(policy.recipient),
           ],
         );
-      await insertPolicy(oldPolicy);
-      const connect = async () => {
+      phase = 'initial-policy';
+      const initialPlan = initialLedgerPolicyPlan({
+          recipient: oldPolicy.recipient,
+          policyId: oldPolicy.id,
+          ledgerId: oldPolicy.ledgerId,
+        }),
+        policyRows = async () =>
+          (
+            await owner.query(
+              'SELECT id,ledger_id,environment,recipient,recipient_sha256,enabled FROM fmv.restore_ledger_policies ORDER BY id',
+            )
+          ).rows,
+        expectedPolicy = [
+          {
+            id: oldPolicy.id,
+            ledger_id: oldPolicy.ledgerId,
+            environment: 'development',
+            recipient: oldPolicy.recipient,
+            recipient_sha256: hash(oldPolicy.recipient),
+            enabled: true,
+          },
+        ];
+      assert.deepEqual(await policyRows(), []);
+      const prerequisiteChecks = [];
+      for (const apply of [false, true]) {
+        await assert.rejects(
+          configureInitialLedgerPolicy(owner, initialPlan, {
+            apply,
+            verifyPrerequisites: async (connection) => {
+              assert.equal(connection, owner);
+              const readOnly = (
+                await connection.query(
+                  "SELECT current_setting('transaction_read_only') AS value",
+                )
+              ).rows[0].value;
+              assert.equal(readOnly, apply ? 'off' : 'on');
+              prerequisiteChecks.push(readOnly);
+              throw Error('Synthetic prerequisite rejection');
+            },
+          }),
+          /^Error: Initial ledger policy configuration failed$/,
+        );
+        assert.deepEqual(await policyRows(), []);
+      }
+      assert.deepEqual(prerequisiteChecks, ['on', 'off']);
+      await assert.rejects(
+        configureInitialLedgerPolicy(owner, initialPlan, { apply: 'true' }),
+        /^Error: Initial ledger policy configuration failed$/,
+      );
+      assert.deepEqual(await policyRows(), []);
+      assert.deepEqual(await configureInitialLedgerPolicy(owner, initialPlan), {
+        initialPolicyMatches: false,
+        hostedPolicyWritten: false,
+        readOnly: true,
+        operatorLoginEnabled: false,
+        cloudPublishingEnabled: false,
+      });
+      assert.deepEqual(await policyRows(), []);
+      const connectOwner = async () => {
         const p = owner.connectionParameters;
         const connection = new Client({
           host: p.host,
@@ -192,6 +253,57 @@ export async function verifyLedgerStaging({ owner, runtime }) {
         });
         connections.push(connection);
         await connection.connect();
+        return connection;
+      };
+      const peer = await connectOwner();
+      const initialApplications = await Promise.all([
+        configureInitialLedgerPolicy(owner, initialPlan, { apply: true }),
+        configureInitialLedgerPolicy(peer, initialPlan, { apply: true }),
+      ]);
+      assert.deepEqual(
+        initialApplications.map((result) => result.hostedPolicyWritten).sort(),
+        [false, true],
+      );
+      for (const result of initialApplications)
+        assert.deepEqual(result, {
+          initialPolicyMatches: true,
+          hostedPolicyWritten: result.hostedPolicyWritten,
+          readOnly: false,
+          operatorLoginEnabled: false,
+          cloudPublishingEnabled: false,
+        });
+      assert.deepEqual(await policyRows(), expectedPolicy);
+      assert.deepEqual(
+        await configureInitialLedgerPolicy(owner, initialPlan, { apply: true }),
+        {
+          initialPolicyMatches: true,
+          hostedPolicyWritten: false,
+          readOnly: false,
+          operatorLoginEnabled: false,
+          cloudPublishingEnabled: false,
+        },
+      );
+      assert.deepEqual(await configureInitialLedgerPolicy(owner, initialPlan), {
+        initialPolicyMatches: true,
+        hostedPolicyWritten: false,
+        readOnly: true,
+        operatorLoginEnabled: false,
+        cloudPublishingEnabled: false,
+      });
+      const conflictingPlan = initialLedgerPolicyPlan({
+        recipient: newPolicy.recipient,
+        policyId: newPolicy.id,
+        ledgerId: newPolicy.ledgerId,
+      });
+      for (const apply of [false, true]) {
+        await assert.rejects(
+          configureInitialLedgerPolicy(owner, conflictingPlan, { apply }),
+          /^Error: Initial ledger policy configuration failed$/,
+        );
+        assert.deepEqual(await policyRows(), expectedPolicy);
+      }
+      const connect = async () => {
+        const connection = await connectOwner();
         await connection.query('SET ROLE fmv_ledger_stager');
         assert.equal(
           (await connection.query('SELECT current_user AS name')).rows[0].name,
@@ -393,6 +505,15 @@ export async function verifyLedgerStaging({ owner, runtime }) {
         'UPDATE fmv.restore_ledger_policies SET enabled=false WHERE id=$1::uuid',
         [oldPolicy.id],
       );
+      for (const apply of [false, true]) {
+        await assert.rejects(
+          configureInitialLedgerPolicy(owner, initialPlan, { apply }),
+          /^Error: Initial ledger policy configuration failed$/,
+        );
+        assert.deepEqual(await policyRows(), [
+          { ...expectedPolicy[0], enabled: false },
+        ]);
+      }
       await insertPolicy(newPolicy);
       const rotated = await prepare(a, first, newPolicy);
       assert.notEqual(rotated.digest, prepared.digest);

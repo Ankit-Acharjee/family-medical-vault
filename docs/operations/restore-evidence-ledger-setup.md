@@ -49,3 +49,24 @@ After private-bucket verification, `node --env-file=.env infra/scripts/check-res
 The scan is bounded to 100 pages of at most 100 entries, a 30-second operation deadline and an 8 MiB maximum version-page response; authorization/bucket responses retain the tighter 64 KiB limit. Scope mismatch, duplicate IDs, malformed/stuck cursors, unknown actions, provider errors, budget exhaustion or cancellation fail without partial-success flags. Console output contains only counts/flags, never names, IDs, tokens or file contents.
 
 `versionPaginationExhausted` means only that the API returned a terminal cursor within this scan. Listings are not atomic: concurrent inserts or previously deleted versions can remain unknown. Snapshot consistency, immutable history, authoritative current-head trust and recovery safety remain explicitly unverified. The checker does not download/decrypt objects, create producer keys, upload/delete anything, modify lifecycle rules or enable ledger writes.
+
+## Initial development public-recipient pin
+
+The user approved reusing the verified development age public recipient on 23 November. Migration34 provides an empty policy catalog and a NOLOGIN staging capability, without granting an operator login. Pinning the recipient is a separate hosted configuration write: do not infer that approval from migration deployment or key selection.
+
+From the repository root, prepare the local frozen plan using only `secrets/development-backup-recipient.txt` (the public recipient):
+
+```sh
+node --env-file=.env infra/scripts/configure-development-ledger-policy.mjs --prepare-plan
+node --env-file=.env infra/scripts/configure-development-ledger-policy.mjs --check --target=nyjkrcznezyrgntwvpjj
+```
+
+Preparation validates the public recipient with an encrypted synthetic probe and preserves a canonical plan in ignored `.local/development-ledger-policy-plan.json`. It reads no recovery private key, creates no replacement key and makes no hosted write. The check verifies exact development target/TLS/owner, all34 migration checksums, isolated staging privileges and an empty or exactly matching initial catalog. Only fixed verification flags are printed.
+
+After explicit approval of this exact initial pin, the reviewed apply command is:
+
+```sh
+node --env-file=.env infra/scripts/configure-development-ledger-policy.mjs --apply --target=nyjkrcznezyrgntwvpjj
+```
+
+Apply locks the policy table, rechecks prerequisites inside the transaction, inserts only the initial context, and accepts an exact idempotent replay. It rejects changed, disabled or additional history; rotation needs a separate reviewed operation. Keep both backup/ledger execution flags false. This enables no staging login, signing identity, provider credential, object upload, scheduler or restore reopening. If the public file or frozen plan changes, stop for review rather than regenerating a plan over an existing pin.
