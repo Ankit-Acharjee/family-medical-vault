@@ -63,20 +63,25 @@ export async function verifySyntheticLinkPublication({
 
       // Read only opaque identity, kind and timing from the synthetic fixture.
       stage = 'repair';
+      // Create one dedicated synthetic link, then commit its raw local denial
+      // without capture. No existing event or staged publication is deleted.
+      const linkId = randomUUID();
+      const inserted = await source.query(
+        `INSERT INTO fmv.temporary_links(id,patient_id,creator_account_id,patient_name,request_id,payload_sha256,token_sha256,selection_sha256,source_snapshot,expires_at)
+         SELECT $1::uuid,l.patient_id,p.owner_account_id,p.display_name,$2::uuid,l.payload_sha256,$3,l.selection_sha256,l.source_snapshot,statement_timestamp()+interval '1 day'
+         FROM fmv.temporary_links l JOIN fmv.persons p ON p.id=l.patient_id
+         WHERE p.owner_account_id IS NOT NULL AND fmv.share_sources_current(l.patient_id,l.source_snapshot)
+         ORDER BY l.created_at DESC LIMIT 1`,
+        [linkId, randomUUID(), hash(randomUUID())],
+      );
+      assert.equal(inserted.rowCount, 1);
       const selected = (
         await source.query(
-          `SELECT l.id AS resource_id,l.patient_id,l.revoked_at,
-           e.id AS event_id,e.kind,e.occurred_at,e.recorded_at
-           FROM fmv.temporary_links l JOIN fmv.restore_ledger_events e
-           ON e.resource_id=l.id AND e.kind='link.revoked'
-           WHERE l.revoked_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM fmv.restore_ledger_publications p WHERE p.event_id=e.id) ORDER BY e.id LIMIT 1`,
+          "UPDATE fmv.temporary_links SET revoked_at=date_trunc('milliseconds',clock_timestamp()),revoker_account_id=creator_account_id WHERE id=$1::uuid RETURNING id AS resource_id,patient_id,revoked_at",
+          [linkId],
         )
       ).rows[0];
       assert.ok(selected);
-      assert.equal(
-        selected.occurred_at.getTime(),
-        selected.revoked_at.getTime(),
-      );
       const readLocal = async () =>
         (
           await source.query(
@@ -86,17 +91,7 @@ export async function verifySyntheticLinkPublication({
             [selected.resource_id],
           )
         ).rows;
-      // Controlled owner-only crash-gap simulation. The retained source intent
-      // must recreate exactly its own denial, then preserve the repaired UUID.
-      assert.equal(
-        (
-          await source.query(
-            'DELETE FROM fmv.restore_ledger_events WHERE id=$1::uuid',
-            [selected.event_id],
-          )
-        ).rowCount,
-        1,
-      );
+      // The committed intent survives the simulated pre-capture crash gap.
       assert.deepEqual(await readLocal(), []);
       await source.query(
         'SELECT fmv.capture_temporary_link_revocation($1::uuid)',

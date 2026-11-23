@@ -70,3 +70,27 @@ node --env-file=.env infra/scripts/configure-development-ledger-policy.mjs --app
 ```
 
 Apply locks the policy table, rechecks prerequisites inside the transaction, inserts only the initial context, and accepts an exact idempotent replay. It rejects changed, disabled or additional history; rotation needs a separate reviewed operation. Keep both backup/ledger execution flags false. This enables no staging login, signing identity, provider credential, object upload, scheduler or restore reopening. If the public file or frozen plan changes, stop for review rather than regenerating a plan over an existing pin.
+
+## Dedicated development staging operator (separate approval required)
+
+The initial public recipient is now pinned. Ongoing preparation uses a dedicated `fmv_ledger_worker` identity; never use app or migration-owner credentials in the job. The reviewed bootstrap asset is `infra/postgres/create-development-ledger-operator.sql`. It creates the worker **NOLOGIN**, without a password, with a two-connection limit and only a SET-only membership in `fmv_ledger_stager`. Existing operators or unexpected capability memberships abort instead of being overwritten. Apply it only through the separately approved, verified development owner connection.
+
+After that operator activation is explicitly approved, set its password privately in the established development owner psql session:
+
+```sql
+SET password_encryption='scram-sha-256';
+\password fmv_ledger_worker
+ALTER ROLE fmv_ledger_worker LOGIN;
+```
+
+Choose a strong unique password, keep it private, and save it in the password manager. The password prompt does not echo it or put it into SQL command history; see the [PostgreSQL psql reference](https://www.postgresql.org/docs/17/app-psql.html). No extra paper recovery identity is required for this replaceable database credential. Keep recovery **private keys** outside this operator entirely.
+
+Add `DATABASE_LEDGER_STAGING_URL` privately to root `.env`, using the same verified session-pooler host, database and CA settings as the existing connections, but user `fmv_ledger_worker.nyjkrcznezyrgntwvpjj` and this worker's password. URL-encode reserved password characters. Keep `.env` mode600 and both execution flags false. Never add a VITE-prefixed copy. The CLI rejects owner/app identities, relaxed TLS, query-parameter overrides and unapproved memberships in either direction.
+
+```sh
+node --env-file=.env infra/scripts/prepare-development-ledger-events.mjs --check --target=nyjkrcznezyrgntwvpjj
+```
+
+Check mode is read-only and reports bounded counts only. A separately approved preparation run uses `--prepare` with the same explicit target. It scans at most10 currently unstaged events by identity, encrypts canonical bytes locally through pinned age without holding database locks, and stages the immutable winner. It reads no private recovery key and attempts no provider publication. A failed batch may have committed earlier events; retry safely selects only still-unstaged events. Counts report confirmed staging results, including a concurrent worker's winner, not necessarily newly inserted rows or complete source coverage.
+
+The initial-pin tool deliberately refuses new operator memberships, so use it only for the initial configuration boundary. After provisioning the worker, use this dedicated operator's check and the reviewed membership/postflight checks; do not weaken the initial tool or silently repin. No scheduler, signer, B2 writer or restore reopening is enabled by these steps.

@@ -12,6 +12,7 @@ import {
   configureInitialLedgerPolicy,
   initialLedgerPolicyPlan,
 } from '../../../../infra/backup/ledger-policy.mjs';
+import { prepareLedgerEvents } from '../../../../infra/backup/prepare-ledger-events.mjs';
 
 const { Client } = createRequire(
   new URL('../../package.json', import.meta.url),
@@ -273,6 +274,67 @@ export async function verifyLedgerStaging({ owner, runtime }) {
           cloudPublishingEnabled: false,
         });
       assert.deepEqual(await policyRows(), expectedPolicy);
+      phase = 'operator-bootstrap';
+      const operatorSql = await readFile(
+        new URL(
+          '../../../../infra/postgres/create-development-ledger-operator.sql',
+          import.meta.url,
+        ),
+        'utf8',
+      );
+      let workerCreated = false;
+      try {
+        await owner.query(operatorSql);
+        workerCreated = true;
+        assert.deepEqual(
+          (
+            await owner.query(
+              `SELECT rolcanlogin,rolsuper,rolbypassrls,rolcreatedb,rolcreaterole,rolinherit,rolreplication,rolconnlimit
+           FROM pg_roles WHERE rolname='fmv_ledger_worker'`,
+            )
+          ).rows,
+          [
+            {
+              rolcanlogin: false,
+              rolsuper: false,
+              rolbypassrls: false,
+              rolcreatedb: false,
+              rolcreaterole: false,
+              rolinherit: false,
+              rolreplication: false,
+              rolconnlimit: 2,
+            },
+          ],
+        );
+        assert.deepEqual(
+          (
+            await owner.query(
+              `SELECT r.rolname AS role_name,u.rolname AS member_name,
+           m.admin_option,m.inherit_option,m.set_option
+           FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.roleid
+           JOIN pg_roles u ON u.oid=m.member
+           WHERE r.rolname='fmv_ledger_worker' OR u.rolname='fmv_ledger_worker'`,
+            )
+          ).rows,
+          [
+            {
+              role_name: 'fmv_ledger_stager',
+              member_name: 'fmv_ledger_worker',
+              admin_option: false,
+              inherit_option: false,
+              set_option: true,
+            },
+          ],
+        );
+        try {
+          await assert.rejects(owner.query(operatorSql), invalid);
+        } finally {
+          await owner.query('ROLLBACK');
+        }
+      } finally {
+        if (workerCreated) await owner.query('DROP ROLE fmv_ledger_worker');
+      }
+      phase = 'initial-policy';
       assert.deepEqual(
         await configureInitialLedgerPolicy(owner, initialPlan, { apply: true }),
         {
@@ -655,6 +717,166 @@ export async function verifyLedgerStaging({ owner, runtime }) {
         'UPDATE fmv.restore_ledger_policies SET enabled=false WHERE id=$1::uuid',
         [newPolicy.id],
       );
+      phase = 'bounded-preparation';
+      await owner.query(
+        'UPDATE fmv.restore_ledger_policies SET enabled=true WHERE id=$1::uuid',
+        [oldPolicy.id],
+      );
+      try {
+        const artifacts = async () =>
+          (
+            await a.query(
+              'SELECT * FROM fmv.restore_ledger_publications ORDER BY event_id',
+            )
+          ).rows;
+        const beforeDryRun = await artifacts();
+        let encryptionCalls = 0;
+        const dryRun = await prepareLedgerEvents(a, initialPlan, {
+          encrypt: async () => {
+            encryptionCalls++;
+            throw Error('Dry run must not encrypt');
+          },
+        });
+        assert.equal(encryptionCalls, 0);
+        assert.ok(dryRun.candidateEvents >= 2 && dryRun.candidateEvents <= 10);
+        assert.deepEqual(dryRun, {
+          candidateEvents: dryRun.candidateEvents,
+          stagedEvents: 0,
+          readOnly: true,
+          scanExhaustivenessVerified: false,
+          independentConfirmation: false,
+          providerPublishingAttempted: false,
+          sourceLossCoverageVerified: false,
+        });
+        assert.deepEqual(await artifacts(), beforeDryRun);
+        const preparationFailure =
+          /^Error: Ledger preparation failed; some events may already be staged\. Retry is safe\. No provider publishing was attempted\.$/;
+        await assert.rejects(
+          prepareLedgerEvents(a, initialPlan, {
+            apply: true,
+            encrypt: async (payload, recipient) => {
+              encryptionCalls++;
+              assert.equal(recipient, oldPolicy.recipient);
+              assert.equal(
+                JSON.parse(payload.toString('utf8')).format,
+                'fmv-restore-event-v1',
+              );
+              // This owner UPDATE must complete during encryption: preparation
+              // released its read transaction and holds no policy row lock.
+              await owner.query('BEGIN');
+              try {
+                await owner.query("SET LOCAL statement_timeout='2s'");
+                await owner.query(
+                  'UPDATE fmv.restore_ledger_policies SET enabled=false WHERE id=$1::uuid',
+                  [oldPolicy.id],
+                );
+                await owner.query('COMMIT');
+              } catch (error) {
+                await owner.query('ROLLBACK');
+                throw error;
+              }
+              return cipherA;
+            },
+          }),
+          preparationFailure,
+        );
+        assert.equal(encryptionCalls, 1);
+        assert.deepEqual(await artifacts(), beforeDryRun);
+        assert.equal(
+          (
+            await owner.query(
+              'SELECT enabled FROM fmv.restore_ledger_policies WHERE id=$1::uuid',
+              [oldPolicy.id],
+            )
+          ).rows[0].enabled,
+          false,
+        );
+        await owner.query(
+          'UPDATE fmv.restore_ledger_policies SET enabled=true WHERE id=$1::uuid',
+          [oldPolicy.id],
+        );
+        let retainedPartial;
+        if (dryRun.candidateEvents >= 2) {
+          let partialCalls = 0,
+            committedEvent;
+          await assert.rejects(
+            prepareLedgerEvents(a, initialPlan, {
+              apply: true,
+              encrypt: async (payload, recipient) => {
+                assert.equal(recipient, oldPolicy.recipient);
+                if (++partialCalls === 2)
+                  throw Error('Synthetic encryption interrupted');
+                committedEvent = JSON.parse(payload.toString('utf8')).event
+                  .eventId;
+                return cipherA;
+              },
+            }),
+            preparationFailure,
+          );
+          assert.equal(partialCalls, 2);
+          const partial = await artifacts();
+          assert.equal(partial.length, beforeDryRun.length + 1);
+          assert.deepEqual(
+            partial.filter((row) => row.event_id !== committedEvent),
+            beforeDryRun,
+          );
+          retainedPartial = partial.find(
+            (row) => row.event_id === committedEvent,
+          );
+          assert.equal(retainedPartial.policy_id, oldPolicy.id);
+          assert.ok(retainedPartial.ciphertext.equals(cipherA));
+        }
+        let exhausted = false;
+        for (let batch = 0; batch < 10; batch++) {
+          const result = await prepareLedgerEvents(a, initialPlan, {
+            apply: true,
+            encrypt: async (_payload, recipient) => {
+              assert.equal(recipient, oldPolicy.recipient);
+              return cipherB;
+            },
+          });
+          assert.ok(
+            result.candidateEvents >= 0 && result.candidateEvents <= 10,
+          );
+          assert.deepEqual(result, {
+            candidateEvents: result.candidateEvents,
+            stagedEvents: result.candidateEvents,
+            readOnly: false,
+            scanExhaustivenessVerified: false,
+            independentConfirmation: false,
+            providerPublishingAttempted: false,
+            sourceLossCoverageVerified: false,
+          });
+          if (!result.candidateEvents) {
+            exhausted = true;
+            break;
+          }
+        }
+        assert.equal(exhausted, true);
+        const finalArtifacts = await artifacts();
+        if (retainedPartial)
+          assert.deepEqual(
+            finalArtifacts.find(
+              (row) => row.event_id === retainedPartial.event_id,
+            ),
+            retainedPartial,
+          );
+        assert.deepEqual(await prepareLedgerEvents(a, initialPlan), {
+          candidateEvents: 0,
+          stagedEvents: 0,
+          readOnly: true,
+          scanExhaustivenessVerified: false,
+          independentConfirmation: false,
+          providerPublishingAttempted: false,
+          sourceLossCoverageVerified: false,
+        });
+        assert.deepEqual(await artifacts(), finalArtifacts);
+      } finally {
+        await owner.query(
+          'UPDATE fmv.restore_ledger_policies SET enabled=false WHERE id=$1::uuid',
+          [oldPolicy.id],
+        );
+      }
     } finally {
       const cleanup = await Promise.allSettled(
         connections.map((connection) => connection.end()),
