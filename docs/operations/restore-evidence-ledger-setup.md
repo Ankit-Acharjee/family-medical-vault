@@ -117,3 +117,26 @@ node --env-file=.env infra/scripts/prepare-development-ledger-events.mjs --check
 Check mode is read-only and reports bounded counts only. A separately approved preparation run uses `--prepare` with the same explicit target. It scans at most10 currently unstaged events by identity, encrypts canonical bytes locally through pinned age without holding database locks, and stages the immutable winner. It reads no private recovery key and attempts no provider publication. A failed batch may have committed earlier events; retry safely selects only still-unstaged events. Counts report confirmed staging results, including a concurrent worker's winner, not necessarily newly inserted rows or complete source coverage.
 
 The initial-pin tool deliberately refuses new operator memberships, so use it only for the initial configuration boundary. After provisioning the worker, use this dedicated operator's check and the reviewed membership/postflight checks; do not weaken the initial tool or silently repin. No scheduler, signer, B2 writer or restore reopening is enabled by these steps.
+
+## Producer authorization readiness (no publication)
+
+The next BACKUP-01/BACKUP-04 boundary is a separate ledger producer credential. Keep the existing Read Only credential: it independently verifies private bucket identity and absent lifecycle rules. The producer must have exactly `writeFiles`, only the ledger bucket, and the exact prefix `fmv-restore-evidence/v1/development/`. Do not reuse a master key, backup credential or ledger reader key.
+
+Backblaze's [Native create-key operation](https://www.backblaze.com/apidocs/b2-create-key) supports an explicit capability array, bucket IDs and name prefix. A dashboard “Write Only” label is not evidence of that exact array. Do not grant broader permissions merely to make setup convenient. If a suitable key does not exist, prepare a separately reviewed creation step; this checker does not create keys or require master credentials.
+
+Once that separate credential exists, append its values privately to root `.env`:
+
+```dotenv
+BACKUP_LEDGER_B2_PRODUCER_KEY_ID=replace_locally
+BACKUP_LEDGER_B2_PRODUCER_APPLICATION_KEY=replace_locally
+```
+
+Keep `.env` mode600 and both execution flags false. Run:
+
+```sh
+node --env-file=.env infra/scripts/check-restore-ledger-producer.mjs
+```
+
+This performs reader authorization and filtered bucket metadata lookup, then producer authorization only. It checks exact account/bucket ID against the independent reader, exact prefix and capabilities, expiration and expected provider endpoints. A null producer bucket name is accepted only with the matching verified bucket ID, consistent with the [v4 authorization response](https://www.backblaze.com/apidocs/b2-authorize-account). No upload URL, object listing, download, upload, hiding or deletion is attempted; no IDs, tokens or credentials are printed or persisted.
+
+Success proves authorization metadata only. `writeFiles` also permits [hide markers](https://www.backblaze.com/apidocs/b2-hide-file); it does not prove immutability, upload delivery, independent receipts or source-loss coverage. Actual publication and independent signing trust still need review and separate hosted approval; leave protection pending and restored services closed until their evidence requirements are met.

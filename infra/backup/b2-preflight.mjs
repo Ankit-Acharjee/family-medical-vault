@@ -203,6 +203,10 @@ async function checkPrivateDestination(config, fetcher, policy) {
     )
       throw fail();
     signal.throwIfAborted();
+    policy.observeIdentity?.({
+      accountId: auth.accountId,
+      bucketId: selected.id,
+    });
     let versionMetadata;
     if (policy.discoverVersions) {
       versionMetadata = await inspectLedgerVersionMetadata(
@@ -338,4 +342,121 @@ export function checkRestoreLedgerVersionDiscovery(
   fetcher = globalThis.fetch,
 ) {
   return checkLedgerDestination(config, fetcher, true);
+}
+
+export function restoreLedgerProducerConfig(env) {
+  try {
+    const reader = restoreLedgerDestinationConfig(env);
+    const producer = backupDestinationConfig({
+      BACKUP_ENABLED: 'false',
+      BACKUP_B2_BUCKET: reader.bucket,
+      BACKUP_B2_ENDPOINT: reader.endpoint,
+      BACKUP_B2_READ_KEY_ID: env.BACKUP_LEDGER_B2_PRODUCER_KEY_ID,
+      BACKUP_B2_READ_APPLICATION_KEY:
+        env.BACKUP_LEDGER_B2_PRODUCER_APPLICATION_KEY,
+    });
+    if ([reader.keyId, reader.backupKeyId].includes(producer.keyId))
+      throw fail();
+    return {
+      ...reader,
+      producerKeyId: producer.keyId,
+      producerApplicationKey: producer.applicationKey,
+    };
+  } catch {
+    throw fail();
+  }
+}
+
+// Authorization metadata only: no upload URL, object operation or returned token.
+export async function checkRestoreLedgerProducer(
+  config,
+  fetcher = globalThis.fetch,
+) {
+  try {
+    const c = restoreLedgerProducerConfig({
+      BACKUP_ENABLED: 'false',
+      BACKUP_LEDGER_ENABLED: 'false',
+      BACKUP_B2_BUCKET: config?.backupBucket,
+      BACKUP_B2_READ_KEY_ID: config?.backupKeyId,
+      BACKUP_LEDGER_B2_BUCKET: config?.bucket,
+      BACKUP_LEDGER_B2_ENDPOINT: config?.endpoint,
+      BACKUP_LEDGER_B2_READ_KEY_ID: config?.keyId,
+      BACKUP_LEDGER_B2_READ_APPLICATION_KEY: config?.applicationKey,
+      BACKUP_LEDGER_B2_PRODUCER_KEY_ID: config?.producerKeyId,
+      BACKUP_LEDGER_B2_PRODUCER_APPLICATION_KEY: config?.producerApplicationKey,
+    });
+    let identity;
+    await checkPrivateDestination(c, fetcher, {
+      prefixes: ['fmv-restore-evidence/v1/development/'],
+      noLifecycleRules: true,
+      observeIdentity: (value) => {
+        identity = value;
+      },
+    });
+    const signal = globalThis.AbortSignal.timeout(15000);
+    const auth = await json(
+      await fetcher(
+        'https://api.backblazeb2.com/b2api/v4/b2_authorize_account',
+        {
+          method: 'GET',
+          redirect: 'error',
+          credentials: 'omit',
+          cache: 'no-store',
+          signal,
+          headers: {
+            Accept: 'application/json',
+            Authorization:
+              'Basic ' +
+              Buffer.from(
+                c.producerKeyId + ':' + c.producerApplicationKey,
+              ).toString('base64'),
+          },
+        },
+      ),
+    );
+    const storage = auth?.apiInfo?.storageApi,
+      allowed = storage?.allowed;
+    if (
+      !object(auth) ||
+      !identity ||
+      auth.accountId !== identity.accountId ||
+      !text(auth.authorizationToken) ||
+      !object(allowed) ||
+      !Array.isArray(allowed.buckets) ||
+      allowed.buckets.length !== 1 ||
+      allowed.buckets[0]?.id !== identity.bucketId ||
+      (allowed.buckets[0]?.name !== null &&
+        allowed.buckets[0]?.name !== c.bucket) ||
+      !Array.isArray(allowed.capabilities) ||
+      allowed.capabilities.length !== 1 ||
+      allowed.capabilities[0] !== 'writeFiles' ||
+      allowed.namePrefix !== 'fmv-restore-evidence/v1/development/' ||
+      endpoint(storage.s3ApiUrl, 's3') !== c.endpoint ||
+      (auth.applicationKeyExpirationTimestamp !== null &&
+        (!Number.isSafeInteger(auth.applicationKeyExpirationTimestamp) ||
+          auth.applicationKeyExpirationTimestamp <= Date.now()))
+    )
+      throw fail();
+    endpoint(storage.apiUrl, 'api');
+    signal.throwIfAborted();
+    return {
+      destination: 'backblaze-b2',
+      privateBucket: true,
+      separateProducerKey: true,
+      sameAccountAndBucket: true,
+      exactDevelopmentPrefix: true,
+      writeFilesOnly: true,
+      automaticExpirationRulesAbsent: true,
+      objectAccessTested: false,
+      providerPublishingAttempted: false,
+      immutabilityVerified: false,
+      independentConfirmation: false,
+      sourceLossCoverageVerified: false,
+      ledgerWritesEnabled: false,
+    };
+  } catch {
+    throw new BackupDestinationError(
+      'Ledger producer authorization preflight failed; no provider publishing attempted.',
+    );
+  }
 }
