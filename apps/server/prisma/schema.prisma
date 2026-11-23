@@ -748,6 +748,7 @@ model ProfileActivationEvent {
 
 // Pending source evidence only; no receipt/confirmed state or source cascade.
 model RestoreLedgerEvent {
+ publication RestoreLedgerPublication?
  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
  patientId String @map("patient_id") @db.Uuid
  resourceId String @map("resource_id") @db.Uuid
@@ -757,5 +758,34 @@ model RestoreLedgerEvent {
  @@unique([kind,resourceId],map:"restore_ledger_event_source")
  @@index([recordedAt,id],map:"restore_ledger_events_recorded")
  @@map("restore_ledger_events")
+ @@schema("fmv")
+}
+
+// Operator-pinned public recovery context; catalog starts empty and inactive.
+model RestoreLedgerPolicy {
+ id String @id @db.Uuid
+ ledgerId String @map("ledger_id")
+ environment String
+ recipient String
+ recipientSha256 String @map("recipient_sha256")
+ enabled Boolean @default(false)
+ publications RestoreLedgerPublication[]
+ @@map("restore_ledger_policies")
+ @@schema("fmv")
+}
+
+// Immutable encrypted winner, not an independent receipt or completion state.
+model RestoreLedgerPublication {
+ eventId String @id @map("event_id") @db.Uuid
+ policyId String @map("policy_id") @db.Uuid
+ sourceSha256 String @map("source_sha256")
+ payloadSha256 String @map("payload_sha256")
+ ciphertext Bytes
+ ciphertextBytes Int @map("ciphertext_bytes")
+ ciphertextSha256 String @map("ciphertext_sha256")
+ stagedAt DateTime @default(dbgenerated("clock_timestamp()")) @map("staged_at") @db.Timestamptz(3)
+ event RestoreLedgerEvent @relation(fields:[eventId],references:[id],onDelete:Restrict,onUpdate:NoAction)
+ policy RestoreLedgerPolicy @relation(fields:[policyId],references:[id],onDelete:Restrict,onUpdate:NoAction)
+ @@map("restore_ledger_publications")
  @@schema("fmv")
 }

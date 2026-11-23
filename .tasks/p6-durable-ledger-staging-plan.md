@@ -1,6 +1,6 @@
 # DEL-03 — next production dependency: stable encrypted staging
 
-Status: architecture reviewed by Astra; implementation not started. The user is choosing whether ledger encryption uses the verified development age recipient or a separate recovery identity. Do not choose a key, generate a second identity or activate hosted staging before this answer.
+Status: user approved reuse of the existing verified development public recipient on 23 November. Private recovery material stays outside the app. Local staging implementation is underway; hosted roles/policy activation/publication retain separate approval.
 
 ## Planned boundary
 - Pin an operator-approved public recipient, ledger/environment identity and envelope version. Never pass private recovery material to the app or staging process.

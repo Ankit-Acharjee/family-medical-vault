@@ -20,7 +20,6 @@ import {
 } from 'node:fs/promises';
 import path from 'node:path';
 import { withTool } from '../ci/tools.mjs';
-import { encodeRestoreEvidence } from '../backup/restore-evidence.mjs';
 
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const database = 'fmv_ledger_receiver_test';
@@ -36,6 +35,8 @@ export async function verifySyntheticLinkPublication({
 }) {
   let receiver,
     directory,
+    policyId,
+    policyInserted = false,
     stage = 'harness';
   try {
     try {
@@ -68,7 +69,7 @@ export async function verifySyntheticLinkPublication({
            e.id AS event_id,e.kind,e.occurred_at,e.recorded_at
            FROM fmv.temporary_links l JOIN fmv.restore_ledger_events e
            ON e.resource_id=l.id AND e.kind='link.revoked'
-           WHERE l.revoked_at IS NOT NULL ORDER BY e.id LIMIT 1`,
+           WHERE l.revoked_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM fmv.restore_ledger_publications p WHERE p.event_id=e.id) ORDER BY e.id LIMIT 1`,
         )
       ).rows[0];
       assert.ok(selected);
@@ -124,23 +125,29 @@ export async function verifySyntheticLinkPublication({
       );
 
       const ledgerId = randomUUID().replaceAll('-', ''),
-        evidence = encodeRestoreEvidence({
-          format: 'fmv-restore-evidence-v1',
-          ledgerId,
-          afterSequence: 0,
-          throughSequence: 1,
-          events: [
-            {
-              sequence: 1,
-              eventId: event.id,
-              patientId: event.patient_id,
-              resourceId: event.resource_id,
-              kind: event.kind,
-              lifecycle: null,
-              occurredAt: event.occurred_at.getTime(),
-            },
-          ],
-        });
+        eventValue = {
+          eventId: event.id,
+          patientId: event.patient_id,
+          resourceId: event.resource_id,
+          kind: event.kind,
+          lifecycle: null,
+          occurredAt: event.occurred_at.getTime(),
+        };
+      const asStager = async (connection, action) => {
+        await connection.query('SET ROLE fmv_ledger_stager');
+        try {
+          return await action();
+        } finally {
+          await connection.query('RESET ROLE');
+        }
+      };
+      const readArtifact = async (connection) =>
+        (
+          await connection.query(
+            'SELECT * FROM fmv.restore_ledger_publications WHERE event_id=$1::uuid',
+            [event.id],
+          )
+        ).rows[0];
       stage = 'encryption';
       const stagedCiphertext = path.join(directory, `${event.id}.age`);
       const ciphertext = await withTool('age', async (age) => {
@@ -164,16 +171,72 @@ export async function verifySyntheticLinkPublication({
         };
         run(keygen, ['-o', identity]);
         const recipient = run(keygen, ['-y', identity]);
-        await writeFile(plaintext, evidence, { flag: 'wx', mode: 0o600 });
-        run(age, ['-r', recipient, '-o', encrypted, plaintext]);
-        await rm(plaintext);
-        run(age, ['-d', '-i', identity, '-o', decrypted, encrypted]);
-        assert.ok((await readFile(decrypted)).equals(evidence));
-        const encryptedBytes = await readFile(encrypted);
-        assert.ok(
-          encryptedBytes.length > 0 && !encryptedBytes.equals(evidence),
+        policyId = randomUUID();
+        await source.query(
+          `INSERT INTO fmv.restore_ledger_policies
+           (id,ledger_id,environment,recipient,recipient_sha256,enabled)
+           VALUES($1::uuid,$2,'development',$3,$4,true)`,
+          [policyId, ledgerId, recipient, hash(recipient)],
         );
-        return encryptedBytes;
+        policyInserted = true;
+        return asStager(source, async () => {
+          const evidence = (
+            await source.query(
+              'SELECT fmv.prepare_restore_event($1::uuid,$2::uuid) AS payload',
+              [event.id, policyId],
+            )
+          ).rows[0].payload;
+          const expected = {
+            format: 'fmv-restore-event-v1',
+            environment: 'development',
+            ledgerId,
+            recipientSha256: hash(recipient),
+            event: eventValue,
+          };
+          const decoded = JSON.parse(evidence.toString('utf8'));
+          assert.deepEqual(decoded, expected);
+          assert.ok(evidence.equals(Buffer.from(JSON.stringify(expected))));
+          assert.ok(!('sequence' in decoded) && !('sequence' in decoded.event));
+          await writeFile(plaintext, evidence, { flag: 'wx', mode: 0o600 });
+          run(age, ['-r', recipient, '-o', encrypted, plaintext]);
+          await rm(plaintext);
+          run(age, ['-d', '-i', identity, '-o', decrypted, encrypted]);
+          assert.ok((await readFile(decrypted)).equals(evidence));
+          const encryptedBytes = await readFile(encrypted);
+          assert.ok(
+            encryptedBytes.length > 0 && !encryptedBytes.equals(evidence),
+          );
+          stage = 'staging';
+          const artifact = (
+            await source.query(
+              'SELECT * FROM fmv.stage_restore_event($1::uuid,$2::uuid,$3::text,$4::bytea)',
+              [event.id, policyId, hash(evidence), encryptedBytes],
+            )
+          ).rows[0];
+          assert.equal(artifact.event_id, event.id);
+          assert.equal(artifact.policy_id, policyId);
+          assert.equal(
+            artifact.source_sha256,
+            hash(JSON.stringify(eventValue)),
+          );
+          assert.equal(artifact.payload_sha256, hash(evidence));
+          assert.equal(artifact.ciphertext_bytes, encryptedBytes.length);
+          assert.equal(artifact.ciphertext_sha256, hash(encryptedBytes));
+          assert.ok(artifact.ciphertext.equals(encryptedBytes));
+          assert.deepEqual(await readArtifact(source), artifact);
+          const measured = (
+            await source.query(
+              `SELECT octet_length(ciphertext) AS bytes,encode(sha256(ciphertext),'hex') AS digest
+               FROM fmv.restore_ledger_publications WHERE event_id=$1::uuid`,
+              [event.id],
+            )
+          ).rows[0];
+          assert.deepEqual(measured, {
+            bytes: encryptedBytes.length,
+            digest: hash(encryptedBytes),
+          });
+          return artifact.ciphertext;
+        });
       });
 
       const signing = generateKeyPairSync('ed25519'),
@@ -321,10 +384,34 @@ export async function verifySyntheticLinkPublication({
       receiver = undefined;
       receiver = await connectReceiver();
       stage = 'replay';
-      const replayCiphertext = await readFile(stagedCiphertext);
-      assert.equal(replayCiphertext.length, ciphertext.length);
-      assert.equal(hash(replayCiphertext), hash(ciphertext));
-      assert.ok(replayCiphertext.equals(ciphertext));
+      const stagedFile = await readFile(stagedCiphertext);
+      assert.equal(stagedFile.length, ciphertext.length);
+      assert.equal(hash(stagedFile), hash(ciphertext));
+      assert.ok(stagedFile.equals(ciphertext));
+      // Reopen the immutable SQL artifact on another source connection. Retry
+      // its exact stored ciphertext, never another randomized age encryption.
+      const reloadedSource = client('fmv_dev');
+      let replayCiphertext;
+      try {
+        assert.equal(reloadedSource.connectionParameters.host, '127.0.0.1');
+        assert.equal(reloadedSource.connectionParameters.database, 'fmv_dev');
+        assert.equal(
+          reloadedSource.connectionParameters.port,
+          source.connectionParameters.port,
+        );
+        await reloadedSource.connect();
+        const artifact = await asStager(reloadedSource, () =>
+          readArtifact(reloadedSource),
+        );
+        assert.equal(artifact.event_id, event.id);
+        assert.equal(artifact.policy_id, policyId);
+        assert.equal(artifact.ciphertext_bytes, stagedFile.length);
+        assert.equal(artifact.ciphertext_sha256, hash(stagedFile));
+        assert.ok(artifact.ciphertext.equals(stagedFile));
+        replayCiphertext = artifact.ciphertext;
+      } finally {
+        await reloadedSource.end();
+      }
       const committed = await readReceiver(),
         retry = await publish(replayCiphertext),
         repeated = await publish(replayCiphertext);
@@ -377,6 +464,8 @@ export async function verifySyntheticLinkPublication({
       return {
         pendingIntentRepairVerified: true,
         encryptedLinkEvidenceRoundTrip: true,
+        canonicalEventPreparedAndStaged: true,
+        sqlStagedCiphertextRetryVerified: true,
         receiverCiphertextStoredExactly: true,
         receiverRetryIdempotent: true,
         conflictingCiphertextRejected: true,
@@ -392,6 +481,11 @@ export async function verifySyntheticLinkPublication({
       const cleanup = await Promise.allSettled([
         receiver?.end(),
         directory && rm(directory, { recursive: true, force: true }),
+        policyInserted &&
+          source.query(
+            'UPDATE fmv.restore_ledger_policies SET enabled=false WHERE id=$1::uuid',
+            [policyId],
+          ),
       ]);
       if (cleanup.some((result) => result.status !== 'fulfilled'))
         stage = 'cleanup';

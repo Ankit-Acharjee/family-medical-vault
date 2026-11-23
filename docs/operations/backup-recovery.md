@@ -54,3 +54,7 @@ Retain encrypted deletion/revocation evidence while any affected backup could re
 ## Approved deletion/revocation completion — 22 November 2026
 
 Deletion and access revocation must deny local access immediately, but may be reported completed only after independent restore-ledger confirmation. If confirmation fails, show pending protection rather than false completion; preserve the local denial. Restored services remain closed when evidence is incomplete. This defines completion/failure behavior, not new mutation authority or an automatic owner-assisted recovery fallback. Source transaction, receipt authenticity and crash-ordering guarantees must be verified before activation.
+
+## Approved development ledger encryption recipient — 23 November 2026
+
+Reuse the existing verified development age public recipient for ledger encryption. Its private recovery identity remains in the user-controlled Bitwarden and paper recovery copies, outside the app and staging process. This does not approve a new signing identity, operator login, hosted role grant, policy activation, object publication or restore reopening.
