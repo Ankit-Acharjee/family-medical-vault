@@ -19,6 +19,9 @@ const { Client } = createRequire(
   new URL('../../apps/server/package.json', import.meta.url),
 )('pg');
 let client;
+let phase = 'configuration';
+let preparationStarted = false;
+const missingConnection = new Error('Missing dedicated staging connection');
 try {
   const [mode, target, ...extra] = process.argv.slice(2);
   if (
@@ -29,6 +32,11 @@ try {
     process.env.BACKUP_LEDGER_ENABLED !== 'false'
   )
     throw Error();
+  if (
+    !process.env.DATABASE_LEDGER_STAGING_URL ||
+    process.env.DATABASE_LEDGER_STAGING_URL.startsWith('replace_')
+  )
+    throw missingConnection;
   const readSmall = async (name, maximum) => {
     const file = new URL(name, root),
       stat = await lstat(file);
@@ -58,7 +66,9 @@ try {
     options: '-c timezone=UTC',
     application_name: 'fmv-development-ledger-preparation',
   });
+  phase = 'connection';
   await client.connect();
+  phase = 'operator permissions';
   if (
     client.connection.stream.authorized !== true ||
     (
@@ -145,6 +155,8 @@ try {
   )
     throw Error();
   await client.query('SET ROLE fmv_ledger_stager');
+  phase = mode === '--check' ? 'read-only pin check' : 'preparation';
+  preparationStarted = mode === '--prepare';
   let result;
   if (mode === '--check') result = await prepareLedgerEvents(client, plan);
   else
@@ -169,10 +181,27 @@ try {
       }),
     );
   process.stdout.write(JSON.stringify(result) + '\n');
-} catch {
-  process.stderr.write(
-    'Ledger preparation unavailable. Some events may already be staged; retry is safe. Check the dedicated operator, frozen public pin and explicit development mode. No provider publishing was attempted; no record or key values printed.\n',
-  );
+} catch (error) {
+  if (error === missingConnection) {
+    process.stderr.write(
+      'Set DATABASE_LEDGER_STAGING_URL in repository-root .env using the dedicated worker credentials. No changes were made. Never paste the URL or password in chat.\n',
+    );
+  } else {
+    const code =
+      typeof error?.code === 'string' && /^[A-Z0-9]{5}$/.test(error.code)
+        ? ' (code ' + error.code + ')'
+        : '';
+    process.stderr.write(
+      'Ledger preparation unavailable during ' +
+        phase +
+        code +
+        '. ' +
+        (preparationStarted
+          ? 'Some events may already be staged; retry is safe. '
+          : 'No event preparation was attempted. ') +
+        'No provider publishing was attempted; no record or key values printed.\n',
+    );
+  }
   process.exitCode = 1;
 } finally {
   if (client) {
