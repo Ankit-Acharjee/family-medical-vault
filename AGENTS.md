@@ -47,6 +47,7 @@ UI delivery must cover the complete interaction lifecycle: native picker open/ca
 - After each completed feature passes review and required verification, commit it with the implementation context below, push to `develop`, and proceed to the next task. The user has granted standing approval for this workflow; hosted writes and deployments retain their separate approval requirements.
 
 ## Local resource limits
+- Simplicity override, 24 November 2026: prioritize completing and validating existing application flows over expanding infrastructure. Do not introduce another provider, service or durable store without a concrete requirement and explicit approval. Set aside the proposed Lambda/independent signing deployment; keep recovery gaps documented as release blockers rather than extending this work automatically. Backblaze B2 is the chosen backup destination. Bitwarden is the user's optional personal credential/recovery-key storage, not an application dependency or a requirement for family users; preserve existing recovery copies and credentials.
 - This device has limited resources. Keep routine implementation and checks Docker-free.
 - Start Docker only when necessary for final container/database verification; keep sessions short and stop project containers after verification. Preserve development volumes and credentials.
 - Do not start or keep Docker Desktop running proactively during development. Respect the user's decision to close it.

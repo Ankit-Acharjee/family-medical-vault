@@ -80,9 +80,6 @@ test('all destinations reachable, with browser history and no clinical fixtures'
   );
   await expect(
     page.getByRole('searchbox', { name: 'Search documents' }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole('textbox', { name: 'Search documents' }),
   ).toBeDisabled();
   expect(await page.evaluate(() => Object.keys(sessionStorage))).toEqual([]);
 });

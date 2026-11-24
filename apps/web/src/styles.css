@@ -374,6 +374,20 @@ p {
   color: var(--text-muted);
   opacity: 1;
 }
+.overview-search input {
+  padding-right: 52px;
+}
+.overview-search input:not(:disabled) {
+  color: var(--text);
+}
+.overview-search-submit {
+  position: absolute;
+  right: 2px;
+  top: 1px;
+  width: 44px;
+  min-height: 44px;
+  padding: 0;
+}
 .search-strip > p {
   color: var(--text-muted);
   font-size: 14px;

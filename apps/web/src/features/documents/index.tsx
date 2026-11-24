@@ -145,9 +145,13 @@ function uploadResult(value: unknown): value is UploadResult {
 export function DocumentsPanel({
   onRequestUpload,
   refreshRevision = 0,
+  initialSearch,
+  onInitialSearchConsumed,
 }: {
   onRequestUpload?: () => void;
   refreshRevision?: number;
+  initialSearch?: { patientId: string; query: string } | null;
+  onInitialSearchConsumed?: () => void;
 }) {
   const { selectedPatient, loading: patientsLoading } = usePatientContext();
   const retainedPatient = useRef(selectedPatient);
@@ -229,6 +233,7 @@ export function DocumentsPanel({
   const editAction = useRef<AbortController | null>(null);
   const editingBusy = useRef(false);
   const listPatient = useRef(patientId);
+  const consumedSearch = useRef<typeof initialSearch>(null);
   const active = useRef(patientId);
   active.current = patientId;
   const action = useRef<AbortController | null>(null);
@@ -441,6 +446,22 @@ export function DocumentsPanel({
       lifecycleAction.current?.abort();
     };
   }, [patientId, patientsLoading, version, refreshRevision, view]);
+  useEffect(() => {
+    if (
+      patientsLoading ||
+      !patientId ||
+      !initialSearch ||
+      initialSearch.patientId !== patientId ||
+      consumedSearch.current === initialSearch
+    )
+      return;
+    consumedSearch.current = initialSearch;
+    setFilters((previous) => ({
+      ...previous,
+      query: initialSearch.query.slice(0, 200),
+    }));
+    onInitialSearchConsumed?.();
+  }, [initialSearch, onInitialSearchConsumed, patientId, patientsLoading]);
   useEffect(
     () => () => {
       if (preview) URL.revokeObjectURL(preview.url);

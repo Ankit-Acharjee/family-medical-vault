@@ -163,7 +163,7 @@ for (const theme of ['light', 'dark'] as const) {
         expect(intersects, `hero art overlaps copy at ${width}px`).toBe(false);
       }
       await expect(
-        page.getByRole('textbox', { name: 'Search documents' }),
+        page.getByRole('searchbox', { name: 'Search documents' }),
       ).toBeDisabled();
 
       if (mobile) {

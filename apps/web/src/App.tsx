@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowRight,
   ChevronDown,
@@ -88,11 +88,27 @@ export default function App() {
   const [expanded, setExpanded] = useState(false);
   const [dialog, setDialog] = useState<'patient' | 'upload' | null>(null);
   const [listRevision, setListRevision] = useState(0);
+  const [searchDraft, setSearchDraft] = useState<{
+    patientId: string;
+    query: string;
+  } | null>(null);
+  const [documentSearch, setDocumentSearch] = useState<{
+    patientId: string;
+    query: string;
+  } | null>(null);
+  const consumeDocumentSearch = useCallback(() => setDocumentSearch(null), []);
   const [uploadNotice, setUploadNotice] = useState<{
     patientId: string;
     potentialDuplicate: boolean;
   } | null>(null);
   const { selectedPatient, loading: patientsLoading } = usePatientContext();
+  useEffect(() => {
+    if (patientsLoading) return;
+    if (searchDraft && searchDraft.patientId !== selectedPatient?.id)
+      setSearchDraft(null);
+    if (documentSearch && documentSearch.patientId !== selectedPatient?.id)
+      setDocumentSearch(null);
+  }, [selectedPatient?.id, patientsLoading, searchDraft, documentSearch]);
   useEffect(() => {
     setUploadNotice(null);
   }, [selectedPatient?.id, patientsLoading]);
@@ -109,7 +125,9 @@ export default function App() {
   useEffect(() => {
     const onHashChange = () => {
       captureIncomingLink();
-      setDestination(readDestination());
+      const next = readDestination();
+      if (next !== 'documents') setDocumentSearch(null);
+      setDestination(next);
     };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
@@ -224,18 +242,67 @@ export default function App() {
           destination !== 'trends' &&
           destination !== 'medications' && (
             <div className="search-strip">
-              <div className="search-field">
+              <form
+                className="search-field overview-search"
+                role="search"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (
+                    !selectedPatient ||
+                    patientsLoading ||
+                    searchDraft?.patientId !== selectedPatient.id ||
+                    !searchDraft.query.trim()
+                  )
+                    return;
+                  setDocumentSearch({
+                    patientId: selectedPatient.id,
+                    query: searchDraft.query.trim(),
+                  });
+                  setSearchDraft(null);
+                  window.location.hash = 'documents';
+                }}
+              >
                 <Search size={18} aria-hidden="true" />
                 <Input
                   aria-label="Search documents"
                   aria-describedby="search-help"
                   placeholder="Search documents"
-                  disabled
+                  type="search"
+                  maxLength={200}
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={
+                    searchDraft?.patientId === selectedPatient?.id
+                      ? (searchDraft?.query ?? '')
+                      : ''
+                  }
+                  onChange={(event) => {
+                    if (selectedPatient && !patientsLoading)
+                      setSearchDraft({
+                        patientId: selectedPatient.id,
+                        query: event.target.value,
+                      });
+                  }}
+                  disabled={!selectedPatient || patientsLoading}
                 />
-              </div>
+                <Button
+                  type="submit"
+                  variant="ghost"
+                  className="overview-search-submit"
+                  aria-label="Search selected patient documents"
+                  disabled={
+                    !selectedPatient ||
+                    patientsLoading ||
+                    searchDraft?.patientId !== selectedPatient.id ||
+                    !searchDraft.query.trim()
+                  }
+                >
+                  <ArrowRight size={18} aria-hidden="true" />
+                </Button>
+              </form>
               <p id="search-help">
                 {selectedPatient
-                  ? 'Document search is not available yet.'
+                  ? 'Search this patient’s document names and saved text.'
                   : 'Select a patient to search their documents.'}
               </p>
             </div>
@@ -337,6 +404,8 @@ export default function App() {
           ) : destination === 'documents' &&
             (selectedPatient || patientsLoading) ? (
             <DocumentsPanel
+              initialSearch={documentSearch}
+              onInitialSearchConsumed={consumeDocumentSearch}
               refreshRevision={listRevision}
               onRequestUpload={() => openDialog('upload')}
             />
