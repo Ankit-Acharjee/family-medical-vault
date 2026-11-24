@@ -17,3 +17,29 @@ Status: local publication/receipt core verified; live transport and signer deplo
 - An event receipt does not authenticate an exhaustive current head. Source-loss coverage, missing tails, rollback and ledger retention remain separate recovery gates. Restored services stay closed; no inferred sequence or activation authority.
 
 No changes to application routes, patient permissions, source completion behavior or backend hosting are authorized by this plan alone.
+
+## Hosting proposal for review — 24 November
+
+The user confirmed there is no separate verifier runtime. This proposal is not an approved technology decision or a deployment instruction.
+
+| Option | Suitability and limits |
+| --- | --- |
+| Dedicated AWS account: Lambda receiver and a narrowly permissioned durable receipt store | Recommended candidate for provider separation from Supabase, primary R2 and the planned Oracle/Render API. Account setup, billing eligibility, region, invocation authentication, key custody and durable storage must be approved and verified first. |
+| Cloudflare Worker in a separate account with a durable receipt store | Can separate account credentials, but shares a provider with primary R2. This does not provide equivalent provider-failure independence. Runtime crypto/storage limits need validation; no guaranteed-free claim. |
+| GitHub Actions in an isolated repository/environment | Candidate for a development-only asynchronous verification drill, not a substitute for a continuously available authenticated receipt service. Workflow-edit and secret access must be independently protected. No scheduler availability or prompt delivery guarantee. |
+
+### Recommended candidate boundary
+
+- A dedicated AWS account with MFA and separate administration, not application AWS credentials or the primary API runtime. No resources or paid plan selected yet.
+- A small authenticated Lambda receiver, no anonymous signing endpoint. Invocation authentication must be designed explicitly before deployment; do not add broad permanent administrative credentials to the app.
+- Separate read-only B2 key restricted to the existing encrypted evidence bucket/prefix. The receiver reads exact version bytes itself and never receives originals, plaintext medical fields, the Supabase owner URL or the age recovery private identity.
+- A new private Ed25519 signing identity accessible only to the receiver. Candidate custody is a narrowly scoped secret service rather than app configuration; key generation, recovery, rotation and public pin distribution require a concrete approved setup. This is separate from encryption and reuses no SSH login or recovery key.
+- A durable idempotent receipt store with conditional create/read and no routine update/delete permission. DynamoDB is a candidate to evaluate, not an approved additional application database. Store opaque bindings and signatures only, no clinical data. The repository's one-primary-database rule requires explicit architecture approval before adopting this additional security evidence store.
+- Persist a receipt before acknowledgement. A receiver outage or conflicting receipt keeps protection pending. Separate complete-head/anti-rollback evidence is still needed for source-loss recovery; cloud placement and valid signatures alone do not solve it.
+- Treat opaque identifiers and hashes as sensitive metadata: restrict receipt reads and omit them from routine logs. Preserve the trusted public-key pin outside the receiver account as well as outside the received object; losing or compromising that account must not let it silently replace recovery trust.
+
+### Cost and approval boundary
+
+AWS lists [Lambda pricing](https://aws.amazon.com/lambda/pricing/), [DynamoDB pricing](https://aws.amazon.com/dynamodb/pricing/) and [account Free Tier terms](https://aws.amazon.com/free/); actual eligibility and aggregate costs must be checked for the account/region, including secrets, requests and logs. Do not promise permanent free operation or treat alerts as a hard spending cap. AWS [recommends a secret service](https://docs.aws.amazon.com/lambda/latest/dg/configuration-envvars.html) for sensitive values. Cloudflare has separate [Workers plan and limit terms](https://developers.cloudflare.com/workers/platform/pricing/). GitHub [environment protections](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments) depend on plan and repository visibility.
+
+User choice needed: accept the AWS candidate for a detailed cost-bounded architecture/setup review, choose the weaker Cloudflare account boundary explicitly, or defer live integration. No account, billing enrollment, cloud resource, private signing key or hosted write will be created from this proposal alone.
