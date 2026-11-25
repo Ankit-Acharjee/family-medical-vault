@@ -48,3 +48,7 @@ These are intercepted synthetic frontend acceptance checks, not proof of hosted 
 ## Caregiver and activation acceptance — 25 November
 
 Following recent-document delivery2160e54, existing family-access, managed-profile and profile-activation browser suites passed26/26 in desktop/mobile Chrome with synthetic API fixtures. They cover explicit scoped invitation/proposal approval, no automatic claim, explicit managed creation/selection, idempotent uncertain retries, consent reset on refresh, creator-only activation approval, existing-identity deferral and protected-state clearing on denial. No new defect, hosted change or product feature was introduced. This verifies existing frontend behavior against controlled responses, not real email/OAuth delivery or a production identity transfer.
+
+## Health context and private emergency acceptance — 25 November
+
+Medication, schedules/reminders, inventory, manual readings and grounded summaries: all128 existing cases observed passing across the initial run and corrected Overview fixture reruns; six new medication-source navigation cases passed (see medication-source-navigation-report.md for initial failures and exact limits). Measurement workspace and private emergency profile then passed38/38, including source checks, chart accessibility, comparisons, invalidation, histories, owner/delegate authority and both-theme narrow layouts. Public emergency QR remains disabled. No hosted clinical data, provider writes or live-family pilot was used.
