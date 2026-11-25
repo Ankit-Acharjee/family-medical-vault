@@ -259,3 +259,7 @@
 ## Upload entry verified — 25 November
 - Final uploadentry/focus/duplicate/shell run:70passed,2 preexisting explicit-viewport mobile skips; all16 newcases passed. Build/types, lint, format, secrets and diff passed. Actual lightdesktop/darkmobile picker+fileform screenshots inspected. SourceAstrareview clean, Sol7 scenarios plus supervisorqueueedge; no hostedoperations.
 - Commit/push this slice, then run existing46-case vault/preview/original-export/shared-recipient/Trash acceptance batch with syntheticfixtures, one test-ownedserver and installedChrome. No new infra/services or productfeatures. Fix only concrete app defects; document remaining release/optional-feature gates honestly.
+
+## Core functional batch completed — 25 November
+- b6384d6 is pushed todevelop. Existing vault/preview/export/shared-recipient/Trash acceptance46/46 passed, following upload/shell70passes+2 existing duplicate-viewport skips. No additional defect found; no further source change or infrastructure required. See core-application-acceptance.md for synthetic-only limits; do not claim production or whole-roadmap completion.
+- Preserve the simplicity override: no automatic Lambda/independent-signer continuation, provider provisioning or new durable store. Existing backup/recovery release gaps remain unfinished; Bitwarden is personal optional custody only. For the next application slice, select a concrete remaining requirement or reproduce an actual user-flow issue before adding code, services or abstractions; do not manufacture work from passing checks.
