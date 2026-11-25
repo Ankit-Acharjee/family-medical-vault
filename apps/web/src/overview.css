@@ -173,6 +173,9 @@
 .overview-screen .overview-record-icon {
   display: none;
 }
+.overview-screen .records-section.recent-documents .section-heading {
+  padding-right: 0;
+}
 .overview-screen .context-note {
   margin: 20px 0;
   font-size: 14px;

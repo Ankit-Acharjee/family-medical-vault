@@ -11,6 +11,8 @@ import { SavedExtractionDialog } from './SavedExtractionDialog';
 import type { SavedTextSource } from './SavedExtractionDialog';
 import type { DocumentTextSource } from './DocumentTextDialog';
 import { DuplicateUploadNotice } from './DuplicateUploadNotice';
+import { isDocumentsResult as documents } from './document-results';
+import type { DocumentOpenRequest } from './document-results';
 import {
   DocumentsViewSwitcher,
   DocumentTrashConfirmation,
@@ -70,41 +72,6 @@ function message(error: unknown) {
 }
 const object = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v);
-function documents(
-  value: unknown,
-  patientId: string,
-): value is DocumentsResult {
-  return (
-    object(value) &&
-    typeof value.storageReady === 'boolean' &&
-    Array.isArray(value.documents) &&
-    value.documents.every(
-      (d: unknown) =>
-        object(d) &&
-        typeof d.id === 'string' &&
-        !!d.id &&
-        d.patientId === patientId &&
-        typeof d.title === 'string' &&
-        !!d.title &&
-        typeof d.mimeType === 'string' &&
-        documentMimeTypes.includes(d.mimeType as DocumentMimeType) &&
-        typeof d.bytes === 'number' &&
-        Number.isSafeInteger(d.bytes) &&
-        d.bytes > 0 &&
-        typeof d.createdAt === 'string' &&
-        !Number.isNaN(Date.parse(d.createdAt)) &&
-        typeof d.categoryId === 'string' &&
-        typeof d.canView === 'boolean' &&
-        typeof d.canExport === 'boolean' &&
-        (d.canEdit === undefined || typeof d.canEdit === 'boolean') &&
-        (d.canManageConsent === undefined ||
-          typeof d.canManageConsent === 'boolean') &&
-        (d.originalTitle === undefined ||
-          typeof d.originalTitle === 'string') &&
-        (d.categoryName === undefined || typeof d.categoryName === 'string'),
-    )
-  );
-}
 function trashDocuments(
   value: unknown,
   patientId: string,
@@ -147,11 +114,15 @@ export function DocumentsPanel({
   refreshRevision = 0,
   initialSearch,
   onInitialSearchConsumed,
+  initialDocument,
+  onInitialDocumentConsumed,
 }: {
   onRequestUpload?: () => void;
   refreshRevision?: number;
   initialSearch?: { patientId: string; query: string } | null;
   onInitialSearchConsumed?: () => void;
+  initialDocument?: DocumentOpenRequest | null;
+  onInitialDocumentConsumed?: () => void;
 }) {
   const { selectedPatient, loading: patientsLoading } = usePatientContext();
   const retainedPatient = useRef(selectedPatient);
@@ -234,6 +205,16 @@ export function DocumentsPanel({
   const editingBusy = useRef(false);
   const listPatient = useRef(patientId);
   const consumedSearch = useRef<typeof initialSearch>(null);
+  const consumedDocument = useRef<typeof initialDocument>(null);
+  const documentHandoff = useRef({
+    selection: initialDocument,
+    consume: onInitialDocumentConsumed,
+  });
+  documentHandoff.current = {
+    selection: initialDocument,
+    consume: onInitialDocumentConsumed,
+  };
+  const successfulList = useRef<DocumentsResult | null>(null);
   const active = useRef(patientId);
   active.current = patientId;
   const action = useRef<AbortController | null>(null);
@@ -303,6 +284,7 @@ export function DocumentsPanel({
     )?.focus();
   }, [list, busy, patientsLoading]);
   useEffect(() => {
+    successfulList.current = null;
     lifecycleAction.current?.abort();
     lifecycleInProgress.current = false;
     setLifecycleBusy(false);
@@ -347,6 +329,7 @@ export function DocumentsPanel({
           throw new Error();
         if (!controller.signal.aborted && active.current === patientId) {
           if (view === 'active' && documents(result, patientId)) {
+            successfulList.current = result;
             setList({ id: patientId, view: 'active', value: result });
             setPreview((previous) =>
               previous &&
@@ -425,6 +408,13 @@ export function DocumentsPanel({
       })
       .catch((e: unknown) => {
         if (!controller.signal.aborted && active.current === patientId) {
+          if (e instanceof RequestError && [401, 403, 404].includes(e.status)) {
+            const pending = documentHandoff.current;
+            if (pending.selection?.patientId === patientId) {
+              consumedDocument.current = pending.selection;
+              pending.consume?.();
+            }
+          }
           setError(message(e));
           setList(null);
           setPreview(null);
@@ -475,51 +465,54 @@ export function DocumentsPanel({
     setList(null);
     setError('Document access is no longer available. Refresh and try again.');
   }, []);
-  async function read(document: DocumentSummary, download: boolean) {
-    if (!patientId) return;
-    if (!download)
-      previewTrigger.current =
-        window.document.activeElement instanceof HTMLElement
-          ? window.document.activeElement
-          : null;
-    action.current?.abort();
-    const controller = new AbortController();
-    action.current = controller;
-    setActionError('');
-    try {
-      const response = await request(
-        `${base(patientId)}/documents/${encodeURIComponent(document.id)}/${download ? 'download' : 'preview'}`,
-        { signal: controller.signal },
-      );
-      const blob = await response.blob();
-      if (controller.signal.aborted || active.current !== patientId) return;
-      const safeBlob = new Blob([blob], { type: document.mimeType });
-      const url = URL.createObjectURL(safeBlob);
-      if (download) {
-        const link = window.document.createElement('a');
-        link.href = url;
-        link.download = document.title;
-        link.click();
-        window.setTimeout(() => URL.revokeObjectURL(url), 0);
-      } else
-        setPreview({
-          id: patientId,
-          title: document.title,
-          documentId: document.id,
-          url,
-          mime: document.mimeType,
-        });
-    } catch (e) {
-      if (!controller.signal.aborted && active.current === patientId) {
-        if (e instanceof RequestError && [401, 403, 404].includes(e.status)) {
-          setList(null);
-          setPreview(null);
-          setExtraction(null);
-          setError(message(e));
-        } else setActionError(message(e));
+  const read = useCallback(
+    async (document: DocumentSummary, download: boolean) => {
+      if (!patientId) return;
+      if (!download)
+        previewTrigger.current =
+          window.document.activeElement instanceof HTMLElement
+            ? window.document.activeElement
+            : null;
+      action.current?.abort();
+      const controller = new AbortController();
+      action.current = controller;
+      setActionError('');
+      try {
+        const response = await request(
+          `${base(patientId)}/documents/${encodeURIComponent(document.id)}/${download ? 'download' : 'preview'}`,
+          { signal: controller.signal },
+        );
+        const blob = await response.blob();
+        if (controller.signal.aborted || active.current !== patientId) return;
+        const safeBlob = new Blob([blob], { type: document.mimeType });
+        const url = URL.createObjectURL(safeBlob);
+        if (download) {
+          const link = window.document.createElement('a');
+          link.href = url;
+          link.download = document.title;
+          link.click();
+          window.setTimeout(() => URL.revokeObjectURL(url), 0);
+        } else
+          setPreview({
+            id: patientId,
+            title: document.title,
+            documentId: document.id,
+            url,
+            mime: document.mimeType,
+          });
+      } catch (e) {
+        if (!controller.signal.aborted && active.current === patientId) {
+          if (e instanceof RequestError && [401, 403, 404].includes(e.status)) {
+            setList(null);
+            setPreview(null);
+            setExtraction(null);
+            setError(message(e));
+          } else setActionError(message(e));
+        }
       }
-    }
-  }
+    },
+    [patientId],
+  );
   async function rename() {
     if (
       !editing ||
@@ -718,6 +711,54 @@ export function DocumentsPanel({
           (matchesDocumentTitle(doc, filters.query) ||
             (doc.canView && search.documentIds.has(doc.id))),
       );
+  useEffect(() => {
+    if (
+      !initialDocument ||
+      consumedDocument.current === initialDocument ||
+      initialDocument.patientId !== patientId ||
+      busy ||
+      patientsLoading ||
+      !current ||
+      current !== successfulList.current
+    )
+      return;
+    if (filters.query || filters.category || filters.from || filters.to) {
+      setFilters({ query: '', category: '', from: '', to: '' });
+      return;
+    }
+    consumedDocument.current = initialDocument;
+    const target = current.documents.find(
+      (row) => row.id === initialDocument.documentId,
+    );
+    const row = panel.current?.querySelector<HTMLElement>(
+      `[data-document-id="${CSS.escape(initialDocument.documentId)}"]`,
+    );
+    onInitialDocumentConsumed?.();
+    if (
+      !target ||
+      (initialDocument.intent === 'preview'
+        ? !target.canView
+        : !target.canView && !target.canExport) ||
+      !row
+    ) {
+      setActionError(
+        'This document is no longer available for your current access.',
+      );
+      return;
+    }
+    row.focus({ preventScroll: false });
+    if (initialDocument.intent === 'preview' && target.canView)
+      void read(target, false);
+  }, [
+    initialDocument,
+    patientId,
+    busy,
+    patientsLoading,
+    current,
+    filters,
+    onInitialDocumentConsumed,
+    read,
+  ]);
   if (!displayPatient) return <p>Select a patient to view documents.</p>;
   const categories = [
     ...new Map(
@@ -876,6 +917,8 @@ export function DocumentsPanel({
               {filtered.map((doc) => (
                 <li
                   key={doc.id}
+                  data-document-id={doc.id}
+                  tabIndex={-1}
                   className="min-w-0 rounded-2xl border border-border bg-card p-4 [overflow-wrap:anywhere]"
                 >
                   <span className="block font-medium">{doc.title}</span>

@@ -30,6 +30,8 @@ import {
 } from './components/ui/dialog';
 import { useTheme } from './hooks/use-theme';
 import { MedicalDocumentArt } from './components/overview/MedicalDocumentArt';
+import { RecentDocuments } from './components/overview/RecentDocuments';
+import type { DocumentOpenRequest } from './features/documents/document-results';
 import { PatientPicker, usePatientContext } from './features/patients';
 import { DocumentUploadForm, DocumentsPanel } from './features/documents';
 import { TrendsPanel } from './features/measurements';
@@ -98,6 +100,17 @@ export default function App() {
     query: string;
   } | null>(null);
   const consumeDocumentSearch = useCallback(() => setDocumentSearch(null), []);
+  const [documentOpen, setDocumentOpen] = useState<DocumentOpenRequest | null>(
+    null,
+  );
+  const consumeDocumentOpen = useCallback(() => setDocumentOpen(null), []);
+  const openRecentDocument = (selection: DocumentOpenRequest) => {
+    if (patientsLoading || selection.patientId !== selectedPatient?.id) return;
+    setDocumentSearch(null);
+    setSearchDraft(null);
+    setDocumentOpen(selection);
+    window.location.hash = 'documents';
+  };
   const [uploadNotice, setUploadNotice] = useState<{
     patientId: string;
     potentialDuplicate: boolean;
@@ -109,7 +122,15 @@ export default function App() {
       setSearchDraft(null);
     if (documentSearch && documentSearch.patientId !== selectedPatient?.id)
       setDocumentSearch(null);
-  }, [selectedPatient?.id, patientsLoading, searchDraft, documentSearch]);
+    if (documentOpen && documentOpen.patientId !== selectedPatient?.id)
+      setDocumentOpen(null);
+  }, [
+    selectedPatient?.id,
+    patientsLoading,
+    searchDraft,
+    documentSearch,
+    documentOpen,
+  ]);
   useEffect(() => {
     setUploadNotice(null);
   }, [selectedPatient?.id, patientsLoading]);
@@ -149,7 +170,10 @@ export default function App() {
     const onHashChange = () => {
       captureIncomingLink();
       const next = readDestination();
-      if (next !== 'documents') setDocumentSearch(null);
+      if (next !== 'documents') {
+        setDocumentSearch(null);
+        setDocumentOpen(null);
+      }
       setDestination(next);
     };
     window.addEventListener('hashchange', onHashChange);
@@ -281,6 +305,7 @@ export default function App() {
                     patientId: selectedPatient.id,
                     query: searchDraft.query.trim(),
                   });
+                  setDocumentOpen(null);
                   setSearchDraft(null);
                   window.location.hash = 'documents';
                 }}
@@ -395,24 +420,31 @@ export default function App() {
                   <MedicalDocumentArt />
                 </div>
               </section>
-              <section
-                className="records-section"
-                aria-labelledby="records-title"
-              >
-                <div className="section-heading">
-                  <div>
-                    <h2 id="records-title">Medical documents</h2>
-                    <p>The foundation of a connected health history.</p>
+              {selectedPatient || patientsLoading ? (
+                <RecentDocuments
+                  refreshRevision={listRevision}
+                  onOpen={openRecentDocument}
+                />
+              ) : (
+                <section
+                  className="records-section"
+                  aria-labelledby="records-title"
+                >
+                  <div className="section-heading">
+                    <div>
+                      <h2 id="records-title">Medical documents</h2>
+                      <p>The foundation of a connected health history.</p>
+                    </div>
+                    <a href="#documents" className="text-link">
+                      View documents
+                      <ArrowRight size={16} aria-hidden="true" />
+                    </a>
                   </div>
-                  <a href="#documents" className="text-link">
-                    View documents
-                    <ArrowRight size={16} aria-hidden="true" />
-                  </a>
-                </div>
-                <div className="overview-record-icon" aria-hidden="true">
-                  <FileText size={28} />
-                </div>
-              </section>
+                  <div className="overview-record-icon" aria-hidden="true">
+                    <FileText size={28} />
+                  </div>
+                </section>
+              )}
               <div className="context-note">
                 <LockKeyhole size={18} aria-hidden="true" />
                 <p>
@@ -429,6 +461,8 @@ export default function App() {
             <DocumentsPanel
               initialSearch={documentSearch}
               onInitialSearchConsumed={consumeDocumentSearch}
+              initialDocument={documentOpen}
+              onInitialDocumentConsumed={consumeDocumentOpen}
               refreshRevision={listRevision}
               onRequestUpload={() => openDialog('upload')}
             />
