@@ -48,7 +48,8 @@ async function setup(page: Page, scope = 'patient') {
     release: (() => void) | null = null;
   const writes: string[] = [],
     errors: string[] = [],
-    unexpected: string[] = [];
+    unexpected: string[] = [],
+    previews: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.route('**/api/**', async (route) => {
     const req = route.request(),
@@ -134,8 +135,17 @@ async function setup(page: Page, scope = 'patient') {
         },
       });
     }
+    if (path === `/api/patients/${p}/documents/${d}/preview`) {
+      previews.push(path);
+      return route.fulfill({
+        contentType: 'application/pdf',
+        body: '%PDF-1.4 SYNTHETIC source fixture',
+      });
+    }
     if (path.endsWith('/medication-reconciliations/' + id)) {
       if (hold) await hold;
+      if (mode === 'denied-history')
+        return route.fulfill({ status: 404, json: {} });
       if (mode === 'failed-history')
         return route.fulfill({ status: 503, json: {} });
       if (mode === 'history-pages') {
@@ -153,9 +163,24 @@ async function setup(page: Page, scope = 'patient') {
       }
       return route.fulfill({
         json: {
-          current: record(),
+          current: {
+            ...record(),
+            sourceState:
+              mode === 'review-required'
+                ? 'source-review-required'
+                : 'current-source',
+          },
           canWrite: scope === 'owner',
-          history: [record(), record(1, 'historical')],
+          history: [
+            {
+              ...record(),
+              sourceState:
+                mode === 'review-required'
+                  ? 'source-review-required'
+                  : 'current-source',
+            },
+            record(1, 'historical'),
+          ],
           nextBeforeRevision: null,
         },
       });
@@ -174,6 +199,7 @@ async function setup(page: Page, scope = 'patient') {
     writes,
     errors,
     unexpected,
+    previews,
     get reads() {
       return reads;
     },
@@ -433,4 +459,104 @@ test('list and history page controls keep the separate current version authorita
     page.getByRole('region', { name: 'Preserved versions' }).locator('li'),
   ).toHaveCount(20);
   expect(f.writes).toEqual([]);
+});
+
+// Draft acceptance checks: current-version source link only; no source fetch
+// is performed by rendering this link or revalidating medication access.
+const originalSource = (page: Page) =>
+  page.getByRole('link', {
+    name: 'Open original source (new tab)',
+    exact: true,
+  });
+async function openCurrentDetails(page: Page) {
+  await page
+    .getByRole('button', {
+      name: /Details and history for SYNTHETIC prescription/,
+    })
+    .click();
+  await expect(
+    page.getByRole('region', { name: 'Current recorded version' }),
+  ).toBeVisible();
+}
+
+test('current medication source links the exact patient and original document without prefetch', async ({
+  page,
+}, info) => {
+  const f = await setup(page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await openCurrentDetails(page);
+  const current = page.getByRole('region', {
+    name: 'Current recorded version',
+  });
+  const link = current.getByRole('link', {
+    name: 'Open original source (new tab)',
+    exact: true,
+  });
+  await expect(link).toHaveAttribute(
+    'href',
+    `/api/patients/${p}/documents/${d}/preview`,
+  );
+  await expect(link).toHaveAttribute('target', '_blank');
+  await expect(link).toHaveAttribute('rel', /(?:^|\s)noreferrer(?:\s|$)/);
+  await expect(originalSource(page)).toHaveCount(1);
+  // Preserved revisions include current-source entries too; none may expose it.
+  await expect(
+    page.getByRole('region', { name: 'Preserved versions' }).getByRole('link', {
+      name: 'Open original source (new tab)',
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate((value) => {
+      document.documentElement.dataset.theme = value;
+    }, theme);
+    expect(
+      (await new AxeBuilder({ page }).include('[role="dialog"]').analyze())
+        .violations,
+    ).toEqual([]);
+    await link.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `../../.local/screenshots/medication-source-${info.project.name}-${theme}.png`,
+    });
+  }
+  expect(f.previews).toEqual([]);
+  expect(f.writes).toEqual([]);
+  expect(f.unexpected).toEqual([]);
+  expect(f.errors).toEqual([]);
+});
+
+test('source review required never exposes the original-source shortcut', async ({
+  page,
+}) => {
+  const f = await setup(page);
+  f.setMode('review-required');
+  await openCurrentDetails(page);
+  await expect(
+    page.getByRole('region', { name: 'Current recorded version' }),
+  ).toContainText('Source binding needs explicit review and reconciliation.');
+  await expect(originalSource(page)).toHaveCount(0);
+  expect(f.previews).toEqual([]);
+  expect(f.writes).toEqual([]);
+  expect(f.errors).toEqual([]);
+});
+
+test('access revalidation hides the source link and a denied history refresh cannot restore it', async ({
+  page,
+}) => {
+  const f = await setup(page);
+  await openCurrentDetails(page);
+  await expect(originalSource(page)).toBeVisible();
+  f.hold();
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('dialog')).toContainText(
+    'Checking medication access',
+  );
+  await expect(originalSource(page)).toHaveCount(0);
+  f.setMode('denied-history');
+  f.release();
+  await expect(originalSource(page)).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(f.previews).toEqual([]);
+  expect(f.writes).toEqual([]);
+  expect(f.errors).toEqual([]);
 });

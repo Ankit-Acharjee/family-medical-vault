@@ -62,6 +62,8 @@ async function setup(page: Page, owner = true) {
                 },
               ],
       });
+    if (path === `/api/patients/${patient}/documents`)
+      return json({ documents: [], storageReady: false });
     if (path.endsWith('/medication-reconciliations'))
       return json({
         patientId: patient,

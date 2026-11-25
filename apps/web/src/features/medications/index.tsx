@@ -422,6 +422,16 @@ function MedicationSurface({
               >
                 <h2 className="mb-3 font-semibold">Current recorded version</h2>
                 <MedicationSummary record={detail.current} details />
+                {detail.current.sourceState === 'current-source' && (
+                  <a
+                    className="text-link mt-3 inline-flex min-h-11 items-center text-sm"
+                    href={`/api/patients/${encodeURIComponent(patient.id)}/documents/${encodeURIComponent(detail.current.entry.source.documentId)}/preview`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open original source (new tab)
+                  </a>
+                )}
                 {detail.canWrite &&
                   detail.current.sourceState === 'current-source' && (
                     <Button
