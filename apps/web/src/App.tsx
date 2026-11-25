@@ -87,6 +87,7 @@ export default function App() {
   const [destination, setDestination] = useState(readDestination);
   const [expanded, setExpanded] = useState(false);
   const [dialog, setDialog] = useState<'patient' | 'upload' | null>(null);
+  const [uploadStep, setUploadStep] = useState<'patient' | 'files'>('patient');
   const [listRevision, setListRevision] = useState(0);
   const [searchDraft, setSearchDraft] = useState<{
     patientId: string;
@@ -113,7 +114,29 @@ export default function App() {
     setUploadNotice(null);
   }, [selectedPatient?.id, patientsLoading]);
   const dialogTrigger = useRef<HTMLElement | null>(null);
+  const dialogTitle = useRef<HTMLHeadingElement | null>(null);
+  const focusUploadAfterSelection = useRef(false);
+  useEffect(() => {
+    if (dialog !== 'upload') {
+      focusUploadAfterSelection.current = false;
+      return;
+    }
+    if (!patientsLoading) {
+      setUploadStep(selectedPatient ? 'files' : 'patient');
+      if (!selectedPatient) focusUploadAfterSelection.current = false;
+    }
+    if (
+      focusUploadAfterSelection.current &&
+      selectedPatient &&
+      !patientsLoading
+    ) {
+      focusUploadAfterSelection.current = false;
+      dialogTitle.current?.focus({ preventScroll: true });
+    }
+  }, [dialog, selectedPatient, patientsLoading]);
   const openDialog = (kind: 'patient' | 'upload') => {
+    focusUploadAfterSelection.current = false;
+    if (kind === 'upload') setUploadStep(selectedPatient ? 'files' : 'patient');
     if (kind === 'upload') setUploadNotice(null);
     dialogTrigger.current =
       document.activeElement instanceof HTMLElement
@@ -456,16 +479,16 @@ export default function App() {
           }}
         >
           <DialogHeader>
-            <DialogTitle>
+            <DialogTitle ref={dialogTitle} tabIndex={-1}>
               {dialog === 'upload'
-                ? selectedPatient || patientsLoading
+                ? selectedPatient || (patientsLoading && uploadStep === 'files')
                   ? 'Upload documents'
                   : 'Select a patient first'
                 : 'Select patient'}
             </DialogTitle>
             <DialogDescription>
               {dialog === 'upload'
-                ? selectedPatient || patientsLoading
+                ? selectedPatient || (patientsLoading && uploadStep === 'files')
                   ? 'Choose documents for the selected patient.'
                   : 'Medical documents must belong to a patient. Select a patient before uploading.'
                 : 'Choose a patient profile available to your account.'}
@@ -473,7 +496,8 @@ export default function App() {
           </DialogHeader>
           {dialog === 'patient' ? (
             <PatientPicker onSelected={() => setDialog(null)} />
-          ) : dialog === 'upload' && (selectedPatient || patientsLoading) ? (
+          ) : dialog === 'upload' &&
+            (selectedPatient || (patientsLoading && uploadStep === 'files')) ? (
             <DocumentUploadForm
               onComplete={(allStored, completion) => {
                 if (
@@ -490,7 +514,12 @@ export default function App() {
               }}
             />
           ) : (
-            <Button onClick={() => setDialog(null)}>Got it</Button>
+            <PatientPicker
+              onSelected={() => {
+                setUploadStep('files');
+                focusUploadAfterSelection.current = true;
+              }}
+            />
           )}
         </DialogContent>
       </Dialog>

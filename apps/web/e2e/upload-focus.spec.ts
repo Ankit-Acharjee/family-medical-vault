@@ -241,14 +241,9 @@ for (const outcome of ['revoked', 'failed'] as const) {
     ).toHaveCount(0);
     expect(fixture.uploads).toEqual([]);
     if (outcome === 'revoked') {
-      await page.getByRole('button', { name: 'Got it' }).click();
-      await page
-        .getByRole('button', { name: 'Select patient: No patient selected' })
-        .click();
       await page
         .getByRole('button', { name: /Other Patient \(Your profile\)/ })
         .click();
-      await page.getByRole('button', { name: 'Upload', exact: true }).click();
       await expect(page.getByLabel(/Choose files/)).toBeEnabled();
       await expect(
         page.getByText('synthetic-record.pdf:', { exact: true }),

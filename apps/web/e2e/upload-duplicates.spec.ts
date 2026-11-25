@@ -279,7 +279,7 @@ test('late duplicate finalize after revoked access cannot show notice', async ({
   ).toBeVisible();
   release();
   await expect(notice(page)).toHaveCount(0);
-  await page.getByRole('button', { name: 'Got it' }).click();
+  await page.keyboard.press('Escape');
   await expect(notice(page)).toHaveCount(0);
 });
 

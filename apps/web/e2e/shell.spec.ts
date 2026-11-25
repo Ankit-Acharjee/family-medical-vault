@@ -111,7 +111,10 @@ test('patient and upload entries explain unavailable access with keyboard-safe d
     'Select a patient first',
   );
   await expect(page.locator('input[type="file"]')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Got it' }).click();
+  await expect(page.getByRole('dialog')).toContainText(
+    'No patient profiles are available',
+  );
+  await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).not.toBeVisible();
   await expect(
     page.getByRole('button', { name: 'Upload', exact: true }),
